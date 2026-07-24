@@ -322,19 +322,36 @@ modprobe virtio_scsi 2>/dev/null || true
 # `-o force` tells ntfs3 to mount a dirty volume anyway; read-only makes that
 # safe here since we only look for a file. ntfs-3g is the last resort where the
 # kernel driver is absent entirely.
+# Each mount is bounded by `timeout`: a BitLocker volume keeps an NTFS-shaped
+# boot sector for compatibility, so ntfs3/ntfs-3g can STALL parsing the
+# ciphertext. Without a bound, one bad partition wedges the whole scan before it
+# reaches the plaintext volume that actually holds root.disk (#34). ntfs-3g is a
+# FUSE daemon — `timeout` kills it cleanly on a hang.
 try_mount_scan() {
     local dev="$1"
-    mount -t ntfs3 -o ro "$dev" /mnt/scan 2>/dev/null && { echo "ntfs3"; return 0; }
-    mount -t ntfs3 -o ro,force "$dev" /mnt/scan 2>/dev/null && { echo "ntfs3-force"; return 0; }
+    timeout 30 mount -t ntfs3 -o ro "$dev" /mnt/scan 2>/dev/null && { echo "ntfs3"; return 0; }
+    timeout 30 mount -t ntfs3 -o ro,force "$dev" /mnt/scan 2>/dev/null && { echo "ntfs3-force"; return 0; }
     command -v ntfs-3g >/dev/null 2>&1 &&
-        ntfs-3g -o ro "$dev" /mnt/scan 2>/dev/null && { echo "ntfs-3g"; return 0; }
+        timeout 30 ntfs-3g -o ro "$dev" /mnt/scan 2>/dev/null && { echo "ntfs-3g"; return 0; }
     return 1
 }
 
 scan_for_root_disk() {
-    local dev drv
+    local dev drv fstype
     for dev in /dev/sd* /dev/nvme* /dev/vd*; do
         [[ -b "$dev" ]] || continue
+        # Name every device's filesystem signature — a BitLocker path (#34)
+        # otherwise leaves no trace of WHY a volume was passed over. blkid's
+        # BitLocker prober reports TYPE=BitLocker for FVE-encrypted C:.
+        fstype=$(blkid -o value -s TYPE "$dev" 2>/dev/null)
+        if [[ "$fstype" == "BitLocker" ]]; then
+            # root.disk is never on the encrypted C: — setup-wootc.ps1 carves a
+            # separate PLAINTEXT NTFS volume (wootc-data) for it. Skip the
+            # ciphertext explicitly: ntfs3/ntfs-3g would stall or mount garbage
+            # on its NTFS-shaped boot sector and could wedge the scan.
+            log "  ${dev}: BitLocker-encrypted (TYPE=BitLocker) — skipping; root.disk lives on the plaintext wootc-data volume"
+            continue
+        fi
         mkdir -p /mnt/scan
         if drv=$(try_mount_scan "$dev"); then
             if [[ -f "/mnt/scan${ROOT_DISK_PATH}" ]]; then
@@ -357,7 +374,7 @@ scan_for_root_disk() {
             umount /mnt/scan
         else
             # Silence here is what made #36 unattributable for two runs.
-            log "  ${dev}: not mountable as NTFS (ntfs3, ntfs3+force, ntfs-3g all failed)"
+            log "  ${dev}: not mountable as NTFS (TYPE=${fstype:-none}; ntfs3, ntfs3+force, ntfs-3g all failed)"
         fi
     done
     return 1
