@@ -742,6 +742,7 @@ ensure_ntfs_support || log "NTFS injection unavailable; using the image's own NT
 # --composefs-backend (systemd-boot/UKI) onto traditional-ostree images. Verified
 # on himachal: dakota/marlin ship no grub + systemd-boot (native); bluefin/bonito
 # ship bootupctl + grubx64.efi (ostree). wootc.composefs / wootc.bootloader override.
+GENERIC_IMAGE=0   # set to 1 for ostree images with no bootupd (see below)
 if [[ "$COMPOSEFS" == auto || "$BOOTLOADER" == auto ]]; then
     if ! DETECT="$(timeout 30 podman run --rm --network=host "$IMAGE" sh -c '
         if { ls /usr/lib/bootupd/updates/EFI/*/grubx64.efi >/dev/null 2>&1 ||
@@ -770,9 +771,16 @@ SEALED=1"
         [[ "$BOOTLOADER" == auto ]] && BOOTLOADER=systemd
         log "  backend: image ships only systemd-boot → composefs-native (--composefs-backend, systemd-boot)"
     else
-        log "  [WARN] unrecognized backend signal; defaulting to ostree/grub2"
+        # Neither bootupd-managed grub NOR systemd-boot: an ostree image that
+        # ships no bootupd (non-Fedora/EL bootc images, e.g. Arch/Debian). bootc
+        # install to-filesystem would abort "bootupd is required for ostree-based
+        # installs" (arch-gnome, debian-gnome GH matrix 20260724). Deploy as
+        # ostree/grub2 but pass --generic-image so bootc skips the bootupd check;
+        # Phase 2 boots via the signed shim+grub wootc stages on the ESP anyway.
+        log "  [WARN] no bootupd and no systemd-boot → ostree/grub2 + --generic-image (image ships no bootupd)"
         [[ "$COMPOSEFS"  == auto ]] && COMPOSEFS=0
         [[ "$BOOTLOADER" == auto ]] && BOOTLOADER=grub2
+        GENERIC_IMAGE=1
     fi
     grep -q 'SEALED=1' <<<"$DETECT" && ROOTFS_SEALED=1 || ROOTFS_SEALED=0
 fi
@@ -834,6 +842,7 @@ cat > "$RECIPE" << EOF
   "disk": "${LOOP_DEV}",
   "filesystem": "${FILESYSTEM}",
   "composeFsBackend": $([[ "$COMPOSEFS" == 1 ]] && echo true || echo false),
+  "genericImage": $([[ "$GENERIC_IMAGE" == 1 ]] && echo true || echo false),
 	"bootloader": "${BOOTLOADER}",
   "unifiedStorage": false,
   "selinuxDisabled": false,
