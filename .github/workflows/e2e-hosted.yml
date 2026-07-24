@@ -125,6 +125,11 @@ jobs:
           # 4 vCPU hosted runners are slower than the laptop runners;
           # the laptops themselves hit the 45 min default on big images.
           WOOTC_E2E_DEPLOY_TIMEOUT: '5400'   # 90 min
+          # The 8-wide matrix contends for CPU/disk; the pre-deploy Windows
+          # install then overran the 2700s (~66 wall-min) QGA window on some
+          # cells (el10-xfce, el10-gnome-win10home 20260724). Widen it — this is
+          # runner contention, not a product timeout.
+          WOOTC_E2E_WINDOWS_QGA_TIMEOUT: '3600'   # ~88 wall-min after loop overhead
           WOOTC_E2E_WIN_VERSION: ${{ inputs.win_version }}
           WOOTC_E2E_WIN_EDITION: ${{ inputs.win_edition }}
           WOOTC_E2E_WIN_KEY: ${{ inputs.win_key }}

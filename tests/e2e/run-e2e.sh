@@ -1371,7 +1371,12 @@ if [ "$SKIP_INSTALL" = true ] && qga_is_deployer; then
     info "Rebooting prior deployer to Windows before retry"
     $DOCKER exec "$CONTAINER_NAME" python3 -c 'import socket; s=socket.socket(socket.AF_UNIX); s.connect("/run/shm/monitor.sock"); s.sendall(b"sendkey ctrl-alt-delete\n"); s.close()'
 fi
-qga_wait_windows 2700
+# 2700s (~66 wall-min after loop overhead) was enough single-tenant, but the
+# 8-wide hosted matrix contends for CPU/disk and two cells timed out here in the
+# pre-deploy Windows install (el10-xfce, el10-gnome-win10home 20260724) — an
+# image-independent stage, so pure runner contention, not a bug. Make it
+# tunable and let the hosted matrix widen it.
+qga_wait_windows "${WOOTC_E2E_WINDOWS_QGA_TIMEOUT:-2700}"
 qga_call info || true
 
 # Preflight: inspect Windows C: filesystem dirty status via QGA
