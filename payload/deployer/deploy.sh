@@ -948,7 +948,14 @@ for p in "$VERIFY_ROOT_DEVICE" "${VERIFY_LOOP}"p*; do
     [[ -b "$p" ]] || continue
     mkdir -p /mnt/verify
     if mount -o rw "$p" /mnt/verify 2>/dev/null; then
-        if [[ -d /mnt/verify/ostree/deploy || -f /mnt/verify/etc/os-release ]]; then
+        # A composefs-native install has NEITHER /ostree/deploy NOR a top-level
+        # /etc/os-release — its tree lives under /state/deploy/<hash>/ (the same
+        # path fisherman's composefs useradd targets). Without this arm the probe
+        # found no root, skipped the ENTIRE verification+Phase-2 staging block
+        # ("Could not mount installed root for verification"), and Phase 2 had no
+        # kernel to boot: the firmware loaded the deployer's grub and fell
+        # straight back to Windows (dakota GH matrix 20260725T0208).
+        if [[ -d /mnt/verify/ostree/deploy || -f /mnt/verify/etc/os-release || -d /mnt/verify/state/deploy ]]; then
             VERIFY_ROOT="$p"
             break
         fi
@@ -963,10 +970,18 @@ if [[ -n "$VERIFY_ROOT" ]]; then
     # filesystem root otherwise (classic layout).
     shopt -s nullglob
     deployments=(/mnt/verify/ostree/deploy/*/deploy/*.0)
+    # composefs-native: the OS tree is /state/deploy/<hash>/ with no ostree/
+    # hierarchy. Without this the root resolved to /mnt/verify (the sysroot),
+    # so every post-install write and the Phase-2 staging looked at an empty
+    # tree instead of the deployment.
+    cfs_deployments=(/mnt/verify/state/deploy/*/)
     shopt -u nullglob
     if (( ${#deployments[@]} > 0 )); then
         DEPLOY_ROOT="${deployments[0]}"
         log "  ostree deployment: ${DEPLOY_ROOT#/mnt/verify}"
+    elif (( ${#cfs_deployments[@]} > 0 )); then
+        DEPLOY_ROOT="${cfs_deployments[0]%/}"
+        log "  composefs deployment: ${DEPLOY_ROOT#/mnt/verify}"
     else
         DEPLOY_ROOT="/mnt/verify"
     fi
