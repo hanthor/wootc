@@ -1272,12 +1272,26 @@ if [[ -n "$VERIFY_ROOT" ]]; then
         # wootc-attach.service, fell back to /dev/gpt-auto-root, and emergency'd.
         # Add ostree as well: attachment without prepare-root still leaves
         # systemd trying to switch into the repository's top level.
-        log "  verify: regenerating ALL initramfses WITH ostree+wootc-boot (dracut, up to 15m)"
-        if ! timeout 900 chroot "$DEPLOY_ROOT" dracut --force --regenerate-all --add "ostree wootc-boot"; then
-            err "  [FAIL] dracut --regenerate-all failed or timed out"
-            exit 1
+        if [[ "$COMPOSEFS" == 1 ]]; then
+            # composefs-native: do NOT regenerate here. The deployment's
+            # /usr/lib/modules is EMPTY (its content lives in the .ostree.cfs),
+            # so a chroot dracut has no modules to build from — it grinds and
+            # cannot produce a usable initramfs. dakota burned the entire 90-min
+            # deploy budget at ~62% CPU with a silent serial doing exactly this
+            # (GH run 30143688589), timing out before it ever reached the ESP
+            # staging. The composefs Phase-2 path instead PREPENDS an early cpio
+            # carrying wootc-attach.service + the loop script onto the target's
+            # own UKI initrd (see the composefs staging further down), which is
+            # why no regen is needed at all.
+            log "  verify: composefs-native → skipping dracut regen (Phase 2 gets an early-cpio overlay instead)"
+        else
+            log "  verify: regenerating ALL initramfses WITH ostree+wootc-boot (dracut, up to 15m)"
+            if ! timeout 900 chroot "$DEPLOY_ROOT" dracut --force --regenerate-all --add "ostree wootc-boot"; then
+                err "  [FAIL] dracut --regenerate-all failed or timed out"
+                exit 1
+            fi
+            log "  verify: regenerate-all complete"
         fi
-        log "  verify: regenerate-all complete"
     fi
 
     # GUARD: the Phase-2 initramfs is useless without the loop-attach hook —
