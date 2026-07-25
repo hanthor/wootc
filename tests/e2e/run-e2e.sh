@@ -612,7 +612,14 @@ qga_sync_oem() {
         # setup/run-wootc-e2e PowerShell left over from the primed image.
         qga_powershell 'cmd.exe /d /c "schtasks.exe /Delete /TN \"wootc-e2e-setup\" /F >NUL 2>&1"; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and ($_.CommandLine -like "*run-wootc-e2e.ps1*" -or $_.CommandLine -like "*setup-wootc.ps1*") } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }' >/dev/null 2>&1 || true
         sleep 5
-        qga_call write "/oem/wootc-config.txt" 'C:\OEM\wootc-config.txt' || true
+        # Killing holders was not enough: a snapshot-restored C:\OEM carries the
+        # PRIME's file attributes/ACLs, so the write fails "Access is denied"
+        # even with nothing holding the file. Clear read-only/system/hidden,
+        # take ownership, grant full control, then DELETE it — a fresh create
+        # succeeds where an overwrite cannot. Report what Windows says about the
+        # file so a third cause names itself instead of costing another run.
+        qga_powershell '$p="C:\OEM\wootc-config.txt"; if (Test-Path $p) { try { attrib -r -s -h $p } catch {}; cmd.exe /d /c "takeown /f `"$p`" >NUL 2>&1 & icacls `"$p`" /grant *S-1-1-0:F >NUL 2>&1"; try { Remove-Item -LiteralPath $p -Force -ErrorAction Stop } catch { Write-Output ("REMOVE-FAILED: " + $_.Exception.Message) } }; if (Test-Path $p) { Write-Output ("STILL-PRESENT attrs=" + (Get-Item $p -Force).Attributes) } else { Write-Output "REMOVED-OK" }' 2>&1 | sed 's/^/    oem-config: /' || true
+        qga_call write "/oem/wootc-config.txt" 'C:\OEM\wootc-config.txt' 2>&1 | sed 's/^/    write: /' || true
     done
     if [ "$got" != "$want_run_id" ]; then
         fail "Could not refresh C:\\OEM\\wootc-config.txt with this run's RunId ($want_run_id); guest has '${got:-<unreadable>}'"
