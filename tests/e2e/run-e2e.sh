@@ -588,7 +588,38 @@ qga_sync_oem() {
         relative="${source#"$OEM_DIR"/}"
         qga_call write "/oem/$relative" "C:\\OEM\\${relative//\//\\}"
     done < <(find "$OEM_DIR" -type f -print0)
-    pass "OEM payload refreshed through QGA"
+
+    # wootc-config.txt is NOT just another payload file: it carries this run's
+    # RunId, and the OEM barrier below only accepts e2e-setup-complete.txt when
+    # it equals RUN_ID. On the base-image RESTORE path the guest's OEM task
+    # relaunches at logon seconds before this refresh, holds C:\OEM open, and
+    # every write here fails "Access is denied" — silently. The guest then runs
+    # with the PRIME's stale RunId, stamps the stale id, the host never matches,
+    # and the guest dies on its own 10-minute snapshot-barrier wait
+    # ("Timed out waiting for the host to snapshot the Windows installation",
+    # dakota-win10pro 20260725T0937). A full install hid this because setup ran
+    # ~40 min later, long after the handles were free.
+    #
+    # So: verify the RunId actually landed, killing the holders and retrying.
+    # If it still cannot be written, FAIL HERE — continuing guarantees a
+    # 10-minute timeout with a misleading "OEM setup failed" verdict.
+    local want_run_id="$RUN_ID" got="" attempt
+    for attempt in 1 2 3 4 5; do
+        got=$(qga_read 'C:\OEM\wootc-config.txt' 2>/dev/null | tr -d '\r' | sed -n 's/^RunId=//p' | tr -d '[:space:]')
+        [ "$got" = "$want_run_id" ] && break
+        warn "OEM config still carries RunId='${got:-<unreadable>}' (want '$want_run_id'); clearing holders and retrying ($attempt/5)"
+        # Stop whatever is holding C:\OEM: the auto-relaunched OEM task and any
+        # setup/run-wootc-e2e PowerShell left over from the primed image.
+        qga_powershell 'cmd.exe /d /c "schtasks.exe /Delete /TN \"wootc-e2e-setup\" /F >NUL 2>&1"; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and ($_.CommandLine -like "*run-wootc-e2e.ps1*" -or $_.CommandLine -like "*setup-wootc.ps1*") } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }' >/dev/null 2>&1 || true
+        sleep 5
+        qga_call write "/oem/wootc-config.txt" 'C:\OEM\wootc-config.txt' || true
+    done
+    if [ "$got" != "$want_run_id" ]; then
+        fail "Could not refresh C:\\OEM\\wootc-config.txt with this run's RunId ($want_run_id); guest has '${got:-<unreadable>}'"
+        fail "The OEM barrier would never match and the guest would time out. Aborting early."
+        return 1
+    fi
+    pass "OEM payload refreshed through QGA (RunId $want_run_id confirmed in guest)"
 }
 
 # `--skip-install` is a new deployment attempt on an existing disposable
