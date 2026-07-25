@@ -90,19 +90,32 @@ if ($blState -ne 'off') {
     # correctly skipped the ciphertext and reported "Could not find root.disk on
     # any partition" while root.disk sat inside the encrypted sda4.
     # Force protection off and WAIT — decryption is asynchronous.
+    # Wait for FULLY DECRYPTED, not merely "protection off". A volume reports
+    # ProtectionStatus=Off the moment Disable-BitLocker is accepted while
+    # VolumeStatus stays DecryptionInProgress for minutes afterwards. Proceeding
+    # then reboots into the deployer, which writes a 35 GB root.disk onto a
+    # volume Windows is still decrypting underneath it: the deploy pegs the CPU
+    # with a silent serial and blows its 90-minute budget
+    # (fedora-gnome-win11pro-bitlocker, GH run 30165015199 — 89 min at ~90% CPU
+    # with no deployer output after the block-device table).
+    # The volume is freshly formatted and empty, so this should be quick; give it
+    # a real budget anyway and report progress so a slow decrypt is visible.
     Write-Host "[wootc] Ensuring $storageRoot stays unencrypted (Device Encryption auto-protects new volumes)..."
-    for ($i = 0; $i -lt 60; $i++) {
+    $deadline = (Get-Date).AddMinutes(30)
+    $v = $null
+    while ((Get-Date) -lt $deadline) {
         $v = Get-BitLockerVolume -MountPoint $storageRoot -ErrorAction SilentlyContinue
         if (-not $v) { break }
         if ($v.ProtectionStatus -eq 'Off' -and $v.VolumeStatus -eq 'FullyDecrypted') { break }
         try { Disable-BitLocker -MountPoint $storageRoot -ErrorAction SilentlyContinue | Out-Null } catch {}
-        Start-Sleep -Seconds 5
+        Write-Host "[wootc]   $storageRoot status=$($v.VolumeStatus) protection=$($v.ProtectionStatus) pct=$($v.EncryptionPercentage)"
+        Start-Sleep -Seconds 10
     }
     $v = Get-BitLockerVolume -MountPoint $storageRoot -ErrorAction SilentlyContinue
     if ($v) {
         Write-Host "[wootc] $storageRoot BitLocker: status=$($v.VolumeStatus) protection=$($v.ProtectionStatus)"
-        if ($v.ProtectionStatus -ne 'Off') {
-            throw "Could not disable BitLocker on $storageRoot — the deployer would not be able to read root.disk"
+        if ($v.ProtectionStatus -ne 'Off' -or $v.VolumeStatus -ne 'FullyDecrypted') {
+            throw "BitLocker on $storageRoot is not fully decrypted (status=$($v.VolumeStatus) protection=$($v.ProtectionStatus)) — the deployer would write root.disk onto a decrypting volume"
         }
     } else {
         Write-Host "[wootc] $storageRoot has no BitLocker volume object (plaintext)"
