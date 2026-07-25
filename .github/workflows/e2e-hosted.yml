@@ -36,6 +36,11 @@ on:
       # C:\OEM). The walkthrough timelapse from a GUI-driven run is the one
       # the README publishes.
       gui_install: { type: boolean, default: false }
+      # Which runner pool to use. 'ubuntu-latest' = GitHub-hosted (2-core, 14 GB
+      # disk after cleanup, subject to queue/quota). A self-hosted label such as
+      # 'wootc-e2e' targets himachal/dilli: far more CPU and disk, no quota, and
+      # the ISO/base-image caches stay warm between runs.
+      runner: { type: string, default: 'ubuntu-latest' }
 
 permissions:
   contents: read
@@ -43,7 +48,7 @@ permissions:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 330          # under the 6 h hard cap, with headroom
     steps:
       - uses: actions/checkout@v7

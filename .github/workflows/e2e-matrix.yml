@@ -17,6 +17,10 @@ on:
         description: 'only run cases whose name contains this substring'
         type: string
         default: ''
+      runner:
+        description: 'runner pool (ubuntu-latest, or wootc-e2e for self-hosted himachal/dilli)'
+        type: string
+        default: 'ubuntu-latest'
 
 permissions:
   contents: read
@@ -89,3 +93,4 @@ jobs:
       win_key: ${{ matrix.win_key }}
       bitlocker: ${{ matrix.bitlocker }}
       phase3: ${{ matrix.phase3 }}
+      runner: ${{ inputs.runner }}
