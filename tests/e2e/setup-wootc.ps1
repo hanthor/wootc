@@ -82,6 +82,31 @@ if ($blState -ne 'off') {
     $newPart = New-Partition -DiskNumber $cPart.DiskNumber -UseMaximumSize -AssignDriveLetter
     Format-Volume -Partition $newPart -FileSystem NTFS -NewFileSystemLabel "wootc-data" -Confirm:$false | Out-Null
     $storageRoot = "$($newPart.DriveLetter):"
+
+    # Windows 11 Device Encryption auto-encrypts NEWLY CREATED fixed volumes, so
+    # the volume we just carved comes back BitLocker-protected and root.disk
+    # becomes unreadable to the deployer. That is #34: the scan verdict showed
+    # BOTH sda3 (C:) and sda4 (this volume) as TYPE=BitLocker, so the deployer
+    # correctly skipped the ciphertext and reported "Could not find root.disk on
+    # any partition" while root.disk sat inside the encrypted sda4.
+    # Force protection off and WAIT — decryption is asynchronous.
+    Write-Host "[wootc] Ensuring $storageRoot stays unencrypted (Device Encryption auto-protects new volumes)..."
+    for ($i = 0; $i -lt 60; $i++) {
+        $v = Get-BitLockerVolume -MountPoint $storageRoot -ErrorAction SilentlyContinue
+        if (-not $v) { break }
+        if ($v.ProtectionStatus -eq 'Off' -and $v.VolumeStatus -eq 'FullyDecrypted') { break }
+        try { Disable-BitLocker -MountPoint $storageRoot -ErrorAction SilentlyContinue | Out-Null } catch {}
+        Start-Sleep -Seconds 5
+    }
+    $v = Get-BitLockerVolume -MountPoint $storageRoot -ErrorAction SilentlyContinue
+    if ($v) {
+        Write-Host "[wootc] $storageRoot BitLocker: status=$($v.VolumeStatus) protection=$($v.ProtectionStatus)"
+        if ($v.ProtectionStatus -ne 'Off') {
+            throw "Could not disable BitLocker on $storageRoot — the deployer would not be able to read root.disk"
+        }
+    } else {
+        Write-Host "[wootc] $storageRoot has no BitLocker volume object (plaintext)"
+    }
     Write-Host "[wootc] Linux will live on unencrypted volume $storageRoot (C: stays encrypted)"
 }
 Write-Host "[wootc] WOOTC_STORAGE_ROOT=$storageRoot"
