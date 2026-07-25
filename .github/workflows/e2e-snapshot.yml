@@ -101,6 +101,22 @@ jobs:
           # run-e2e.sh needs a positional; pass the default target.
           bash run-e2e.sh ghcr.io/tuna-os/yellowfin:gnome
 
+      # A failed prime left NO evidence at all, so "QGA never came up" could not
+      # be told apart from "Windows setup is stuck on a screen". The win10 prime
+      # (run 30142722155) waited the full 90 min while QEMU burned only ~6% CPU
+      # — an IDLE guest, i.e. parked on a prompt — and the screenshot that would
+      # name that prompt was never uploaded.
+      - name: Upload prime diagnostics (screenshot + serial)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: winbase-prime-${{ env.WIN_VERSION }}-bl-${{ env.BITLOCKER }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            tests/e2e/storage/artifacts/**
+            tests/e2e/storage/qemu.pty
+
       - name: Push base image to GHCR via ORAS
         run: |
           set -euo pipefail
