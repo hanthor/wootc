@@ -433,7 +433,26 @@ if [[ -f "$DISK" ]]; then
     if [[ "$_disk_size" -gt 0 ]]; then
         log "advancing NTFS ValidDataLength for root.disk (${_disk_size} bytes)..."
         dd if=/dev/zero of="$DISK" bs=1 count=1 seek=$((_disk_size - 1)) conv=notrunc status=none || true
-        tr '\0' '\377' < /dev/zero | dd of="$DISK" bs=10M count=$((_disk_size / 10485760 + 1)) conv=notrunc status=none || true
+        # This writes the WHOLE file (35 GiB) and used to run as a single
+        # status=none dd, so the serial went SILENT for however long the write
+        # took. That is indistinguishable from a hang: BitLocker cells sat at
+        # >100% guest CPU with zero output for 89 minutes and blew the 90-minute
+        # deploy budget, with the console dump ending at the block-device table
+        # (runs 30165015199, 30173452904). Write in chunks and log each one, so
+        # the step is visible, its rate is measurable, and a genuinely slow
+        # volume is distinguishable from a wedge.
+        _chunk_mb=4096
+        _total_mb=$(( _disk_size / 1048576 + 1 ))
+        _done_mb=0
+        _vdl_t0=$(date +%s)
+        while [ "$_done_mb" -lt "$_total_mb" ]; do
+            _n_mb=$(( _total_mb - _done_mb ))
+            [ "$_n_mb" -gt "$_chunk_mb" ] && _n_mb=$_chunk_mb
+            tr '\0' '\377' < /dev/zero | \
+                dd of="$DISK" bs=1M count="$_n_mb" seek="$_done_mb" conv=notrunc status=none 2>/dev/null || true
+            _done_mb=$(( _done_mb + _n_mb ))
+            log "  VDL: ${_done_mb}/${_total_mb} MiB after $(( $(date +%s) - _vdl_t0 ))s"
+        done
         sync
     fi
 fi
