@@ -338,6 +338,12 @@ try_mount_scan() {
 
 scan_for_root_disk() {
     local dev drv fstype
+    # Per-device findings are also collected here and replayed NEXT TO the
+    # final error. The harness only dumps the last ~30 serial lines on failure,
+    # so the per-device lines below scroll away and #34 kept arriving as a bare
+    # "Could not find root.disk on any partition" with no evidence (BitLocker
+    # run 30149803795). Adjacent beats earlier.
+    SCAN_REPORT=""
     for dev in /dev/sd* /dev/nvme* /dev/vd*; do
         [[ -b "$dev" ]] || continue
         # Name every device's filesystem signature — a BitLocker path (#34)
@@ -350,6 +356,7 @@ scan_for_root_disk() {
             # ciphertext explicitly: ntfs3/ntfs-3g would stall or mount garbage
             # on its NTFS-shaped boot sector and could wedge the scan.
             log "  ${dev}: BitLocker-encrypted (TYPE=BitLocker) — skipping; root.disk lives on the plaintext wootc-data volume"
+            SCAN_REPORT="${SCAN_REPORT}${dev}=BitLocker(skipped) "
             continue
         fi
         mkdir -p /mnt/scan
@@ -367,6 +374,7 @@ scan_for_root_disk() {
             # instead of a VM session. (Serial-only: the persistent log lives on
             # the very volume we're hunting for.)
             log "  ${dev}: mounted via ${drv}, no ${ROOT_DISK_PATH}"
+            SCAN_REPORT="${SCAN_REPORT}${dev}=${fstype:-?}/${drv}:no-root.disk[$(ls -A /mnt/scan 2>/dev/null | tr '\n' ',' | cut -c1-60)] "
             log "    top-level: $(ls -A /mnt/scan 2>/dev/null | tr '\n' ' ' | cut -c1-160)"
             [[ -d /mnt/scan/wootc ]] && \
                 log "    wootc/: $(ls -A /mnt/scan/wootc 2>/dev/null | tr '\n' ' ')" && \
@@ -375,6 +383,7 @@ scan_for_root_disk() {
         else
             # Silence here is what made #36 unattributable for two runs.
             log "  ${dev}: not mountable as NTFS (TYPE=${fstype:-none}; ntfs3, ntfs3+force, ntfs-3g all failed)"
+            SCAN_REPORT="${SCAN_REPORT}${dev}=${fstype:-none}(unmountable) "
         fi
     done
     return 1
@@ -400,6 +409,7 @@ done
 
 if [[ -z "$NTFS_PART" ]]; then
     err "Could not find ${ROOT_DISK_PATH} on any partition"
+    err "scan verdict per device: ${SCAN_REPORT:-<none scanned>}"
     err "final /proc/partitions:"
     cat /proc/partitions >&2 || true
     if [[ "$DEBUG" ]]; then exec /bin/bash; else exit 1; fi
