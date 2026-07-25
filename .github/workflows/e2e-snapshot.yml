@@ -105,7 +105,12 @@ jobs:
           # within 45 minutes", run 30140823622), which is circular: the cure
           # failed from the disease. One-time cost, then every matrix cell
           # restores in a couple of minutes.
-          WOOTC_E2E_WINDOWS_QGA_TIMEOUT: '5400' # 90 min
+          # BitLocker primes need MORE: encryption runs during setup, so the
+          # install is materially slower. The 11-pro-bl-on prime was still at
+          # "Installing Windows 11 — 56% complete" (screenshot, run 30153784274)
+          # when the 90-min budget expired — real progress, not a stuck prompt.
+          # 150 min still fits inside timeout-minutes: 240.
+          WOOTC_E2E_WINDOWS_QGA_TIMEOUT: ${{ github.event.inputs.bitlocker == 'on' && '9000' || '5400' }}
           WOOTC_E2E_WIN_VERSION: ${{ env.WIN_VERSION }}
           WOOTC_E2E_WIN_EDITION: ${{ env.WIN_EDITION }}
           WOOTC_E2E_WIN_KEY:     ${{ env.WIN_KEY }}
