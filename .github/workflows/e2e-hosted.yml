@@ -93,7 +93,10 @@ jobs:
             "https://github.com/oras-project/oras/releases/download/v${VERSION}/oras_${VERSION}_linux_amd64.tar.gz"
           tar -xzf oras.tar.gz oras && sudo install -m 0755 oras /usr/local/bin/oras
           PKG="ghcr.io/${{ github.repository_owner }}/wootc-winbase"
-          TAG="${{ inputs.win_version }}-bl-${{ inputs.bitlocker }}"
+          # Tag includes the EDITION: the product key selects the edition inside the
+          # ISO and is folded into the snapshot correctness key, so a pro-primed
+          # snapshot can never serve a home cell (it would be silently rejected).
+          TAG="${{ inputs.win_version }}-${{ inputs.win_edition || 'pro' }}-bl-${{ inputs.bitlocker }}"
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             oras login ghcr.io -u "${{ github.actor }}" --password-stdin
           sudo mkdir -p /mnt/wootc-snapshot && sudo chown "$USER" /mnt/wootc-snapshot

@@ -19,6 +19,18 @@ on:
     inputs:
       win_version: { description: 'Dockur version (11, 10, 11e, 10e)', default: '11' }
       bitlocker:   { description: 'BitLocker/FDE axis (on|off)', default: 'off' }
+      # The product key SELECTS THE EDITION inside the ISO, and it is folded into
+      # the snapshot correctness key (sha256 of the rendered answer file). Priming
+      # without it used run-e2e.sh's Enterprise default, which
+      #   (a) hung the win10 prime forever on Windows Setup's edition picker
+      #       ("No images are available" — the consumer win10 ISO has no
+      #       Enterprise image; screenshot, run 30145961492), and
+      #   (b) produced a snapshot whose key could never match the Pro-key matrix
+      #       cells, so every hosted cell silently did a FULL INSTALL and the
+      #       cache was never once used.
+      # Must match tests/e2e/matrix.tsv for the cases that consume this snapshot.
+      win_edition: { description: 'Edition label (pro|home|enterprise|ltsc|iot)', default: 'pro' }
+      win_key:     { description: 'Generic product key selecting that edition', default: 'W269N-WFGWX-YVC9B-4J6C9-T83GX' }
   # MVP: dispatch-only. The weekly base-image refresh schedule is disabled while
   # we iterate — re-add a `schedule:` cron once the E2E is stable.
 
@@ -27,7 +39,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: e2e-snapshot-${{ github.event.inputs.win_version || '11' }}-${{ github.event.inputs.bitlocker || 'off' }}
+  group: e2e-snapshot-${{ github.event.inputs.win_version || '11' }}-${{ github.event.inputs.win_edition || 'pro' }}-${{ github.event.inputs.bitlocker || 'off' }}
   cancel-in-progress: false
 
 jobs:
@@ -40,7 +52,9 @@ jobs:
     env:
       WIN_VERSION: ${{ github.event.inputs.win_version || '11' }}
       BITLOCKER:   ${{ github.event.inputs.bitlocker   || 'off' }}
-      # ghcr.io/<owner>/wootc-winbase:<win_version>-bl-<axis>
+      WIN_EDITION: ${{ github.event.inputs.win_edition || 'pro' }}
+      WIN_KEY:     ${{ github.event.inputs.win_key || 'W269N-WFGWX-YVC9B-4J6C9-T83GX' }}
+      # ghcr.io/<owner>/wootc-winbase:<win_version>-<edition>-bl-<axis>
       PKG: ghcr.io/${{ github.repository_owner }}/wootc-winbase
     steps:
       - uses: actions/checkout@v7
@@ -93,6 +107,8 @@ jobs:
           # restores in a couple of minutes.
           WOOTC_E2E_WINDOWS_QGA_TIMEOUT: '5400' # 90 min
           WOOTC_E2E_WIN_VERSION: ${{ env.WIN_VERSION }}
+          WOOTC_E2E_WIN_EDITION: ${{ env.WIN_EDITION }}
+          WOOTC_E2E_WIN_KEY:     ${{ env.WIN_KEY }}
           WOOTC_E2E_BITLOCKER:  ${{ env.BITLOCKER }}
           WOOTC_E2E_SNAPSHOT_OUT: /mnt/wootc-snapshot
         run: |
@@ -110,7 +126,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: winbase-prime-${{ env.WIN_VERSION }}-bl-${{ env.BITLOCKER }}
+          name: winbase-prime-${{ env.WIN_VERSION }}-${{ env.WIN_EDITION }}-bl-${{ env.BITLOCKER }}
           if-no-files-found: ignore
           retention-days: 7
           path: |
@@ -120,7 +136,7 @@ jobs:
       - name: Push base image to GHCR via ORAS
         run: |
           set -euo pipefail
-          TAG="${WIN_VERSION}-bl-${BITLOCKER}"
+          TAG="${WIN_VERSION}-${WIN_EDITION}-bl-${BITLOCKER}"
           echo "${{ secrets.GITHUB_TOKEN }}" | \
             oras login ghcr.io -u "${{ github.actor }}" --password-stdin
           cd /mnt/wootc-snapshot

@@ -36,7 +36,13 @@ IMAGE_REF=""
 # passed to Dockur for ISO edition selection where applicable.
 WIN_VERSION="${WOOTC_E2E_WIN_VERSION:-11}"
 WIN_EDITION="${WOOTC_E2E_WIN_EDITION:-pro}"
-WIN_KEY="${WOOTC_E2E_WIN_KEY:-NPPR9-FWDCX-D2C8J-H872K-2YT43}"
+# The default key must select the default EDITION. It used to be the Enterprise
+# key while WIN_EDITION defaulted to "pro" — a mismatch that is invisible on a
+# win11 ISO but fatal on the consumer win10 ISO, which contains no Enterprise
+# image: Windows Setup stops on "Select the operating system you want to install
+# → No images are available" and waits for a human FOREVER (idle VM at ~6% CPU;
+# screenshot, snapshot prime run 30145961492). Default to the Pro generic key.
+WIN_KEY="${WOOTC_E2E_WIN_KEY:-W269N-WFGWX-YVC9B-4J6C9-T83GX}"
 export WOOTC_E2E_WIN_VERSION="$WIN_VERSION" WOOTC_E2E_WIN_EDITION="$WIN_EDITION"
 
 # Parse flags
@@ -1002,6 +1008,18 @@ SNAPSHOT_IN="${WOOTC_E2E_SNAPSHOT_IN:-}"
 if [ "$SKIP_INSTALL" = false ] && [ -n "$SNAPSHOT_IN" ]; then
     want_key=$( { sha256sum < "$RENDERED_ANSWER"; echo "$WIN_VERSION"; } | sha256sum | awk '{print $1}')
     have_key=$(cat "$SNAPSHOT_IN/snapshot.key" 2>/dev/null | tr -d '[:space:]' || true)
+    # SAY WHY when a present snapshot is rejected. This fallback was silent, and
+    # a key mismatch (the prime baked a different product key into the answer
+    # file than the consuming run) meant EVERY hosted cell quietly did a full
+    # Windows install while the logs cheerfully said "Restored base image ..."
+    # from the ORAS pull step. The cache looked healthy and was never once used.
+    if [ -s "$SNAPSHOT_IN/data.qcow2" ] && [ -n "$have_key" ] && [ "$have_key" != "$want_key" ]; then
+        warn "Snapshot present but REJECTED: key mismatch (have=$have_key want=$want_key)"
+        warn "  → the snapshot was primed with a different answer file/product key or win_version;"
+        warn "    prime it with the SAME win_version/win_edition/win_key as this case. Doing a full install."
+    elif [ ! -s "$SNAPSHOT_IN/data.qcow2" ]; then
+        warn "Snapshot dir $SNAPSHOT_IN has no data.qcow2; doing a full install"
+    fi
     if [ -s "$SNAPSHOT_IN/data.qcow2" ] && [ "$have_key" = "$want_key" ]; then
         info "Restoring pristine Windows base image from $SNAPSHOT_IN (key $want_key)"
         $COMPOSE -f compose.yml down --volumes 2>/dev/null || true
