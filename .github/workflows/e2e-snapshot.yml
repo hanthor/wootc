@@ -33,7 +33,10 @@ concurrency:
 jobs:
   prime:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # 120 could not contain a 90-minute QGA budget plus deps, qcow2 compaction
+    # and the ORAS push. This job runs rarely (once per version/BitLocker axis)
+    # and every matrix cell depends on its output, so give it real headroom.
+    timeout-minutes: 240
     env:
       WIN_VERSION: ${{ github.event.inputs.win_version || '11' }}
       BITLOCKER:   ${{ github.event.inputs.bitlocker   || 'off' }}
@@ -82,6 +85,13 @@ jobs:
         env:
           WOOTC_E2E_RAM_SIZE: 6G
           WOOTC_E2E_DEPLOY_TIMEOUT: '3000'      # 50 min: install-only, no deploy
+          # Priming is exactly the slow full Windows install this snapshot exists
+          # to skip, so it needs the MOST generous QGA budget of any job — the
+          # win10 prime died at the 2700s default ("QGA did not become available
+          # within 45 minutes", run 30140823622), which is circular: the cure
+          # failed from the disease. One-time cost, then every matrix cell
+          # restores in a couple of minutes.
+          WOOTC_E2E_WINDOWS_QGA_TIMEOUT: '5400' # 90 min
           WOOTC_E2E_WIN_VERSION: ${{ env.WIN_VERSION }}
           WOOTC_E2E_BITLOCKER:  ${{ env.BITLOCKER }}
           WOOTC_E2E_SNAPSHOT_OUT: /mnt/wootc-snapshot
