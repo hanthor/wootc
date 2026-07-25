@@ -1089,6 +1089,27 @@ if [[ -n "$VERIFY_ROOT" ]]; then
         err "  [FAIL] could not determine Windows NTFS UUID"
         exit 1
     fi
+    # composefs+systemd-boot has NO separate /boot partition: p1 is the ESP and
+    # p2 IS the root, so the p2-as-/boot mount above simply mounted the root a
+    # second time (proven by the failure dump: "boot contents: ... composefs
+    # state var" — the sysroot, which even contains boot/ itself). The kernels
+    # and BLS entries live on the ESP. Mount it at boot/efi, which is exactly
+    # where the BLS_DIR fallback below and the composefs Phase-2 staging further
+    # down (TESP="$DEPLOY_ROOT/boot/efi") both already look. Keeping the p2 mount
+    # costs nothing and keeps $DEPLOY_ROOT/boot writable for the stage marker.
+    if [[ ! -d "$DEPLOY_ROOT/boot/loader/entries" ]]; then
+        VERIFY_ESP_DEV="${VERIFY_LOOP}p1"
+        if [[ -b "$VERIFY_ESP_DEV" ]] && ! mountpoint -q "$DEPLOY_ROOT/boot/efi"; then
+            mkdir -p "$DEPLOY_ROOT/boot/efi"
+            if mount -t vfat "$VERIFY_ESP_DEV" "$DEPLOY_ROOT/boot/efi" 2>/dev/null; then
+                ESP_BOUND_AT="$DEPLOY_ROOT/boot/efi"
+                log "  composefs: mounted target ESP ${VERIFY_ESP_DEV} at boot/efi"
+            else
+                err "  [WARN] could not mount target ESP ${VERIFY_ESP_DEV} at boot/efi"
+            fi
+        fi
+    fi
+
     # Where the installed system keeps its BLS entries depends on the backend:
     #   ostree/grub2        → <deploy>/boot/loader/entries
     #   composefs + systemd → <deploy>/boot/efi/loader/entries  (the target ESP)
@@ -1983,6 +2004,9 @@ GRUBEOF
     fi
 
     vstage "verify-complete (all stages passed; Phase-2 ESP is staged)"
+    # The composefs target ESP is mounted UNDER boot/, so it must go first or
+    # the boot umount fails busy.
+    [[ -n "${ESP_BOUND_AT:-}" ]] && umount "$ESP_BOUND_AT" 2>/dev/null || true
     umount "$DEPLOY_ROOT/boot"
     if [[ "$DEPLOY_VAR_BOUND" == true ]]; then
         umount "$DEPLOY_ROOT/var"
