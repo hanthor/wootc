@@ -1089,10 +1089,24 @@ if [[ -n "$VERIFY_ROOT" ]]; then
         err "  [FAIL] could not determine Windows NTFS UUID"
         exit 1
     fi
+    # Where the installed system keeps its BLS entries depends on the backend:
+    #   ostree/grub2        → <deploy>/boot/loader/entries
+    #   composefs + systemd → <deploy>/boot/efi/loader/entries  (the target ESP)
+    # This block hardcoded the ostree path and exited 1 on composefs ("no BLS
+    # entries found on installed /boot", dakota GH matrix 20260725T0330) —
+    # killing the deploy BEFORE the composefs Phase-2 staging further down, which
+    # already knew the boot/efi location. Resolve once and reuse.
     shopt -s nullglob
-    BLS_ENTRIES=("$DEPLOY_ROOT"/boot/loader/entries/*.conf)
+    BLS_DIR="$DEPLOY_ROOT/boot/loader/entries"
+    BLS_ENTRIES=("$BLS_DIR"/*.conf)
     if (( ${#BLS_ENTRIES[@]} == 0 )); then
-        err "  [FAIL] no BLS entries found on installed /boot"
+        BLS_DIR="$DEPLOY_ROOT/boot/efi/loader/entries"
+        BLS_ENTRIES=("$BLS_DIR"/*.conf)
+        (( ${#BLS_ENTRIES[@]} > 0 )) && log "  composefs: BLS entries under ${BLS_DIR#"$DEPLOY_ROOT"}"
+    fi
+    if (( ${#BLS_ENTRIES[@]} == 0 )); then
+        err "  [FAIL] no BLS entries found on installed /boot (checked boot/loader/entries and boot/efi/loader/entries)"
+        err "  boot contents: $(ls -A "$DEPLOY_ROOT/boot" 2>/dev/null | tr '\n' ' ')"
         exit 1
     fi
     for entry in "${BLS_ENTRIES[@]}"; do
@@ -1527,7 +1541,7 @@ QGAEOF
         err "  [FAIL] wootc-passthrough.service install failed"
     fi
 
-    if grep -q 'wootc.host_uuid=.*loop=/wootc/disks/root.disk' "$DEPLOY_ROOT"/boot/loader/entries/*.conf; then
+    if grep -q 'wootc.host_uuid=.*loop=/wootc/disks/root.disk' "${BLS_DIR:-$DEPLOY_ROOT/boot/loader/entries}"/*.conf; then
         log "  [PASS] Phase 2 loop-root arguments in BLS entries"
     else
         err "  [FAIL] Phase 2 loop-root arguments missing from BLS entries"
@@ -1724,7 +1738,7 @@ BLSEOF
                         exit 1
                     fi
 
-                    ROOT_OPTIONS=$(grep '^options ' "$DEPLOY_ROOT"/boot/loader/entries/*.conf 2>/dev/null | head -1 | sed 's/^options *//')
+                    ROOT_OPTIONS=$(grep '^options ' "${BLS_DIR:-$DEPLOY_ROOT/boot/loader/entries}"/*.conf 2>/dev/null | head -1 | sed 's/^options *//')
                     ROOT_OPTIONS=$(printf '%s' "$ROOT_OPTIONS" | tr ' ' '\n' | grep -v '\$' | grep -v -E '^(quiet|rhgb)$' | tr '\n' ' ')
                     mkdir -p /mnt/esp/loader/entries
                     cat > /mnt/esp/loader/entries/wootc.conf <<BLSEOF
@@ -1853,7 +1867,7 @@ BLSEOF
 
                 # Kernel cmdline from the patched BLS entry (keeps root=UUID
                 # and ostree=; the loop-attach hook makes that UUID appear).
-                ROOT_OPTIONS=$(grep '^options ' "$DEPLOY_ROOT"/boot/loader/entries/*.conf 2>/dev/null | head -1 | sed 's/^options *//')
+                ROOT_OPTIONS=$(grep '^options ' "${BLS_DIR:-$DEPLOY_ROOT/boot/loader/entries}"/*.conf 2>/dev/null | head -1 | sed 's/^options *//')
                 # BLS $kernelopts-style variables never resolve in our
                 # grub.cfg; drop tokens containing '$'. Also drop quiet/rhgb —
                 # a silent early-boot panic (all 4 vCPUs parked in
