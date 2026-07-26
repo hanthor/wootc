@@ -509,7 +509,7 @@ qga_windows_probe() {
 }
 
 qga_wait_windows() {
-    local timeout="$1" elapsed=0
+    local timeout="$1" elapsed=0 idle_hits=0 cpu
     step "Waiting for QGA: Windows guest..."
     local deadline; deadline=$(deadline_in "$timeout")
     while ! past_deadline "$deadline"; do
@@ -520,6 +520,30 @@ qga_wait_windows() {
         sleep 10
         elapsed=$((elapsed + 10))
         [ $((elapsed % 60)) -eq 0 ] && info "Waiting for QGA (Windows guest)... ($(( elapsed / 60 ))m of $((timeout/60))m)"
+        # IDLE-HANG DETECTOR. A Windows Setup parked on a prompt (e.g. the
+        # edition picker with "No images are available" when the answer file's
+        # product key matches no image in the ISO — see #58) burns this ENTIRE
+        # budget while the VM sits near 0% CPU. That cost several 45-90 minute
+        # runs today and was repeatedly misread as "slow runner", which sent us
+        # raising timeouts that could never help. A real install pegs the CPU;
+        # an idle guest is waiting for a human. Detect it, screenshot it, and
+        # fail in minutes with a verdict that names the actual condition.
+        if [ "$elapsed" -ge 900 ] && [ $((elapsed % 300)) -eq 0 ]; then
+            cpu=$($DOCKER exec "$CONTAINER_NAME" sh -c \
+                "ps -eo pcpu,args | grep '[q]emu-system' | head -1 | awk '{print \$1}'" 2>/dev/null | tr -d ' \r\n')
+            if [ -n "$cpu" ] && awk -v c="$cpu" 'BEGIN{exit !(c < 10)}' 2>/dev/null; then
+                idle_hits=$((idle_hits + 1))
+                warn "  guest CPU ${cpu}% — Windows Setup may be waiting for input (${idle_hits}/3)"
+                if [ "$idle_hits" -ge 3 ]; then
+                    fail "Windows Setup appears WEDGED on a prompt: guest idle (<10% CPU) for ~15 min, not installing"
+                    fail "  A real install pegs the CPU. Check the screenshot in the artifacts (see #58)."
+                    capture_vm_diagnostics
+                    return 1
+                fi
+            else
+                idle_hits=0
+            fi
+        fi
     done
     fail "Windows QGA did not become available within $((timeout / 60)) minutes"
     return 1

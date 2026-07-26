@@ -21,7 +21,15 @@
 
 set -Eeuo pipefail
 
-BASE_IMAGE="${WOOTC_E2E_BASE_IMAGE:-docker.io/dockurr/windows}"
+# PINNED. `:latest` moved from v6.02 to v6.03 mid-session and swtpm stopped
+# starting inside the container ("Waiting for TPM emulator to launch..." then
+# "ERROR: TPM socket (/tmp/swtpm.sock) not found? Disabling TPM module"),
+# so dockur silently ran QEMU WITHOUT a TPM and every Windows 11 case failed the
+# "missing TPM 2.0 or Secure Boot" preflight (runs 30183222185, 30188615998 —
+# container.log records the version on its first line). Windows 11 requires
+# TPM 2.0, so an unpinned base can break the whole matrix without a wootc change.
+# Bump deliberately, after a green run, not by surprise.
+BASE_IMAGE="${WOOTC_E2E_BASE_IMAGE:-docker.io/dockurr/windows:6.02}"
 TARGET_IMAGE="localhost/wootc-e2e-windows-ssh:latest"
 KEYFILE="${1:-$HOME/.ssh/wootc_e2e_ed25519}"
 BUILDER="wootc-ssh-builder"
