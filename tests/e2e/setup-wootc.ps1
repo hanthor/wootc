@@ -71,7 +71,20 @@ Write-Host "[wootc] C: BitLocker state: $blState"
 
 if ($blState -ne 'off') {
     Write-Host "[wootc] C: is protected — creating an unencrypted volume for Linux (no decrypt)"
-    $needBytes = ([int64]$DiskSizeGB + 6) * 1GB
+    # root.disk is NOT the only thing that lands on this volume. The deployer
+    # also creates a 20 GiB ext4 scratch image next to it
+    # (wootc/cache/deployer-scratch.img — ntfs3 has no sparse support, so it is
+    # fully allocated) plus the image cache and logs. Carving only
+    # DiskSizeGB + 6 gave a 41 GiB volume for 35 GiB of root.disk + 20 GiB of
+    # scratch, so the deployer ran the volume out of space and ground silently
+    # until the 90-minute budget expired (BitLocker cells, runs 30165015199 /
+    # 30173452904 / 30177404786 — no VDL progress lines, so it never even
+    # reached the root.disk write). Non-BitLocker cells never hit this because
+    # root.disk lives on a roomy C:.
+    $scratchGiB = 20
+    $headroomGiB = 6
+    $needBytes = ([int64]$DiskSizeGB + $scratchGiB + $headroomGiB) * 1GB
+    Write-Host "[wootc] Carving $([int64]$DiskSizeGB + $scratchGiB + $headroomGiB) GiB for Linux (root.disk ${DiskSizeGB}G + scratch ${scratchGiB}G + ${headroomGiB}G headroom)"
     $cPart = Get-Partition -DriveLetter C
     $sup   = Get-PartitionSupportedSize -DriveLetter C
     $target = $cPart.Size - $needBytes
