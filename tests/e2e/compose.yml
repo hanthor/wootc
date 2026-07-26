@@ -89,9 +89,11 @@ services:
     # as a "workaround to circumvent AppArmor profile". Ubuntu AppArmor is the
     # leading suspect; swtpm stderr is discarded by its -d daemonization, so a
     # denial would be invisible.
-    security_opt:
-      - apparmor=unconfined
-      - label=disable
+    # NOTE (#59): an `apparmor=unconfined` + `label=disable` experiment lived
+    # here. It did not fix the GitHub-runner TPM failure, and on SELinux hosts
+    # (himachal/dilli are bootc/Fedora) `label=disable` changes container
+    # labeling — a needless difference on the machines that actually work.
+    # Removed; do not re-add without evidence.
     # Kanpur's default rootful Podman DNS path intermittently cannot resolve
     # Microsoft's download hosts. Use a reachable public resolver for the
     # one-time Windows installer acquisition.
