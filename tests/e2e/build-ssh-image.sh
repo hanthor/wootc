@@ -113,33 +113,25 @@ while [ $# -gt 0 ]; do
   shift
 done
 # shellcheck disable=SC2086  # word splitting is intended
-# Background swtpm DIRECTLY — no setsid. setsid forks and exits, so $! was the
-# setsid pid, already dead by the time dockur read the pid file. dockur requires
-# pid-file AND socket AND isAlive(pid), so a dead pid disabled TPM even though
-# the socket bound in 0s. swtpm writes the pid file itself via --pid (passed
-# through); only fill it in as a fallback if it is missing.
-/usr/bin/swtpm $NEWARGS >>/tmp/wootc-swtpm.log 2>&1 &
-child=$!
-[ -n "$PIDFILE" ] && [ ! -s "$PIDFILE" ] && printf '%s\n' "$child" > "$PIDFILE" 2>/dev/null
-# Wait for the socket HERE, and do not return until it exists. dockur polls only
-# ~25 short iterations and then runs stopTpm, which deletes the socket and pid
-# file — so a slow bind looks identical to a dead emulator, and every probe
-# afterwards sees only the aftermath. Hold the door open for 60s and record how
-# long the bind actually took.
+# Detach with setsid so swtpm survives this wrapper returning (without it the
+# child sits in our process group and can be signalled away), but do NOT write
+# the pid file from $! — that is setsid's pid, which exits immediately, and
+# dockur requires isAlive(pid). swtpm writes the pid file itself from the --pid
+# it already receives; wait for BOTH that file and the socket.
+setsid /usr/bin/swtpm $NEWARGS >>/tmp/wootc-swtpm.log 2>&1 &
 start=$(date +%s)
 i=0
 while [ "$i" -lt 300 ]; do
-  if [ -n "$SOCK" ] && [ -S "$SOCK" ]; then
-    echo "[wootc] swtpm bound $SOCK after $(( $(date +%s) - start ))s" >> /tmp/wootc-swtpm.log
-    exit 0
+  if [ -n "$SOCK" ] && [ -S "$SOCK" ] && [ -n "$PIDFILE" ] && [ -s "$PIDFILE" ]; then
+    p=$(cat "$PIDFILE" 2>/dev/null)
+    if kill -0 "$p" 2>/dev/null; then
+      echo "[wootc] swtpm ready: socket=$SOCK pid=$p after $(( $(date +%s) - start ))s" >> /tmp/wootc-swtpm.log
+      exit 0
+    fi
   fi
-  kill -0 "$child" 2>/dev/null || {
-    echo "[wootc] swtpm died after $(( $(date +%s) - start ))s without binding $SOCK" >> /tmp/wootc-swtpm.log
-    break
-  }
   i=$((i + 1)); sleep 0.2
 done
-echo "[wootc] gave up waiting for $SOCK after $(( $(date +%s) - start ))s" >> /tmp/wootc-swtpm.log
+echo "[wootc] not ready after $(( $(date +%s) - start ))s: socket=$([ -S "$SOCK" ] && echo yes || echo no) pidfile=$(cat "$PIDFILE" 2>/dev/null || echo none)" >> /tmp/wootc-swtpm.log
 exit 0
 EOF
 podman cp "$SWTPM_WRAP" "$BUILDER:/run/swtpm"
