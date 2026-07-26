@@ -101,7 +101,15 @@ services:
       - ${WOOTC_E2E_STORAGE_VOL:-./storage}:/storage
       # Dockur only creates DISK2_SIZE when /storage2 exists. Keep the Phase-3
       # graduate target isolated from the Windows disk and normal artifacts.
-      - ${WOOTC_E2E_STORAGE_VOL:-./storage}/phase3:/storage2
+      # Mount target is variable ON PURPOSE. Dockur creates a disk2 whenever
+      # /storage2 exists, and with DISK2_SIZE empty it defaults to SIXTY-FOUR
+      # GIGABYTES — formatted on every run, phase3 or not. That qcow2 format
+      # runs immediately before dockur starts swtpm and waits only ~4s for it;
+      # under the extra I/O swtpm lost the race, dockur SILENTLY disabled TPM,
+      # and every Windows 11 case failed 'missing TPM 2.0 or Secure Boot'
+      # (runs 30183222185/30188615998/30191469484). Non-phase3 runs now mount
+      # elsewhere so dockur sees no /storage2 and creates no second disk.
+      - ${WOOTC_E2E_STORAGE_VOL:-./storage}/phase3:${WOOTC_E2E_DISK2_MOUNT:-/storage2-unused}
       # Deployer files: deployer-vmlinuz, deployer-initramfs.img,
       # grubx64.efi, grub configs — shared as Samba \\host.lan\Data
       - ./wootc-files:/shared

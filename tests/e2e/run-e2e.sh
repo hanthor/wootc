@@ -74,6 +74,9 @@ IMAGE_REF="${IMAGE_REF:-ghcr.io/tuna-os/yellowfin:gnome}"
 # target and aborted immediately after the safe status probe.
 if [ "${RUN_PHASE3:-false}" = true ]; then
     export WOOTC_E2E_DISK2_SIZE="${WOOTC_E2E_DISK2_SIZE:-40G}"
+    # Only phase3 wants a second disk. See compose.yml: dockur keys off the
+    # PRESENCE of /storage2, so non-phase3 runs mount it somewhere harmless.
+    export WOOTC_E2E_DISK2_MOUNT=/storage2
 fi
 
 RED='\033[0;31m'
