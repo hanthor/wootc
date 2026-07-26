@@ -435,3 +435,41 @@ The debugging move that cracked it in minutes: while the failed Phase 2 was
 still running, reproduce the exact failing command by hand over QGA, then
 bisect the variants (--root vs chroot vs --prefix) live. One boot's evidence
 beats three relaunch cycles.
+
+## 24. A verdict is only trustworthy if the run actually ended
+
+`run-matrix.sh` polled for any `[FAIL]` line and concluded on the first one.
+But several run-e2e checks are invoked as `... || true`, so a **non-fatal**
+failure line looks identical in the log to a fatal one. A cosmetic
+`seed_user_data` failure therefore ended the poll ~35 minutes early, recorded
+itself as the case's verdict, and sent me hunting a "composefs" bug that was
+neither composefs nor the reason the case died — while the run was still
+deploying.
+
+The rule: conclude on a **terminal state**, never on the presence of a scary
+line. `run-e2e.sh` stamps `stage=exited` from an EXIT trap, so an ending is
+always observable; the last `[FAIL]` then supplies the *reason* — it does not
+supply the *fact* of failure. And delete the previous case's state file with
+its log, or a stale stamp declares the new case finished the moment it starts.
+
+This is lesson §21's sibling: there, a service could succeed while doing
+nothing; here, an observer could report a failure that had not happened yet.
+
+## 25. The guest chooses the drive letter, not you
+
+On the BitLocker axis `setup-wootc.ps1` carves an unencrypted volume and puts
+the whole tree on it — `E:\wootc\{disks,install,logs}`. The harness hardcoded
+`C:\wootc\...` in four places. So `el10-gnome-win11pro-bitlocker` deployed
+**successfully**, passed both FDE assertions (C: still encrypted, Linux on
+unencrypted E:), and then died 39 minutes in on "Could not read wootc BCD GUID
+from Windows" — reading a file from a drive it was never written to. The VDL
+extension had already silently skipped for the same reason, reporting only
+`size='0'` at INFO level.
+
+Two habits fall out of this:
+- When the guest-side script computes a location (`$storageRoot`), the
+  host-side must **ask for it**, not re-derive it. `guest_wootc_root()` queries
+  the guest and caches only a positive answer.
+- `info "Could not read X (size='0'), continuing"` is a bug report wearing a
+  progress message. A read that returns nothing where something must exist is
+  never a continue-quietly condition.
