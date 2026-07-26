@@ -50,6 +50,29 @@ echo "+ installing openssh-server"
 podman exec "$BUILDER" sh -c "apt-get update -qq && apt-get install -y -qq openssh-server >/dev/null"
 podman exec "$BUILDER" ssh-keygen -A
 
+# ── #59: move the swtpm state off /storage ──────────────────────────────────
+# dockur puts TPM state next to the firmware: boot.sh has
+#   DEST="$STORAGE/${BOOT_MODE,,}"   …   --tpmstate "backend-uri=file://$DEST.tpm"
+# On GitHub-hosted runners, swtpm HANGS when its state lives on the bind-mounted
+# /storage (ext4 from the runner's /mnt): it runs with correct arguments, prints
+# nothing, and never binds its control socket. dockur waits ~4s, gives up, and
+# SILENTLY disables TPM — so Windows 11 boots without TPM 2.0 and every win11
+# case fails our preflight. Proven with an A/B inside one failing container:
+#   state on /storage -> timeout, no socket        (storage-fs=ext2/ext3)
+#   state on /tmp     -> srwxrwx--- socket created (tmp-fs=overlayfs)
+# /storage is writable, so this is not permissions; five other theories
+# (dockur version, disk2 I/O, disk resize, our apt step, AppArmor) were each
+# disproven by a run. See #59.
+#
+# Only the tpmstate URI moves. DEST still points at /storage for the pflash
+# ROM/VARS, which must persist. /run is container-lifetime, so TPM state
+# survives the guest reboots within a run (Phase 1 -> Phase 2); it was never
+# carried in the base-image snapshots anyway.
+echo "+ patching dockur boot.sh to keep swtpm state off /storage (#59)"
+podman exec "$BUILDER" sh -c \
+    "sed -i 's#backend-uri=file://\$DEST.tpm#backend-uri=file:///run/wootc-swtpm.state#' /run/boot.sh && \
+     grep -n 'tpmstate' /run/boot.sh"
+
 echo "+ installing authorized_keys (key-only auth)"
 podman exec "$BUILDER" mkdir -p /root/.ssh
 podman cp "${KEYFILE}.pub" "$BUILDER:/root/.ssh/authorized_keys"
