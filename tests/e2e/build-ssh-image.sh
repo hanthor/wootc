@@ -50,93 +50,12 @@ echo "+ installing openssh-server"
 podman exec "$BUILDER" sh -c "apt-get update -qq && apt-get install -y -qq openssh-server >/dev/null"
 podman exec "$BUILDER" ssh-keygen -A
 
-# ── #59: move the swtpm state off /storage ──────────────────────────────────
-# dockur puts TPM state next to the firmware: boot.sh has
-#   DEST="$STORAGE/${BOOT_MODE,,}"   …   --tpmstate "backend-uri=file://$DEST.tpm"
-# On GitHub-hosted runners, swtpm HANGS when its state lives on the bind-mounted
-# /storage (ext4 from the runner's /mnt): it runs with correct arguments, prints
-# nothing, and never binds its control socket. dockur waits ~4s, gives up, and
-# SILENTLY disables TPM — so Windows 11 boots without TPM 2.0 and every win11
-# case fails our preflight. Proven with an A/B inside one failing container:
-#   state on /storage -> timeout, no socket        (storage-fs=ext2/ext3)
-#   state on /tmp     -> srwxrwx--- socket created (tmp-fs=overlayfs)
-# /storage is writable, so this is not permissions; five other theories
-# (dockur version, disk2 I/O, disk resize, our apt step, AppArmor) were each
-# disproven by a run. See #59.
-#
-# Only the tpmstate URI moves. DEST still points at /storage for the pflash
-# ROM/VARS, which must persist. /tmp is container-lifetime (it is part of the
-# container's overlayfs, per the probe: tmp-fs=overlayfs), so TPM state survives
-# guest reboots within a run (Phase 1 -> Phase 2); it was never carried in the
-# base-image snapshots anyway.
-#
-# /tmp specifically, NOT /run: the A/B measured /tmp binding a socket in the
-# failing container, and a first attempt using /run still failed (run
-# 30197227495 — patch applied, swtpm still never bound). Use the path that was
-# actually proven.
-echo "+ patching dockur boot.sh to keep swtpm state off /storage (#59)"
-podman exec "$BUILDER" sh -c \
-    "sed -i 's#backend-uri=file://\$DEST.tpm#backend-uri=file:///tmp/wootc-swtpm.state#' /run/boot.sh && \
-     grep -n 'tpmstate' /run/boot.sh"
-
-# ── #59 part 2: run swtpm WITHOUT -d ────────────────────────────────────────
-# Final discriminator, both inside the SAME failing container and with the same
-# state path:
-#   dockur's form   swtpm socket -t -d … --pid file=…   -> no socket, no pid file
-#   backgrounded    swtpm socket -t    … (no -d)        -> socket bound instantly
-# So the blocker is the -d daemonization, not the state path and not any of the
-# five earlier theories. dockur cannot see this because -d makes the parent exit
-# 0 regardless of what the child does.
-#
-# boot.sh only copies /usr/bin/swtpm to $SWTPM when $SWTPM is not already
-# executable, so shipping an executable wrapper at that path takes over the
-# invocation without touching boot.sh further. The wrapper drops -d, runs swtpm
-# under setsid in the background, writes the pid file dockur polls for, and
-# waits for the control socket to appear.
-echo "+ installing swtpm wrapper that drops -d (#59)"
-SWTPM_WRAP=$(mktemp)
-cat << 'EOF' > "$SWTPM_WRAP"
-#!/bin/sh
-# wootc (#59): dockur launches swtpm with -d; in this container the daemonized
-# child never binds its control socket nor writes its pid file, and -d hides the
-# failure. Run it in the background instead and wait for the socket.
-PIDFILE=""; SOCK=""; NEWARGS=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -d) ;;                                   # drop daemonize
-    --pid)  PIDFILE=$(printf '%s' "$2" | sed 's/^file=//')
-            NEWARGS="$NEWARGS --pid $2"; shift ;;
-    --ctrl) SOCK=$(printf '%s' "$2" | sed 's/.*path=//')
-            NEWARGS="$NEWARGS --ctrl $2"; shift ;;
-    *) NEWARGS="$NEWARGS $1" ;;
-  esac
-  shift
-done
-# shellcheck disable=SC2086  # word splitting is intended
-# Detach with setsid so swtpm survives this wrapper returning (without it the
-# child sits in our process group and can be signalled away), but do NOT write
-# the pid file from $! — that is setsid's pid, which exits immediately, and
-# dockur requires isAlive(pid). swtpm writes the pid file itself from the --pid
-# it already receives; wait for BOTH that file and the socket.
-setsid /usr/bin/swtpm $NEWARGS >>/tmp/wootc-swtpm.log 2>&1 &
-start=$(date +%s)
-i=0
-while [ "$i" -lt 300 ]; do
-  if [ -n "$SOCK" ] && [ -S "$SOCK" ] && [ -n "$PIDFILE" ] && [ -s "$PIDFILE" ]; then
-    p=$(cat "$PIDFILE" 2>/dev/null)
-    if kill -0 "$p" 2>/dev/null; then
-      echo "[wootc] swtpm ready: socket=$SOCK pid=$p after $(( $(date +%s) - start ))s" >> /tmp/wootc-swtpm.log
-      exit 0
-    fi
-  fi
-  i=$((i + 1)); sleep 0.2
-done
-echo "[wootc] not ready after $(( $(date +%s) - start ))s: socket=$([ -S "$SOCK" ] && echo yes || echo no) pidfile=$(cat "$PIDFILE" 2>/dev/null || echo none)" >> /tmp/wootc-swtpm.log
-exit 0
-EOF
-podman cp "$SWTPM_WRAP" "$BUILDER:/run/swtpm"
-rm -f "$SWTPM_WRAP"
-podman exec "$BUILDER" chmod +x /run/swtpm
+# NOTE (#59): a swtpm wrapper and a tpmstate-path patch lived here. Neither
+# fixed the GitHub-runner failure, and on self-hosted hosts — where stock dockur
+# TPM works fine — they BROKE it (dilli dakota run, 2026-07-26: "missing TPM 2.0
+# or Secure Boot" with the wrapper baked in, after the stock image had been
+# verified working on the same box). Reverted: do not modify dockur's TPM path.
+# #59 stays open as a GitHub-hosted-runner environment defect.
 
 echo "+ installing authorized_keys (key-only auth)"
 podman exec "$BUILDER" mkdir -p /root/.ssh
