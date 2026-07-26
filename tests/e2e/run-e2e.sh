@@ -448,10 +448,22 @@ qga_call() {
     if [ "$timeout_s" -le 5 ]; then tries=1; fi
     local rc=0 try
     for try in $(seq 1 $tries); do
+        # `else rc=$?` is load-bearing (#39). Assigning rc AFTER the `fi`
+        # captures the exit status of the IF STATEMENT, not of the command —
+        # and an `if` whose condition failed with no else branch is itself
+        # status 0. So the old form returned SUCCESS once every retry had
+        # failed:
+        #     f(){ for i in 1 2; do if false; then return 0; fi; rc=$?; done; return $rc; }
+        #     f; echo $?   # -> 0
+        # That made qga_probe/qga_wait able to print "[PASS] QGA available"
+        # with no agent answering, and let failed PowerShell/file-write/exec
+        # requests look successful — the project's dominant failure class,
+        # status taken from a proxy instead of the real observable.
         if timeout "$timeout_s" $DOCKER exec "$CONTAINER_NAME" python3 /tmp/qga.py "$@"; then
             return 0
+        else
+            rc=$?
         fi
-        rc=$?
         sleep 1
     done
     return $rc

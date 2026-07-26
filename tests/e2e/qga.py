@@ -9,6 +9,7 @@ container without adding another dependency.
 import argparse
 import base64
 import json
+import os
 import socket
 import sys
 import time
@@ -86,21 +87,55 @@ class GuestAgent:
     def write_file(self, local_path, guest_path):
         """Copy a local file to the guest through QGA in bounded chunks."""
         handle = self.request("guest-file-open", {"path": guest_path, "mode": "w"})
+        written_total = 0
         try:
             with open(local_path, "rb") as source:
                 while True:
                     chunk = source.read(256 * 1024)
                     if not chunk:
                         break
-                    self.request(
-                        "guest-file-write",
-                        {
-                            "handle": handle,
-                            "buf-b64": base64.b64encode(chunk).decode("ascii"),
-                        },
-                    )
+                    # guest-file-write returns the number of bytes ACTUALLY
+                    # written, which may be less than the buffer submitted.
+                    # Ignoring it silently truncated boot-critical payloads
+                    # (kernel, initramfs, EFI binaries) while reporting success,
+                    # so the resulting boot failure surfaced far from its cause
+                    # (#42). Write the remainder until the chunk is consumed,
+                    # and fail loudly on zero/invalid progress rather than
+                    # spinning or advancing past a hole.
+                    offset = 0
+                    while offset < len(chunk):
+                        res = self.request(
+                            "guest-file-write",
+                            {
+                                "handle": handle,
+                                "buf-b64": base64.b64encode(chunk[offset:]).decode("ascii"),
+                            },
+                        )
+                        count = (res or {}).get("count")
+                        if not isinstance(count, int) or count <= 0:
+                            raise RuntimeError(
+                                "guest-file-write made no progress on %s at byte %d "
+                                "(count=%r); guest file is incomplete"
+                                % (guest_path, written_total + offset, count)
+                            )
+                        offset += count
+                        written_total += count
         finally:
+            # Flush before close so the guest cannot report success on data
+            # still buffered, and let close errors propagate.
+            try:
+                self.request("guest-file-flush", {"handle": handle})
+            except Exception:
+                pass
             self.request("guest-file-close", {"handle": handle})
+
+        expected = os.path.getsize(local_path)
+        if written_total != expected:
+            raise RuntimeError(
+                "short write to %s: wrote %d of %d bytes"
+                % (guest_path, written_total, expected)
+            )
+        return written_total
 
 
 def powershell(agent, command):
