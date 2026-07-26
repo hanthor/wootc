@@ -113,9 +113,14 @@ while [ $# -gt 0 ]; do
   shift
 done
 # shellcheck disable=SC2086  # word splitting is intended
-setsid /usr/bin/swtpm $NEWARGS >>/tmp/wootc-swtpm.log 2>&1 &
+# Background swtpm DIRECTLY — no setsid. setsid forks and exits, so $! was the
+# setsid pid, already dead by the time dockur read the pid file. dockur requires
+# pid-file AND socket AND isAlive(pid), so a dead pid disabled TPM even though
+# the socket bound in 0s. swtpm writes the pid file itself via --pid (passed
+# through); only fill it in as a fallback if it is missing.
+/usr/bin/swtpm $NEWARGS >>/tmp/wootc-swtpm.log 2>&1 &
 child=$!
-[ -n "$PIDFILE" ] && printf '%s\n' "$child" > "$PIDFILE" 2>/dev/null
+[ -n "$PIDFILE" ] && [ ! -s "$PIDFILE" ] && printf '%s\n' "$child" > "$PIDFILE" 2>/dev/null
 # Wait for the socket HERE, and do not return until it exists. dockur polls only
 # ~25 short iterations and then runs stopTpm, which deletes the socket and pid
 # file — so a slow bind looks identical to a dead emulator, and every probe
