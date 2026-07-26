@@ -79,6 +79,55 @@ podman exec "$BUILDER" sh -c \
     "sed -i 's#backend-uri=file://\$DEST.tpm#backend-uri=file:///tmp/wootc-swtpm.state#' /run/boot.sh && \
      grep -n 'tpmstate' /run/boot.sh"
 
+# ── #59 part 2: run swtpm WITHOUT -d ────────────────────────────────────────
+# Final discriminator, both inside the SAME failing container and with the same
+# state path:
+#   dockur's form   swtpm socket -t -d … --pid file=…   -> no socket, no pid file
+#   backgrounded    swtpm socket -t    … (no -d)        -> socket bound instantly
+# So the blocker is the -d daemonization, not the state path and not any of the
+# five earlier theories. dockur cannot see this because -d makes the parent exit
+# 0 regardless of what the child does.
+#
+# boot.sh only copies /usr/bin/swtpm to $SWTPM when $SWTPM is not already
+# executable, so shipping an executable wrapper at that path takes over the
+# invocation without touching boot.sh further. The wrapper drops -d, runs swtpm
+# under setsid in the background, writes the pid file dockur polls for, and
+# waits for the control socket to appear.
+echo "+ installing swtpm wrapper that drops -d (#59)"
+SWTPM_WRAP=$(mktemp)
+cat << 'EOF' > "$SWTPM_WRAP"
+#!/bin/sh
+# wootc (#59): dockur launches swtpm with -d; in this container the daemonized
+# child never binds its control socket nor writes its pid file, and -d hides the
+# failure. Run it in the background instead and wait for the socket.
+PIDFILE=""; SOCK=""; NEWARGS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) ;;                                   # drop daemonize
+    --pid)  PIDFILE=$(printf '%s' "$2" | sed 's/^file=//')
+            NEWARGS="$NEWARGS --pid $2"; shift ;;
+    --ctrl) SOCK=$(printf '%s' "$2" | sed 's/.*path=//')
+            NEWARGS="$NEWARGS --ctrl $2"; shift ;;
+    *) NEWARGS="$NEWARGS $1" ;;
+  esac
+  shift
+done
+# shellcheck disable=SC2086  # word splitting is intended
+setsid /usr/bin/swtpm $NEWARGS >/tmp/wootc-swtpm.log 2>&1 &
+child=$!
+[ -n "$PIDFILE" ] && printf '%s\n' "$child" > "$PIDFILE" 2>/dev/null
+i=0
+while [ "$i" -lt 60 ]; do
+  [ -n "$SOCK" ] && [ -S "$SOCK" ] && exit 0
+  kill -0 "$child" 2>/dev/null || break
+  i=$((i + 1)); sleep 0.2
+done
+exit 0
+EOF
+podman cp "$SWTPM_WRAP" "$BUILDER:/run/swtpm"
+rm -f "$SWTPM_WRAP"
+podman exec "$BUILDER" chmod +x /run/swtpm
+
 echo "+ installing authorized_keys (key-only auth)"
 podman exec "$BUILDER" mkdir -p /root/.ssh
 podman cp "${KEYFILE}.pub" "$BUILDER:/root/.ssh/authorized_keys"
