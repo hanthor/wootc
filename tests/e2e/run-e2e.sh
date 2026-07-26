@@ -988,7 +988,17 @@ E2E_COMPOSEFS="${WOOTC_E2E_COMPOSEFS:-auto}"
     # root.disk size. The BitLocker path carves root.disk + the deployer's
     # 20 GiB scratch out of C:, so an oversized root.disk makes the carve
     # impossible on an 80G guest. Tunable per case rather than fixed at 35.
-    printf 'RootDiskGiB=%s\n' "${WOOTC_E2E_ROOT_DISK_GIB:-35}"
+    # BitLocker carves root.disk AND the deployer's 20 GiB scratch out of C:, so
+    # the default 35 GiB root.disk needs a 61 GiB carve that an 80 GiB guest
+    # holding Windows cannot give up ("Not enough room on C: to carve an
+    # unencrypted volume for Linux"). Use a smaller root.disk on that axis by
+    # DEFAULT — this rule belongs in the harness, not only in the CI workflow,
+    # or local runs fail while CI passes (himachal, 20260726T2244).
+    if [ "${WOOTC_E2E_BITLOCKER:-off}" = "on" ]; then
+        printf 'RootDiskGiB=%s\n' "${WOOTC_E2E_ROOT_DISK_GIB:-25}"
+    else
+        printf 'RootDiskGiB=%s\n' "${WOOTC_E2E_ROOT_DISK_GIB:-35}"
+    fi
 } > "$OEM_DIR/wootc-config.txt"
 printf '[INFO] Deployer config: image=%s bootloader=%s composefs=%s\n' \
     "$IMAGE_REF" "$E2E_BOOTLOADER" "$E2E_COMPOSEFS" >&2
