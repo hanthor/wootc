@@ -1418,6 +1418,15 @@ if [[ "$QEMU_CMD" != *"-tpmdev emulator"* || "$QEMU_CMD" != *"property=secure,va
         # instantly on a self-hosted host. If /tmp works HERE and /storage does
         # not, the blocker is the bind-mounted storage filesystem, not swtpm,
         # not confinement, and not dockur.
+        # THE swtpm stderr, at last: the wrapper redirects the real binary here.
+        # Every previous round lost it — dockur discards it via -d, and our own
+        # probes ran a DIFFERENT command that happened to work.
+        echo "--- swtpm log (/tmp/wootc-swtpm.log) ---"
+        head -10 /tmp/wootc-swtpm.log 2>&1
+        echo "--- /var/run writability (pid file never appears) ---"
+        ls -ld /var/run 2>&1 | head -1
+        touch /var/run/.wootc-w 2>&1 && echo "var-run-write=OK" || echo "var-run-write=FAILED"
+        rm -f /var/run/.wootc-w
         echo "--- A/B: state on /tmp instead ---"
         rm -f /tmp/wootc-tmp.sock
         timeout 10 /run/swtpm socket -t --tpm2 \
