@@ -366,8 +366,8 @@ capture_vm_diagnostics() {
         info "QGA C:\\OEM\\e2e-setup-failed.txt:"
         qga_read 'C:\OEM\e2e-setup-failed.txt' > "$ARTIFACT_DIR/oem-setup-failed.txt" 2>&1 || true
         sed 's/^/  ! /' "$ARTIFACT_DIR/oem-setup-failed.txt" 2>/dev/null || true
-        qga_read 'C:\wootc\logs\deployer.log' > "$ARTIFACT_DIR/deployer.log" 2>&1 || true
-        qga_read 'C:\wootc\logs\live-journal.log' > "$ARTIFACT_DIR/deployer-live-journal.log" 2>&1 || true
+        qga_read "$(guest_wootc_root)\wootc\logs\deployer.log" > "$ARTIFACT_DIR/deployer.log" 2>&1 || true
+        qga_read "$(guest_wootc_root)\wootc\logs\live-journal.log" > "$ARTIFACT_DIR/deployer-live-journal.log" 2>&1 || true
     fi
     $DOCKER cp "$SCRIPT_DIR/screenshot.py" "$CONTAINER_NAME:/tmp/screenshot.py" 2>/dev/null || true
     $DOCKER exec "$CONTAINER_NAME" python3 /tmp/screenshot.py 2>/dev/null || true
@@ -570,6 +570,30 @@ qga_powershell() {
 
 qga_read() {
     qga_call read "$1" || return $?
+}
+
+# Which drive holds the guest's \wootc tree. NOT always C:.
+#
+# On the BitLocker axis setup-wootc.ps1 carves an unencrypted volume and sets
+# $storageRoot to it, so the whole tree — disks\root.disk, install\bcd-guid.txt,
+# logs\deployer.log — lives on E:. The harness hardcoded C:, so on a BitLocker
+# run (el10-gnome-win11pro-bitlocker, 2026-07-26) the VDL extension silently
+# skipped ("Could not read root.disk size ... size='0'") and the BCD GUID read
+# then failed outright — 39 minutes after a deploy that had actually SUCCEEDED
+# and passed both FDE assertions.
+#
+# Ask the guest rather than inferring: the answer is only cached once found, so
+# an early call before setup has created the tree cannot pin the wrong letter.
+WOOTC_GUEST_ROOT=""
+guest_wootc_root() {
+    if [ -z "$WOOTC_GUEST_ROOT" ]; then
+        local found
+        found=$(qga_powershell 'Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object { Test-Path ($_.Name + ":\wootc\install") } | Select-Object -First 1 -ExpandProperty Name' 2>/dev/null | tr -d '[:space:]')
+        case "$found" in
+            [A-Za-z]) WOOTC_GUEST_ROOT="${found}:" ;;
+        esac
+    fi
+    printf '%s' "${WOOTC_GUEST_ROOT:-C:}"
 }
 
 # Advisory guest-side progress sample for long quiet deploys. This deliberately
@@ -1908,7 +1932,7 @@ while ! past_deadline "$DEPLOY_DEADLINE"; do
     # a deployer hung after "ostree deployment:", the box rebooted into Windows,
     # and the harness spent another 76 minutes "Deploying..." before timing out.
     if [ "$DEPLOYER_STARTED" = true ] && qga_windows_probe; then
-        DEPLOYER_LOG=$(qga_read 'C:\wootc\logs\deployer.log' 2>/dev/null || true)
+        DEPLOYER_LOG=$(qga_read "$(guest_wootc_root)\wootc\logs\deployer.log" 2>/dev/null || true)
         if echo "$DEPLOYER_LOG" | grep -q 'VERIFICATION_SUMMARY'; then
             echo "$DEPLOYER_LOG" | grep 'VERIFICATION_SUMMARY' | tail -1 \
                 | sed "s/^/$(date -u +%FT%TZ) /" >> "$STORAGE_DIR/e2e-timeline.log" 2>/dev/null || true
@@ -2128,7 +2152,7 @@ step "Scheduling one-shot Phase 2 Linux boot..."
 # so VDL is left below the full 32 GiB. Linux ntfs3/ntfs-3g returns EIO on
 # any loop0 write past VDL. Running fsutil setvaliddata from Windows (which
 # has SeManageVolumePrivilege as SYSTEM) re-extends VDL=size in milliseconds.
-_disk_path='C:\wootc\disks\root.disk'
+_disk_path="$(guest_wootc_root)\wootc\disks\root.disk"
 # shellcheck disable=SC2016
 _disk_size=$(qga_powershell "(Get-Item '$_disk_path').Length" 2>/dev/null | tr -d '\r\n' || true)
 if [[ -n "$_disk_size" && "$_disk_size" =~ ^[0-9]+$ && "$_disk_size" -gt 0 ]]; then
@@ -2146,7 +2170,7 @@ fi
 # 20260723T2258, died here with the deploy fully verified). The -n check
 # below is the real gate and says why.
 PHASE2_GUID=$(qga_powershell \
-    '$guid = (Get-Content C:\wootc\install\bcd-guid.txt -Raw).Trim(); if ($guid -notmatch "^\{[0-9a-fA-F-]+\}$") { throw "invalid wootc BCD GUID: $guid" }; Write-Output $guid' \
+    '$guid = (Get-Content '"$(guest_wootc_root)"'\wootc\install\bcd-guid.txt -Raw).Trim(); if ($guid -notmatch "^\{[0-9a-fA-F-]+\}$") { throw "invalid wootc BCD GUID: $guid" }; Write-Output $guid' \
     2>/dev/null || true)
 PHASE2_GUID=$(printf '%s' "$PHASE2_GUID" | tr -d '\r\n')
 [ -n "$PHASE2_GUID" ] || { fail "Could not read wootc BCD GUID from Windows"; exit 1; }
