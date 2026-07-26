@@ -1413,6 +1413,21 @@ if [[ "$QEMU_CMD" != *"-tpmdev emulator"* || "$QEMU_CMD" != *"property=secure,va
         echo "fg-stderr:"
         head -6 /tmp/swtpm.err 2>/dev/null
         echo "fg-socket=$(ls -la /tmp/wootc-tpm.sock 2>&1 | head -1)"
+        # A/B the STATE PATH. swtpm hangs silently (rc=124, no stderr, no
+        # socket) with state on /storage, yet the identical command binds
+        # instantly on a self-hosted host. If /tmp works HERE and /storage does
+        # not, the blocker is the bind-mounted storage filesystem, not swtpm,
+        # not confinement, and not dockur.
+        echo "--- A/B: state on /tmp instead ---"
+        rm -f /tmp/wootc-tmp.sock
+        timeout 10 /run/swtpm socket -t --tpm2 \
+            --tpmstate "backend-uri=file:///tmp/wootc-probe2.tpm" \
+            --ctrl "type=unixio,path=/tmp/wootc-tmp.sock" >/tmp/swtpm2.err 2>&1 &
+        sleep 4
+        echo "tmp-socket=$(ls -la /tmp/wootc-tmp.sock 2>&1 | head -1)"
+        echo "tmp-stderr=$(head -3 /tmp/swtpm2.err 2>/dev/null)"
+        echo "storage-fs=$(stat -f -c '%T' /storage 2>/dev/null) tmp-fs=$(stat -f -c '%T' /tmp 2>/dev/null)"
+        echo "storage-write=$(touch /storage/.wootc-w 2>&1 && echo OK || echo FAILED)"; rm -f /storage/.wootc-w
     ' 2>&1 | sed 's/^/    tpm-probe: /' || warn "  (tpm probe could not run)"
     capture_vm_diagnostics
     exit 1
