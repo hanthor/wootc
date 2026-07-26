@@ -65,12 +65,18 @@ podman exec "$BUILDER" ssh-keygen -A
 # disproven by a run. See #59.
 #
 # Only the tpmstate URI moves. DEST still points at /storage for the pflash
-# ROM/VARS, which must persist. /run is container-lifetime, so TPM state
-# survives the guest reboots within a run (Phase 1 -> Phase 2); it was never
-# carried in the base-image snapshots anyway.
+# ROM/VARS, which must persist. /tmp is container-lifetime (it is part of the
+# container's overlayfs, per the probe: tmp-fs=overlayfs), so TPM state survives
+# guest reboots within a run (Phase 1 -> Phase 2); it was never carried in the
+# base-image snapshots anyway.
+#
+# /tmp specifically, NOT /run: the A/B measured /tmp binding a socket in the
+# failing container, and a first attempt using /run still failed (run
+# 30197227495 — patch applied, swtpm still never bound). Use the path that was
+# actually proven.
 echo "+ patching dockur boot.sh to keep swtpm state off /storage (#59)"
 podman exec "$BUILDER" sh -c \
-    "sed -i 's#backend-uri=file://\$DEST.tpm#backend-uri=file:///run/wootc-swtpm.state#' /run/boot.sh && \
+    "sed -i 's#backend-uri=file://\$DEST.tpm#backend-uri=file:///tmp/wootc-swtpm.state#' /run/boot.sh && \
      grep -n 'tpmstate' /run/boot.sh"
 
 echo "+ installing authorized_keys (key-only auth)"
