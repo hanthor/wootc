@@ -946,6 +946,10 @@ E2E_COMPOSEFS="${WOOTC_E2E_COMPOSEFS:-auto}"
     # Without it the barrier passes on a stale marker left by a previous run —
     # see the comment on the barrier loop below.
     printf 'RunId=%s\n'     "$RUN_ID"
+    # root.disk size. The BitLocker path carves root.disk + the deployer's
+    # 20 GiB scratch out of C:, so an oversized root.disk makes the carve
+    # impossible on an 80G guest. Tunable per case rather than fixed at 35.
+    printf 'RootDiskGiB=%s\n' "${WOOTC_E2E_ROOT_DISK_GIB:-35}"
 } > "$OEM_DIR/wootc-config.txt"
 printf '[INFO] Deployer config: image=%s bootloader=%s composefs=%s\n' \
     "$IMAGE_REF" "$E2E_BOOTLOADER" "$E2E_COMPOSEFS" >&2

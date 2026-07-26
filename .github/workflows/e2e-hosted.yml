@@ -137,9 +137,14 @@ jobs:
           WOOTC_E2E_WIN_EDITION: ${{ inputs.win_edition }}
           WOOTC_E2E_WIN_KEY: ${{ inputs.win_key }}
           WOOTC_E2E_BITLOCKER: ${{ inputs.bitlocker }}
-          # See compose.yml: the BitLocker path carves root.disk + the 20 GiB
-          # deployer scratch out of C:, which does not fit in an 80G guest.
-          WOOTC_E2E_DISK_SIZE: ${{ inputs.bitlocker == 'on' && '140G' || '80G' }}
+          # Do NOT grow the guest disk for BitLocker: a hosted runner has only
+          # ~81 GB free in /storage, so a 140G image made dockur spend startup
+          # resizing, which starved swtpm's launch window — it then silently
+          # DISABLED TPM and the run failed "missing TPM 2.0 or Secure Boot"
+          # (run 30183222185, container.log). Keep 80G and shrink what we carve
+          # instead: root.disk 25 GiB + 20 GiB scratch + 6 GiB headroom = 51 GiB,
+          # which an ~79 GiB C: holding ~16 GiB of Windows can actually give up.
+          WOOTC_E2E_ROOT_DISK_GIB: ${{ inputs.bitlocker == 'on' && '25' || '35' }}
           # Rung 3: hand the guest a blank 40G second disk as the graduate target.
           # Empty string when phase3=false → dockur adds no second disk.
           WOOTC_E2E_DISK2_SIZE: ${{ inputs.phase3 && '40G' || '' }}
