@@ -130,6 +130,14 @@ fixes have landed since the sweep and re-verification is ongoing. A case is only
 marked ✅ once the whole chain passes (Windows seed → deploy → Phase-2 boot →
 seeded file readable from Linux).
 
+> ⚠️ **Harness blocker (2026-07-26):** every Windows 11 case currently fails on
+> GitHub-hosted runners before wootc runs at all — `swtpm` never binds its
+> socket, so dockur silently disables TPM and the VM comes up without TPM 2.0
+> ([#59](https://github.com/tuna-os/wootc/issues/59)). This is an environment
+> problem, not a regression in the statuses above: the identical container works
+> on a self-hosted host. Re-verification of the ✅ rows is paused until it is
+> fixed.
+
 **Image family × phase** (Windows 11 Pro, Secure Boot + TPM 2.0):
 
 | Image family | Backend / rootfs | Arm (P1) | Deploy | Phase-2 boot | Phase-3 graduate | GUI-driven full run |
