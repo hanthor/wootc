@@ -119,10 +119,16 @@ Follow the verification ladder in [docs/milestones.md](docs/milestones.md).
 
 ### Build/test matrix
 
-Live red/green status per combination, from the KVM E2E rig (laptop runners)
-and the hosted-runner matrix (`.github/workflows/e2e-matrix.yml`). Legend:
+Red/green status per combination, from the KVM E2E rig (laptop runners) and the
+hosted-runner matrix (`.github/workflows/e2e-matrix.yml`). Legend:
 ✅ proven green · 🟡 in progress / partially proven · 🔴 known-red (tracked
 issue) · ⚪ not yet run.
+
+**Last full matrix sweep: 2026-07-25 — 12 of 22 cases green.** ✅ here means a
+case passed a real end-to-end run, not that it is re-verified on every commit;
+fixes have landed since the sweep and re-verification is ongoing. A case is only
+marked ✅ once the whole chain passes (Windows seed → deploy → Phase-2 boot →
+seeded file readable from Linux).
 
 **Image family × phase** (Windows 11 Pro, Secure Boot + TPM 2.0):
 
@@ -130,23 +136,31 @@ issue) · ⚪ not yet run.
 |---|---|:--:|:--:|:--:|:--:|:--:|
 | `bluefin:lts` | ostree · ext4-sealed | ✅ | ✅ | ✅ | ✅ (29/29) | ✅ |
 | `yellowfin:gnome` (EL10) | ostree · ext4-sealed | ✅ | ✅ | ✅ | ✅ | ⚪ |
-| `bonito:gnome` (Fedora) | ostree · **xfs** (unsealed) | ✅ | 🟡 | ⚪ | ⚪ | ⚪ |
-| `dakota` | composefs-native | ✅ | 🟡 | ⚪ | ⚪ | ⚪ |
-| `marlin` (Arch) / `flounder` (Debian) | ostree · xfs (unsealed) | ✅ | 🟡 | ⚪ | ⚪ | ⚪ |
+| `yellowfin:kde` / `:xfce` (EL10) | ostree · ext4-sealed | ✅ | ✅ | ✅ | ⚪ | ⚪ |
+| `bonito:gnome` / `:kde` / `:niri` (Fedora) | ostree · **xfs** (unsealed) | ✅ | ✅ | ✅ | ⚪ | ⚪ |
+| `dakota` | composefs-native | ✅ | 🔴 | ⚪ | ⚪ | ⚪ |
+| `marlin` (Arch) / `flounder` (Debian) | ostree · xfs (unsealed) | ✅ | 🔴 | ⚪ | ⚪ | ⚪ |
+
+`dakota` (composefs-native) reaches Phase-2 staging after eight layout fixes —
+the remaining failure is a silent CPU-bound grind under interactive debug
+([#28](https://github.com/tuna-os/wootc/issues/28)). `marlin`/`flounder` fail in
+`bootc install` with *"bootupd is required for ostree-based installs"*: they are
+ostree images that ship no `bootupd`.
 
 **Axes** (against the EL10 / `bluefin:lts` baseline):
 
 | Axis | Status | Notes |
 |---|:--:|---|
 | Windows 11 Pro | ✅ | primary proven path |
-| Windows 10 Pro | 🟡 | hosted re-validation after infra fixes |
-| Home / Enterprise / LTSC (10 & 11) | ⚪ | matrix cases defined, not yet green on hosted |
+| Windows 11 Home / Enterprise / LTSC | ✅ | all three green on EL10 |
+| Windows 10 Pro | ✅ | green in 37 min via the restored Windows base image |
+| Windows 10 Home / Enterprise / LTSC | 🔴 | Setup stops on its edition picker — the answer file's product key matches no image in the ISO for those editions — [#58](https://github.com/tuna-os/wootc/issues/58) |
 | Root filesystem: `xfs` (unsealed) | ✅ | mounted with explicit `-t` (a typeless mount tried ext4 on xfs) |
 | Root filesystem: `ext4` (sealed, fs-verity) | ✅ | proven sealed default |
 | Root filesystem: `btrfs` (sealed) | 🔴 | formats fine, but ostree Phase-2 `sysroot.mount` times out — [#35](https://github.com/tuna-os/wootc/issues/35); opt-in via `wootc.filesystem=btrfs` |
 | Encryption: none | ✅ | |
 | Encryption: `tpm2-luks` | 🔴 | Phase-2 dracut regen fails on the LUKS root — [#33](https://github.com/tuna-os/wootc/issues/33) |
-| BitLocker FDE (unencrypted-volume path) | 🔴 | deployer cannot find `root.disk` on the carved volume — [#34](https://github.com/tuna-os/wootc/issues/34) |
+| BitLocker FDE (unencrypted-volume path) | 🟡 | root-caused and fixed, verification in flight — [#34](https://github.com/tuna-os/wootc/issues/34). Windows 11 auto-encrypts *newly created* fixed volumes, so the volume carved for `root.disk` was itself BitLocker-protected; the fix disables protection, waits for full decryption, and sizes the carve for `root.disk` **plus** the deployer's scratch |
 
 The full three-phase chain (Windows seed → deploy → Phase-2 bridge →
 Phase-3 native disk → seeded file on the native disk) is **green end-to-end
