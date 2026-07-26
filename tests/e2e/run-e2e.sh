@@ -1403,10 +1403,16 @@ if [[ "$QEMU_CMD" != *"-tpmdev emulator"* || "$QEMU_CMD" != *"property=secure,va
         # missing socket.
         echo "--- foreground swtpm attempt ---"
         rm -f /tmp/wootc-tpm.sock
+        # Use the REAL state path dockur uses (/storage), not /tmp: the earlier
+        # probe pointed at /tmp, which works, so it proved nothing. Capture
+        # stderr to a file — piping into head masked the exit status too.
         timeout 10 /run/swtpm socket -t --tpm2 \
-            --tpmstate "backend-uri=file:///tmp/wootc-probe.tpm" \
-            --ctrl "type=unixio,path=/tmp/wootc-tpm.sock" 2>&1 | head -5
+            --tpmstate "backend-uri=file:///storage/wootc-probe.tpm" \
+            --ctrl "type=unixio,path=/tmp/wootc-tpm.sock" >/tmp/swtpm.err 2>&1
         echo "fg-rc=$?"
+        echo "fg-stderr:"
+        head -6 /tmp/swtpm.err 2>/dev/null
+        echo "fg-socket=$(ls -la /tmp/wootc-tpm.sock 2>&1 | head -1)"
     ' 2>&1 | sed 's/^/    tpm-probe: /' || warn "  (tpm probe could not run)"
     capture_vm_diagnostics
     exit 1

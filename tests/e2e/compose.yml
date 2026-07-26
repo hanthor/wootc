@@ -81,6 +81,17 @@ services:
       - /dev/net/tun
     cap_add:
       - NET_ADMIN
+    # Testing #59: on GitHub-hosted ubuntu-latest, swtpm starts with correct
+    # arguments but NEVER binds /tmp/swtpm.sock, so dockur silently disables TPM
+    # and every Windows 11 case fails the preflight. The same invocation works on
+    # a self-hosted Fedora/bootc host, so the variable is the runner confinement
+    # — and dockur already ships a "/run/swtpm" copy described in its own source
+    # as a "workaround to circumvent AppArmor profile". Ubuntu AppArmor is the
+    # leading suspect; swtpm stderr is discarded by its -d daemonization, so a
+    # denial would be invisible.
+    security_opt:
+      - apparmor=unconfined
+      - label=disable
     # Kanpur's default rootful Podman DNS path intermittently cannot resolve
     # Microsoft's download hosts. Use a reachable public resolver for the
     # one-time Windows installer acquisition.
