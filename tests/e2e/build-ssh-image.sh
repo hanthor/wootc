@@ -68,12 +68,18 @@ echo "+ installing entrypoint wrapper (sshd, then chain to the original entrypoi
 WRAPPER=$(mktemp)
 cat << 'EOF' > "$WRAPPER"
 #!/bin/sh
+# NOTE (#59): tini must be PID 1, exactly as in stock dockur. This script is
+# therefore started BY tini (see the ENTRYPOINT below) and runs entry.sh
+# directly rather than nesting another tini. When this script was PID 1 itself,
+# PID 1 was a plain shell with no init semantics, and dockur's swtpm — which
+# daemonizes with -d — never wrote its pid file, so dockur silently disabled
+# TPM and every Windows 11 case failed the preflight on EVERY host.
 mkdir -p /run/sshd
 /usr/sbin/sshd
 
 while true; do
   rm -f /run/shm/qemu.end /run/shm/qemu.pid /run/shm/qemu.pty /run/shm/console.pid /run/shm/console.sock
-  /usr/bin/tini -s /run/entry.sh || true
+  /run/entry.sh || true
   echo "[wootc-entrypoint] QEMU exited; restarting in 2 seconds..."
   sleep 2
 done
@@ -84,7 +90,7 @@ podman exec "$BUILDER" chmod +x /usr/local/bin/wootc-entrypoint.sh
 
 echo "+ committing $TARGET_IMAGE"
 podman commit \
-    --change 'ENTRYPOINT ["/usr/local/bin/wootc-entrypoint.sh"]' \
+    --change 'ENTRYPOINT ["/usr/bin/tini","-s","--","/usr/local/bin/wootc-entrypoint.sh"]' \
     --change 'CMD []' \
     "$BUILDER" "$TARGET_IMAGE"
 podman rm -f "$BUILDER" >/dev/null
