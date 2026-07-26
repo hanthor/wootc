@@ -796,7 +796,31 @@ if [[ "$COMPOSEFS" == auto || "$BOOTLOADER" == auto ]]; then
                find /usr/lib/efi/grub2 -type f -name grubx64.efi -print -quit 2>/dev/null | grep -q . &&
                find /usr/lib/efi/shim -type f -name shimx64.efi -print -quit 2>/dev/null | grep -q .; }; }; then
             echo BACKEND=ostree
-        elif test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi && ! command -v bootupctl >/dev/null 2>&1; then
+        elif grep -A8 "^\[composefs\]" /usr/lib/ostree/prepare-root.conf 2>/dev/null \
+             | grep -qiE "enabled[[:space:]]*=[[:space:]]*(yes|true|1|signed)"; then
+            # Reaching here means the image has NO bootupd PAYLOAD (branch 1
+            # failed), so an ostree install is impossible — bootc aborts with
+            # "bootupd is required for ostree-based installs". If composefs is
+            # enabled, this is a composefs-native image.
+            #
+            # The old test was `systemd-boot present && ! command -v bootupctl`,
+            # which mis-classified exactly these images: marlin (Arch) ships the
+            # bootupctl BINARY at /usr/sbin/bootupctl but has no
+            # /usr/lib/bootupd payload, so the test failed, the image fell
+            # through to "unknown", and we forced ostree/grub2 onto a
+            # composefs-native image (probe: bootc 1.16.3, bootupd_dir=NONE,
+            # composefs-info + mkcomposefs present, prepare-root
+            # "[composefs] enabled = yes"). bootc's own docs note a composefs
+            # install may use EITHER bootupd/GRUB or systemd-boot, so the
+            # bootloader is not a backend signal at all.
+            #
+            # Order matters: bootupd-payload images (bluefin, yellowfin, bonito)
+            # are matched by branch 1 first, so composefs-SEALED ostree images
+            # keep the ostree path even though they also set enabled=yes here.
+            echo BACKEND=composefs-native
+        elif test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi; then
+            # No bootupd payload and no composefs marker, but it ships
+            # systemd-boot: still the composefs-native path (dakota's shape).
             echo BACKEND=composefs-native
         else
             echo BACKEND=unknown
