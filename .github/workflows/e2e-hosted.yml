@@ -137,6 +137,9 @@ jobs:
           WOOTC_E2E_WIN_EDITION: ${{ inputs.win_edition }}
           WOOTC_E2E_WIN_KEY: ${{ inputs.win_key }}
           WOOTC_E2E_BITLOCKER: ${{ inputs.bitlocker }}
+          # See compose.yml: the BitLocker path carves root.disk + the 20 GiB
+          # deployer scratch out of C:, which does not fit in an 80G guest.
+          WOOTC_E2E_DISK_SIZE: ${{ inputs.bitlocker == 'on' && '140G' || '80G' }}
           # Rung 3: hand the guest a blank 40G second disk as the graduate target.
           # Empty string when phase3=false → dockur adds no second disk.
           WOOTC_E2E_DISK2_SIZE: ${{ inputs.phase3 && '40G' || '' }}

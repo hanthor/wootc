@@ -41,7 +41,12 @@ services:
       # clamp only mis-fires on transient build spikes — it once shrank a VM
       # to 1965 MB, below Windows 11's 4096 floor. "N" disables it.
       RAM_CHECK: "${WOOTC_E2E_RAM_CHECK:-Y}"
-      DISK_SIZE: "80G"
+      # BitLocker runs need materially more: root.disk AND the deployer's 20 GiB
+      # scratch live on a volume carved out of C:, so C: must be able to shrink
+      # by DiskSizeGB + 20 + 6 (61 GiB by default) and still hold Windows. At 80G
+      # that shrink is impossible ("Not enough room on C: to carve an unencrypted
+      # volume for Linux", run 30180970208). Non-BitLocker runs keep 80G.
+      DISK_SIZE: "${WOOTC_E2E_DISK_SIZE:-80G}"
       DISK_FMT: "qcow2"
       # Optional spare disk for the Phase-3 graduate-to-native target (rung 3).
       # Empty by default; the rung-3 harness sets WOOTC_E2E_DISK2_SIZE=40G so
