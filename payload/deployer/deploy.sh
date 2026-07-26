@@ -810,7 +810,7 @@ if [[ "$COMPOSEFS" == auto || "$BOOTLOADER" == auto ]]; then
             # through to "unknown", and we forced ostree/grub2 onto a
             # composefs-native image (probe: bootc 1.16.3, bootupd_dir=NONE,
             # composefs-info + mkcomposefs present, prepare-root
-            # "[composefs] enabled = yes"). bootc's own docs note a composefs
+            # "[composefs] enabled = yes"). Per the bootc docs a composefs
             # install may use EITHER bootupd/GRUB or systemd-boot, so the
             # bootloader is not a backend signal at all.
             #
@@ -820,7 +820,7 @@ if [[ "$COMPOSEFS" == auto || "$BOOTLOADER" == auto ]]; then
             echo BACKEND=composefs-native
         elif test -f /usr/lib/systemd/boot/efi/systemd-bootx64.efi; then
             # No bootupd payload and no composefs marker, but it ships
-            # systemd-boot: still the composefs-native path (dakota's shape).
+            # systemd-boot: still the composefs-native path (the dakota shape).
             echo BACKEND=composefs-native
         else
             echo BACKEND=unknown
