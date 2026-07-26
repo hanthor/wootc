@@ -366,8 +366,12 @@ capture_vm_diagnostics() {
         info "QGA C:\\OEM\\e2e-setup-failed.txt:"
         qga_read 'C:\OEM\e2e-setup-failed.txt' > "$ARTIFACT_DIR/oem-setup-failed.txt" 2>&1 || true
         sed 's/^/  ! /' "$ARTIFACT_DIR/oem-setup-failed.txt" 2>/dev/null || true
-        qga_read "$(guest_wootc_root)\wootc\logs\deployer.log" > "$ARTIFACT_DIR/deployer.log" 2>&1 || true
-        qga_read "$(guest_wootc_root)\wootc\logs\live-journal.log" > "$ARTIFACT_DIR/deployer-live-journal.log" 2>&1 || true
+        # Cached value only — never probe from the diagnostics path. This runs
+        # on the failure path, often with QGA already dead, and a probe there
+        # would burn qga_call's full retry budget (3 x 60s) twice before
+        # falling back to the same C: it starts with.
+        qga_read "${WOOTC_GUEST_ROOT:-C:}\wootc\logs\deployer.log" > "$ARTIFACT_DIR/deployer.log" 2>&1 || true
+        qga_read "${WOOTC_GUEST_ROOT:-C:}\wootc\logs\live-journal.log" > "$ARTIFACT_DIR/deployer-live-journal.log" 2>&1 || true
     fi
     $DOCKER cp "$SCRIPT_DIR/screenshot.py" "$CONTAINER_NAME:/tmp/screenshot.py" 2>/dev/null || true
     $DOCKER exec "$CONTAINER_NAME" python3 /tmp/screenshot.py 2>/dev/null || true
@@ -2152,6 +2156,10 @@ step "Scheduling one-shot Phase 2 Linux boot..."
 # so VDL is left below the full 32 GiB. Linux ntfs3/ntfs-3g returns EIO on
 # any loop0 write past VDL. Running fsutil setvaliddata from Windows (which
 # has SeManageVolumePrivilege as SYSTEM) re-extends VDL=size in milliseconds.
+# Re-probe after the deployer's reboot cycle: a letter cached during Phase 1
+# must not be trusted across a reboot that could re-letter volumes, and this is
+# exactly where a stale letter would do damage.
+WOOTC_GUEST_ROOT=""
 _disk_path="$(guest_wootc_root)\wootc\disks\root.disk"
 # shellcheck disable=SC2016
 _disk_size=$(qga_powershell "(Get-Item '$_disk_path').Length" 2>/dev/null | tr -d '\r\n' || true)
