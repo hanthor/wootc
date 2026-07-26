@@ -1391,6 +1391,22 @@ if [[ "$QEMU_CMD" != *"-tpmdev emulator"* || "$QEMU_CMD" != *"property=secure,va
         echo "storage-perm=$(stat -c "%U:%G %a" /storage 2>/dev/null)"
         echo "tmp-perm=$(stat -c "%U:%G %a" /tmp 2>/dev/null)"
         echo "whoami=$(id -un 2>/dev/null)"
+        echo "--- swtpm processes ---"
+        ps -ef 2>/dev/null | grep "[s]wtpm" | head -4
+        echo "--- run/swtpm copy ---"
+        ls -la /run/swtpm 2>&1 | head -1
+        echo "--- dockur pid file ---"
+        ls -la /var/run/tpm.pid 2>&1 | head -1; cat /var/run/tpm.pid 2>/dev/null
+        # Reproduce dockur invocation IN THE FOREGROUND so the real stderr is
+        # visible. dockur runs it with -d (daemonize), so the parent exits 0 and
+        # the child dies unseen — which is why nothing ever explained the
+        # missing socket.
+        echo "--- foreground swtpm attempt ---"
+        rm -f /tmp/wootc-tpm.sock
+        timeout 10 /run/swtpm socket -t --tpm2 \
+            --tpmstate "backend-uri=file:///tmp/wootc-probe.tpm" \
+            --ctrl "type=unixio,path=/tmp/wootc-tpm.sock" 2>&1 | head -5
+        echo "fg-rc=$?"
     ' 2>&1 | sed 's/^/    tpm-probe: /' || warn "  (tpm probe could not run)"
     capture_vm_diagnostics
     exit 1
