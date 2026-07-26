@@ -1375,6 +1375,23 @@ if [ "${RUN_PHASE3:-false}" = true ]; then
 fi
 if [[ "$QEMU_CMD" != *"-tpmdev emulator"* || "$QEMU_CMD" != *"property=secure,value=on"* ]]; then
     fail "Windows 11 VM is missing TPM 2.0 or Secure Boot"
+    # dockur DISABLES TPM silently when swtpm does not present its socket in
+    # time ("Waiting for TPM emulator to launch..." then "ERROR: TPM socket
+    # (/tmp/swtpm.sock) not found? Disabling TPM module"), and it never says
+    # WHY swtpm failed. Three theories were each disproven by a run —
+    # dockur 6.03 (6.02 fails too), the 64 GiB disk2 I/O storm (removed, still
+    # fails), and the 140G resize (reverted, still fails). Ask the container
+    # directly instead of guessing a fourth time.
+    $DOCKER exec "$CONTAINER_NAME" sh -c '
+        echo "swtpm-bin=$(command -v swtpm 2>/dev/null || echo MISSING)"
+        swtpm --version 2>&1 | head -1
+        echo "socket=$(ls -la /tmp/swtpm.sock 2>&1 | head -1)"
+        echo "swtpm-procs=$(ps -ef 2>/dev/null | grep -c "[s]wtpm")"
+        echo "tpm-state=$(ls -la /storage 2>/dev/null | grep -iE "tpm|swtpm" | head -3)"
+        echo "storage-perm=$(stat -c "%U:%G %a" /storage 2>/dev/null)"
+        echo "tmp-perm=$(stat -c "%U:%G %a" /tmp 2>/dev/null)"
+        echo "whoami=$(id -un 2>/dev/null)"
+    ' 2>&1 | sed 's/^/    tpm-probe: /' || warn "  (tpm probe could not run)"
     capture_vm_diagnostics
     exit 1
 fi
