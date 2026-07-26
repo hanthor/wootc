@@ -152,6 +152,11 @@ for qpid in \$(pgrep -f "qemu-system.*process=windows" 2>/dev/null); do
     podman ps --format "{{.Names}}" 2>/dev/null | grep -q "^wootc-e2e-windows" || sudo kill -9 "\$qpid" 2>/dev/null
 done
 rm -f "$stordir/.run-e2e.lock"
+# The poll concludes on stage=exited, so the PREVIOUS case's state file must
+# go with the previous case's log — otherwise the new case is declared
+# finished the moment polling starts. A missing file reads as still-starting;
+# run-e2e.sh rewrites it with stage=started within seconds of launching.
+rm -f "$stordir/run-e2e.current"
 export WOOTC_E2E_WIN_VERSION="$ver" WOOTC_E2E_WIN_EDITION="$ed" WOOTC_E2E_WIN_KEY="$key"
 export WOOTC_E2E_RAM_SIZE="${vm_ram}G"
 export WOOTC_E2E_RAM_CHECK=N
@@ -185,11 +190,19 @@ REMOTE
         # -n: this ssh runs inside slot_worker's while-read loop; without it,
         # ssh slurps the loop's stdin — WHICH IS THE CASE QUEUE — and the
         # worker exits after one case (run 20260723T0953: 1 of 26 ran).
+        # Conclude only on a TERMINAL state. Not every '[FAIL]' line ends the
+        # run: seed_user_data and friends are called as `... || true`, so a
+        # cosmetic failure used to end the poll ~35 minutes early and record
+        # that line as the case's verdict while the run was still deploying
+        # (bluefin-dakota-win11pro, 20260726T224500Z, "reported" at 2446s).
+        # run-e2e.sh stamps stage=exited from an EXIT trap, so a real ending is
+        # always observable; the last [FAIL] then supplies the reason.
         s=$(ssh -n -o ConnectTimeout=8 -o BatchMode=yes "$host" "
             L=\$(sed -E 's/\x1b\[[0-9;]*m//g' '$log' 2>/dev/null)
             if echo \"\$L\" | grep -qa 'ALL TESTS PASSED'; then echo PASS
-            elif echo \"\$L\" | grep -qaE '\[FAIL\]'; then echo \"FAIL:\$(echo \"\$L\"|grep -aE '\[FAIL\]'|tail -1|cut -c1-80)\"
-            elif grep -qa 'stage=exited' ~/wootc/tests/e2e/$stordir/run-e2e.current 2>/dev/null; then echo 'EXIT'
+            elif grep -qa 'stage=exited' ~/wootc/tests/e2e/$stordir/run-e2e.current 2>/dev/null; then
+                if echo \"\$L\" | grep -qaE '\[FAIL\]'; then echo \"FAIL:\$(echo \"\$L\"|grep -aE '\[FAIL\]'|tail -1|cut -c1-80)\"
+                else echo 'EXIT'; fi
             else echo RUN; fi" 2>/dev/null | head -1)
         case "$s" in
             PASS)  result="PASS"; break ;;

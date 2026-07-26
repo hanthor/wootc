@@ -692,12 +692,28 @@ reset_oem_attempt() {
 # deployer reboot so it is part of the data the migration must carry.
 seed_user_data() {
     step "Seeding user data in the Windows profile (Documents)..."
-    if qga_powershell "\$d = 'C:\\Users\\wootc\\Documents'; if (-not (Test-Path \$d)) { throw \"no profile Documents dir at \$d\" }; Set-Content -Path \"\$d\\wootc-e2e-userdata.txt\" -Value 'wootc-e2e-userdata $RUN_ID' -Encoding ASCII; Get-Content \"\$d\\wootc-e2e-userdata.txt\"" 2>/dev/null | grep -q "$RUN_ID"; then
-        pass "User data seeded: C:\\Users\\wootc\\Documents\\wootc-e2e-userdata.txt ($RUN_ID)"
-    else
-        fail "Could not seed user data in the Windows profile — data-persistence checks will be meaningless"
-        return 1
-    fi
+    # The guest's own words are CAPTURED, not discarded. The previous version
+    # sent PowerShell's error to /dev/null, so three unrelated causes — the
+    # profile not being at C:\Users\wootc, an ACL denial on Documents, and QGA
+    # returning nothing at all — produced one indistinguishable message, and a
+    # 40-minute dakota run (20260726T224500Z) ended with no way to tell which.
+    # Documents is created when missing: a restored snapshot can present a
+    # profile whose known folders have not been materialised yet.
+    local attempt out
+    for attempt in 1 2 3; do
+        out=$(qga_powershell "\$ErrorActionPreference='Stop'; \$d = 'C:\\Users\\wootc\\Documents'; if (-not (Test-Path \$d)) { New-Item -ItemType Directory -Path \$d -Force | Out-Null }; Set-Content -Path \"\$d\\wootc-e2e-userdata.txt\" -Value 'wootc-e2e-userdata $RUN_ID' -Encoding ASCII; Get-Content \"\$d\\wootc-e2e-userdata.txt\"" 2>&1)
+        if printf '%s' "$out" | grep -q "$RUN_ID"; then
+            pass "User data seeded: C:\\Users\\wootc\\Documents\\wootc-e2e-userdata.txt ($RUN_ID)"
+            return 0
+        fi
+        warn "Seeding attempt $attempt/3 did not confirm the marker; guest said: ${out:-<no output>}"
+        sleep 10
+    done
+    # Make the cause name itself rather than costing another run to find.
+    qga_powershell 'Get-ChildItem C:\Users -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name' 2>&1 \
+        | sed 's/^/    C:\\Users entry: /' || true
+    fail "Could not seed user data in the Windows profile — data-persistence checks will be meaningless"
+    return 1
 }
 
 # Release the OEM/deployer barrier: the guest waits for this marker before it
