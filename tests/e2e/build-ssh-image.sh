@@ -113,15 +113,28 @@ while [ $# -gt 0 ]; do
   shift
 done
 # shellcheck disable=SC2086  # word splitting is intended
-setsid /usr/bin/swtpm $NEWARGS >/tmp/wootc-swtpm.log 2>&1 &
+setsid /usr/bin/swtpm $NEWARGS >>/tmp/wootc-swtpm.log 2>&1 &
 child=$!
 [ -n "$PIDFILE" ] && printf '%s\n' "$child" > "$PIDFILE" 2>/dev/null
+# Wait for the socket HERE, and do not return until it exists. dockur polls only
+# ~25 short iterations and then runs stopTpm, which deletes the socket and pid
+# file — so a slow bind looks identical to a dead emulator, and every probe
+# afterwards sees only the aftermath. Hold the door open for 60s and record how
+# long the bind actually took.
+start=$(date +%s)
 i=0
-while [ "$i" -lt 60 ]; do
-  [ -n "$SOCK" ] && [ -S "$SOCK" ] && exit 0
-  kill -0 "$child" 2>/dev/null || break
+while [ "$i" -lt 300 ]; do
+  if [ -n "$SOCK" ] && [ -S "$SOCK" ]; then
+    echo "[wootc] swtpm bound $SOCK after $(( $(date +%s) - start ))s" >> /tmp/wootc-swtpm.log
+    exit 0
+  fi
+  kill -0 "$child" 2>/dev/null || {
+    echo "[wootc] swtpm died after $(( $(date +%s) - start ))s without binding $SOCK" >> /tmp/wootc-swtpm.log
+    break
+  }
   i=$((i + 1)); sleep 0.2
 done
+echo "[wootc] gave up waiting for $SOCK after $(( $(date +%s) - start ))s" >> /tmp/wootc-swtpm.log
 exit 0
 EOF
 podman cp "$SWTPM_WRAP" "$BUILDER:/run/swtpm"
