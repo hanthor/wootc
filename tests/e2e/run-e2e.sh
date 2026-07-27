@@ -23,11 +23,15 @@ set -Eeuo pipefail
 # with no [FAIL] line anywhere, so the matrix could record only EXITED and the
 # reason was unrecoverable from the log — a 39-minute run yielding nothing.
 #
-# Verified not to fire spuriously: a `return 1` reaching `|| true`, and a
-# failing command in an `if` condition, are both exempt; an explicit `exit 1`
-# does not fire ERR either, so a fail+exit site keeps its own message as the
-# last [FAIL] line. -E is what propagates this into functions and subshells.
-trap 'wootc_err_rc=$?; printf "[FAIL] run-e2e.sh aborted at line %s: %s (exit %s)\n" "$LINENO" "$BASH_COMMAND" "$wootc_err_rc" >&2' ERR
+# A `return 1` reaching `|| true` and a failing command in an `if` condition are
+# both exempt. An explicit `exit N` is NOT: it fires ERR here (unlike in an
+# isolated `bash -c` test), and because the trap's line lands last it MASKED the
+# real reason — run 20260727T002633Z reported the useless "aborted at line 1:
+# exit 1" while the actual "[FAIL] Windows OEM setup failed before the snapshot
+# barrier" sat 70 lines above it, and the matrix takes the LAST [FAIL] as the
+# verdict. Sites that call fail+exit have already said their piece, so say
+# nothing for them. -E propagates the trap into functions and subshells.
+trap 'wootc_err_rc=$?; case "$BASH_COMMAND" in exit*) ;; *) printf "[FAIL] run-e2e.sh aborted: %s (exit %s)\n" "$BASH_COMMAND" "$wootc_err_rc" >&2 ;; esac' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"

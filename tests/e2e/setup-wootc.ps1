@@ -114,12 +114,31 @@ if ($blState -ne 'off') {
     # The volume is freshly formatted and empty, so this should be quick; give it
     # a real budget anyway and report progress so a slow decrypt is visible.
     Write-Host "[wootc] Ensuring $storageRoot stays unencrypted (Device Encryption auto-protects new volumes)..."
+    # The verdict must be STABLE, not merely momentary. A freshly created volume
+    # reports one of two transient states that both used to end this loop on its
+    # first pass, before Disable-BitLocker had been called even once:
+    #   - Get-BitLockerVolume returns nothing at all (object not yet materialised)
+    #   - it returns FullyDecrypted/Off, and Device Encryption starts encrypting
+    #     moments later
+    # Either way the gate below then read EncryptionInProgress and threw ~24s
+    # into the run (el10-gnome-win11pro-bitlocker, 20260727T002633Z: the guest
+    # logged "Ensuring E: stays unencrypted" and then went straight to the throw
+    # with no per-iteration progress line, because the loop body never ran).
+    # Require the clean reading twice in a row, and treat "no object" the same
+    # way — a volume genuinely without BitLocker stays null on every look.
     $deadline = (Get-Date).AddMinutes(30)
     $v = $null
+    $cleanStreak = 0
     while ((Get-Date) -lt $deadline) {
         $v = Get-BitLockerVolume -MountPoint $storageRoot -ErrorAction SilentlyContinue
-        if (-not $v) { break }
-        if ($v.ProtectionStatus -eq 'Off' -and $v.VolumeStatus -eq 'FullyDecrypted') { break }
+        if ((-not $v) -or ($v.ProtectionStatus -eq 'Off' -and $v.VolumeStatus -eq 'FullyDecrypted')) {
+            $cleanStreak++
+            if ($cleanStreak -ge 2) { break }
+            Write-Host "[wootc]   $storageRoot looks clear (status=$($v.VolumeStatus) protection=$($v.ProtectionStatus)) — confirming"
+            Start-Sleep -Seconds 10
+            continue
+        }
+        $cleanStreak = 0
         try { Disable-BitLocker -MountPoint $storageRoot -ErrorAction SilentlyContinue | Out-Null } catch {}
         Write-Host "[wootc]   $storageRoot status=$($v.VolumeStatus) protection=$($v.ProtectionStatus) pct=$($v.EncryptionPercentage)"
         Start-Sleep -Seconds 10
