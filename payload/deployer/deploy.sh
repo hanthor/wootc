@@ -771,7 +771,30 @@ ensure_ntfs_support() {
     fi
     log "  [PASS] verified ntfs-3g present in the deployed image"
 }
-ensure_ntfs_support || log "NTFS injection unavailable; using the image's own NTFS support"
+# "Using the image's own NTFS support" must be CHECKED, not hoped for. When
+# injection fails on an image whose kernel has no ntfs3 — every EL-family image,
+# yellowfin included — the deploy still "succeeds" and produces a system that
+# CANNOT boot Phase 2. el10-gnome-win10pro (20260727T082625Z) spent 91 minutes
+# proving it: three failed injection attempts at minute ~10, a full deploy, then
+#     wootc: EXIT: cannot mount host NTFS rw (no ntfs3, no ntfs-3g)
+#            /proc/filesystems ntfs3=0 ntfs-3g=no
+# and an emergency shell. The information needed to predict that was available
+# 80 minutes earlier. Fail there instead, naming the cause.
+if ! ensure_ntfs_support; then
+    log "NTFS injection unavailable; checking whether the image can mount NTFS on its own"
+    if podman run --rm --network=host "$IMAGE" sh -c \
+        'grep -qw ntfs3 /proc/filesystems 2>/dev/null || command -v mount.ntfs-3g >/dev/null 2>&1 || test -e /usr/lib/modules/*/kernel/fs/ntfs3/ntfs3.ko*' \
+        >/dev/null 2>&1; then
+        log "  image provides its own NTFS driver — continuing without injection"
+    else
+        err "  [FAIL] ${IMAGE} has NO NTFS driver (no kernel ntfs3, no ntfs-3g) and injection failed."
+        err "         Phase 2 could not mount the Windows volume that holds root.disk, so it would"
+        err "         drop to an emergency shell. Refusing to write an unbootable deployment."
+        err "         Cause is almost always the ntfs-3g install above: network or repo reachability"
+        err "         from the deployer (EPEL/CRB for EL-family images)."
+        exit 1
+    fi
+fi
 
 # ── Resolve deployment backend and bootloader from the image ─────────────
 # Probe the image ONCE for the two independent signals that decide how to deploy:
@@ -1330,6 +1353,48 @@ if [[ -n "$VERIFY_ROOT" ]]; then
                 if [[ -e "$DEPLOY_ROOT$_d/$_b" ]]; then NTFS_BINS+=("$_d/$_b"); break; fi
             done
         done
+        # Fallback: the DEPLOYER always ships ntfs-3g (see its Containerfile)
+        # and has just used it to mount the host NTFS. If the deployment has
+        # none — the injection step failed, and EL kernels carry no ntfs3 —
+        # copy ours in rather than building a Phase-2 initramfs that provably
+        # cannot mount the volume holding root.disk.
+        #
+        # el10-gnome-win10pro (20260727T082625Z) deployed "successfully", then
+        # Phase 2 emergency-shelled with:
+        #   wootc: EXIT: cannot mount host NTFS rw (no ntfs3, no ntfs-3g)
+        #   /proc/filesystems ntfs3=0 ntfs-3g=no
+        # 91 minutes to discover something knowable at deploy time.
+        if (( ${#NTFS_BINS[@]} == 0 )); then
+            _ntfs_src="$(command -v ntfs-3g 2>/dev/null || true)"
+            if [[ -n "$_ntfs_src" && -x "$_ntfs_src" ]]; then
+                mkdir -p "$DEPLOY_ROOT/usr/local/sbin"
+                if cp -a "$_ntfs_src" "$DEPLOY_ROOT/usr/local/sbin/ntfs-3g" 2>/dev/null; then
+                    # Carry its shared libraries too: dracut resolves an
+                    # installed binary's deps INSIDE the chroot, so a bare copy
+                    # would be installed and then fail to run for want of
+                    # libntfs-3g.
+                    ldd "$_ntfs_src" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' | \
+                    while read -r _lib; do
+                        [[ -e "$DEPLOY_ROOT$_lib" ]] && continue
+                        mkdir -p "$DEPLOY_ROOT${_lib%/*}" 2>/dev/null || continue
+                        cp -a "$_lib" "$DEPLOY_ROOT$_lib" 2>/dev/null || true
+                    done
+                    NTFS_BINS+=("/usr/local/sbin/ntfs-3g")
+                    log "  Injected the deployer's own ntfs-3g into the deployment (the image had none)"
+                fi
+            fi
+        fi
+
+        # Fail CLOSED. Without an NTFS driver Phase 2 cannot reach root.disk, so
+        # deploying is guaranteed to end in an emergency shell. Say so now.
+        if (( ${#NTFS_BINS[@]} == 0 )) && \
+           ! find "$DEPLOY_ROOT/usr/lib/modules/$KVER" -name 'ntfs3.ko*' -print -quit 2>/dev/null | grep -q .; then
+            err "  [FAIL] no NTFS driver for Phase 2: the image has no ntfs-3g and kernel $KVER has no ntfs3"
+            err "         Phase 2 could not mount the Windows volume that holds root.disk."
+            err "         Refusing to finish a deployment that cannot boot."
+            exit 1
+        fi
+
         DRACUT_INSTALL_ARGS=()
         if (( ${#NTFS_BINS[@]} > 0 )); then
             DRACUT_INSTALL_ARGS=(--install "${NTFS_BINS[*]}")

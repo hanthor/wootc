@@ -161,3 +161,31 @@ setup() {
     grep -q 'skipping chroot preparation' "$DEPLOY"
     grep -q 'DEPLOY_ROOT" == \*/state/deploy/\*' "$DEPLOY"
 }
+
+@test "an image with no NTFS driver fails the deploy, not Phase 2" {
+    # "Relying on the image's own NTFS support" was never checked. On EL-family
+    # images (no kernel ntfs3) a failed ntfs-3g injection still produced a full
+    # deploy that CANNOT boot Phase 2: el10-gnome-win10pro spent 91 minutes to
+    # reach "cannot mount host NTFS rw (no ntfs3, no ntfs-3g)" and an emergency
+    # shell, when the evidence existed 80 minutes earlier.
+    grep -q 'checking whether the image can mount NTFS on its own' "$DEPLOY"
+    grep -q 'has NO NTFS driver' "$DEPLOY"
+    grep -q 'Refusing to write an unbootable deployment' "$DEPLOY"
+}
+
+@test "Phase 2 never ships without an NTFS driver" {
+    # Phase 2 mounts the Windows volume to reach root.disk. EL kernels have no
+    # ntfs3, so the deployment needs ntfs-3g — and when the injection step fails
+    # the old code logged a WARN and carried on, producing a deployment that
+    # emergency-shelled with "no ntfs3, no ntfs-3g" 91 minutes later
+    # (el10-gnome-win10pro, 20260727T082625Z).
+    #
+    # The deployer itself always ships ntfs-3g (its Containerfile), so use it.
+    grep -q "Injected the deployer's own ntfs-3g" "$DEPLOY"
+    grep -q 'command -v ntfs-3g' "$DEPLOY"
+    # Its shared libraries must come too, or the installed binary cannot run.
+    grep -q 'ldd "\$_ntfs_src"' "$DEPLOY"
+    # And with no driver available at all, refuse rather than ship it.
+    grep -q 'no NTFS driver for Phase 2' "$DEPLOY"
+    grep -q 'Refusing to finish a deployment that cannot boot' "$DEPLOY"
+}

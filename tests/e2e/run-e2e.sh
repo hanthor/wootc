@@ -2381,6 +2381,7 @@ TIMEOUT=300
 BOOT_STARTED=$(date +%s)
 BOOT_DEADLINE=$(deadline_in "$TIMEOUT")
 BOOT_SUCCESS=false
+PHASE2_DIAGNOSED=false
 
 while ! past_deadline "$BOOT_DEADLINE"; do
     snapshot_serial || true
@@ -2413,17 +2414,17 @@ while ! past_deadline "$BOOT_DEADLINE"; do
             # Absence of the attach line is the very thing being tested for.
             ATTACHED=$(printf '%s\n' "$NEW_OUTPUT" | grep -aiE "attached raw root.disk .* as /dev/loop" | tail -1 || true)
             if [ -n "$ATTACHED" ]; then
-                fail "Phase 2 dropped to an emergency shell — root.disk ATTACHED but sysroot.mount failed"
+                PHASE2_DIAGNOSED=true; fail "Phase 2 dropped to an emergency shell — root.disk ATTACHED but sysroot.mount failed"
                 info "  attach succeeded: $(printf '%s' "$ATTACHED" | sed 's/.*wootc:/wootc:/')"
                 info "  → the loop-attach worked; the mount/root-UUID step is the fault (see #35 for the btrfs case)"
             else
-                fail "Phase 2 dropped to an emergency shell — root.disk never attached"
+                PHASE2_DIAGNOSED=true; fail "Phase 2 dropped to an emergency shell — root.disk never attached"
             fi
             echo "$NEW_OUTPUT" | grep -aiE "wootc|sysroot|does not exist|mount|root=UUID" | tail -12
             break
         fi
         if printf '%s\n' "$NEW_OUTPUT" | grep -E "No bootable device|BOOTMGR is missing|kernel panic" >/dev/null 2>&1; then
-            fail "Boot failure detected"
+            PHASE2_DIAGNOSED=true; fail "Boot failure detected"
             break
         fi
         LAST_BYTE=$CURRENT_BYTE
@@ -2432,7 +2433,17 @@ while ! past_deadline "$BOOT_DEADLINE"; do
 done
 
 [ "$BOOT_SUCCESS" = true ] || {
-    fail "Phase 2 Linux system did not boot within $(elapsed_min_since "$BOOT_STARTED")m (budget $((TIMEOUT/60))m)"
+    # Same defect the deploy loop had (b851c44), second location: this loop
+    # BREAKS on emergency mode and on a boot failure, so a diagnosed failure was
+    # being reported as a timeout. el10-gnome-win10pro printed
+    # "did not boot within 2m (budget 5m)" directly under
+    # "dropped to an emergency shell — root.disk never attached" — a
+    # self-contradicting verdict that buries the actual cause one line up.
+    if [ "${PHASE2_DIAGNOSED:-false}" = true ]; then
+        fail "Phase 2 FAILED after $(elapsed_min_since "$BOOT_STARTED")m — see the diagnosed cause above; this is NOT a timeout"
+    else
+        fail "Phase 2 Linux system did not boot within $(elapsed_min_since "$BOOT_STARTED")m (budget $((TIMEOUT/60))m)"
+    fi
     tail -30 "$PTY"
     exit 1
 }
