@@ -1192,8 +1192,18 @@ sed "s#<Key>[^<]*</Key>#<Key>${WIN_KEY}</Key>#" autounattend.xml > "$RENDERED_AN
 # minutes each in run 30230608430.
 # Microsoft's guidance is to disambiguate with /IMAGE/NAME metadata rather than
 # by key: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-7/dd744266(v=ws.10)
+# OPT-IN. Naming the image is the documented fix for the edition picker, but
+# /IMAGE/NAME must match the ISO's WIM entry EXACTLY — and a wrong name is worse
+# than no name: Setup cannot resolve it and stalls on the very screen this was
+# meant to skip. el10-gnome-win10pro installed fine WITHOUT this (run
+# 20260727T082625Z reached Phase 2) and then failed at "Windows QGA did not
+# become available within 45 minutes" with it (20260727T101713Z).
+#
+# So it stays off until the real WIM names are read out of each ISO
+# (`wiminfo sources/install.wim`) and pinned per case. Set
+# WOOTC_E2E_WIN_IMAGE_NAME to try one.
 WIN_IMAGE_NAME="${WOOTC_E2E_WIN_IMAGE_NAME:-}"
-if [ -z "$WIN_IMAGE_NAME" ]; then
+if [ -z "$WIN_IMAGE_NAME" ] && [ "${WOOTC_E2E_WIN_NAME_IMAGE:-0}" = 1 ]; then
     case "${WOOTC_E2E_WIN_VERSION:-11}-${WOOTC_E2E_WIN_EDITION:-pro}" in
         10-pro)   WIN_IMAGE_NAME="Windows 10 Pro" ;;
         10-home)  WIN_IMAGE_NAME="Windows 10 Home" ;;
