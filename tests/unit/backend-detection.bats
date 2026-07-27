@@ -41,7 +41,13 @@ setup() {
     run grep -F 'BACKEND=unknown' "$DEPLOY"
     [ "$status" -eq 0 ]
 
-    run grep -F 'unrecognized backend signal; defaulting to ostree/grub2' "$DEPLOY"
+    # An image with neither bootupd-managed grub nor systemd-boot (Arch/Debian
+    # bootc images ship no bootupd) must still deploy, not abort: ostree/grub2
+    # plus --generic-image so bootc skips the bootupd requirement.
+    run grep -F 'no bootupd and no systemd-boot' "$DEPLOY"
+    [ "$status" -eq 0 ]
+
+    run grep -F 'GENERIC_IMAGE=1' "$DEPLOY"
     [ "$status" -eq 0 ]
 }
 

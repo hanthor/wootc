@@ -38,10 +38,15 @@ setup() {
     # It previously read five fields and passed a stale $opts global from the
     # planning loop — bitlocker=on silently never reached any run.
     grep -q 'while IFS=\$'"'"'\\t'"'"' read -r name image ver ed key opts; do' "$RUNNER"
-    grep -q 'run_case "\$host" "\$name" "\$image" "\$ver" "\$ed" "\$key" "\$opts"' "$RUNNER"
+    # Signature gained "$inst"/"$vm_ram" when per-host slots and RAM budgeting
+    # landed; what this guards is that $opts still reaches run_case as the LAST
+    # argument, read fresh from the queue rather than inherited from planning.
+    grep -q 'run_case "\$host" "\$inst" "\$vm_ram" "\$name" "\$image" "\$ver" "\$ed" "\$key" "\$opts"' "$RUNNER"
 }
 
 @test "phase3=on translates to --phase3 on the remote invocation" {
     grep -q 'phase3=on\*) EXTRA_ARGS="--phase3"' "$RUNNER"
-    grep -q 'run-e2e.sh "\$image" --keep \\\$EXTRA_ARGS' "$RUNNER"
+    # --instance= joined the invocation with per-host slots; EXTRA_ARGS must
+    # still be expanded ON THE REMOTE (escaped \$) and not by the local shell.
+    grep -q 'run-e2e.sh "\$image" --keep --instance=\$inst \\\$EXTRA_ARGS' "$RUNNER"
 }
