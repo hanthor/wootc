@@ -1170,6 +1170,51 @@ mkdir -p "$STORAGE_DIR"
 RENDERED_ANSWER="$STORAGE_DIR/autounattend.rendered.xml"
 sed "s#<Key>[^<]*</Key>#<Key>${WIN_KEY}</Key>#" autounattend.xml > "$RENDERED_ANSWER"
 
+# Name the EDITION explicitly, do not let the product key alone choose it.
+# Windows Setup only proceeds unattended when the key resolves to exactly ONE
+# image in the ISO. Where several match — or none does — it PAUSES on the
+# edition picker, and an unattended run simply hangs there until its install
+# budget expires. That is #58, and it is how win10 home/ent/ltsc burned ~50
+# minutes each in run 30230608430.
+# Microsoft's guidance is to disambiguate with /IMAGE/NAME metadata rather than
+# by key: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-7/dd744266(v=ws.10)
+WIN_IMAGE_NAME="${WOOTC_E2E_WIN_IMAGE_NAME:-}"
+if [ -z "$WIN_IMAGE_NAME" ]; then
+    case "${WOOTC_E2E_WIN_VERSION:-11}-${WOOTC_E2E_WIN_EDITION:-pro}" in
+        10-pro)   WIN_IMAGE_NAME="Windows 10 Pro" ;;
+        10-home)  WIN_IMAGE_NAME="Windows 10 Home" ;;
+        10-ent)   WIN_IMAGE_NAME="Windows 10 Enterprise" ;;
+        10-ltsc)  WIN_IMAGE_NAME="Windows 10 Enterprise LTSC 2021" ;;
+        11-pro)   WIN_IMAGE_NAME="Windows 11 Pro" ;;
+        11-home)  WIN_IMAGE_NAME="Windows 11 Home" ;;
+        11-ent)   WIN_IMAGE_NAME="Windows 11 Enterprise" ;;
+        11-ltsc)  WIN_IMAGE_NAME="Windows 11 Enterprise LTSC 2024" ;;
+    esac
+fi
+if [ -n "$WIN_IMAGE_NAME" ]; then
+    python3 - "$RENDERED_ANSWER" "$WIN_IMAGE_NAME" <<'PYEOF'
+import sys
+p, name = sys.argv[1], sys.argv[2]
+s = open(p, encoding="utf-8-sig").read()
+if "/IMAGE/NAME" in s:
+    sys.exit(0)  # already named
+block = (
+    "<InstallFrom>"
+    "<MetaData wcm:action=\"add\">"
+    "<Key>/IMAGE/NAME</Key>"
+    f"<Value>{name}</Value>"
+    "</MetaData>"
+    "</InstallFrom>"
+)
+# InstallFrom must precede InstallTo inside OSImage.
+if "<InstallTo>" not in s:
+    sys.exit(0)
+s = s.replace("<InstallTo>", block + "<InstallTo>", 1)
+open(p, "w", encoding="utf-8").write(s)
+PYEOF
+    info "Answer file targets image: $WIN_IMAGE_NAME"
+fi
+
 # ── BitLocker axis (SPEC §3.5) ──────────────────────────────────────────────
 # off (default): the answer file sets PreventDeviceEncryption=1, so C: stays
 #   plaintext and root.disk lives on C: — the path every run has taken so far.
