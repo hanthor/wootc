@@ -18,7 +18,21 @@
 # downloads it once.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
+# Re-exec from an IMMUTABLE SNAPSHOT. bash reads a script lazily, by byte
+# offset, so editing run-matrix.sh while a sweep is running corrupts THAT sweep
+# mid-flight. On 2026-07-27 a phase3 sweep died with "line 310: syntax error
+# near unexpected token `and`" purely because the file changed underneath it —
+# a result that looked like a test failure and was not.
+if [ -z "${WOOTC_MATRIX_SNAPSHOT:-}" ]; then
+    WOOTC_MATRIX_HOME="$(cd "$(dirname "$0")" && pwd)"
+    _snap="$(mktemp "${TMPDIR:-/tmp}/run-matrix.XXXXXX.sh")"
+    cp "$0" "$_snap"
+    export WOOTC_MATRIX_SNAPSHOT="$_snap" WOOTC_MATRIX_HOME
+    exec bash "$_snap" "$@"
+fi
+
+# $0 is the snapshot in TMPDIR, so paths must come from the original location.
+HERE="${WOOTC_MATRIX_HOME:-$(cd "$(dirname "$0")" && pwd)}"
 MATRIX="$HERE/matrix.tsv"
 RESULTS="$HERE/matrix-results.tsv"
 
@@ -309,6 +323,8 @@ cleanup_workers() {
     for p in "${pids[@]:-}"; do
         [ -n "$p" ] && kill "$p" 2>/dev/null || true
     done
+    # Same trap: a second `trap ... EXIT` would REPLACE this one, not add to it.
+    [ -n "${WOOTC_MATRIX_SNAPSHOT:-}" ] && rm -f "$WOOTC_MATRIX_SNAPSHOT" || true
 }
 trap 'cleanup_workers' EXIT INT TERM
 

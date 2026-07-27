@@ -78,3 +78,18 @@ setup() {
     [ -n "$launch_line" ]
     [ "$wait_line" -lt "$launch_line" ]
 }
+
+@test "the matrix runs from an immutable snapshot of itself" {
+    # bash reads a script lazily by byte offset, so editing run-matrix.sh while
+    # a sweep is running corrupts THAT sweep. A phase3 sweep died with
+    # "line 310: syntax error near unexpected token `and`" for exactly this
+    # reason on 2026-07-27 — a result that looked like a test failure.
+    grep -q 'WOOTC_MATRIX_SNAPSHOT' "$RUNNER"
+    grep -q 'exec bash "\$_snap"' "$RUNNER"
+    # $0 becomes the snapshot, so HERE must come from the recorded origin.
+    grep -q 'HERE="\${WOOTC_MATRIX_HOME:-' "$RUNNER"
+    # The re-exec must precede any use of HERE.
+    snap_line=$(grep -n 'exec bash "\$_snap"' "$RUNNER" | head -1 | cut -d: -f1)
+    here_line=$(grep -n '^HERE=' "$RUNNER" | head -1 | cut -d: -f1)
+    [ "$snap_line" -lt "$here_line" ]
+}
