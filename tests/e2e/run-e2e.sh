@@ -2648,9 +2648,23 @@ fi
 # /run/wootc/host missing (host-bind), profile missing (bind source), HOME bind missing
 # (mount-user-dirs / user creation).
 step "Verifying seeded user data is visible in Phase 2 \$HOME..."
+# PROVE THE AGENT ANSWERED before reading anything into silence. This assertion
+# and its diagnostic both travel through QGA into Phase-2 Linux; if the agent is
+# not reachable there, an empty answer is "we could not ask", NOT "the user's
+# data is missing". fedora-gnome-win11pro (20260727T130752Z) recorded
+# "User data NOT visible in Phase 2 $HOME" with a COMPLETELY EMPTY diagnostic
+# block — every layer line (host-bind, profile, seed@host, home-bind) blank,
+# which is the signature of an exec that never ran rather than a bridge that
+# bound nothing. Reporting that as data loss is the same defect this harness
+# keeps producing, in the one assertion that matters most.
+USERDATA_PROBE=$(qga_call exec /bin/sh -c 'echo WOOTC_AGENT_OK' 2>/dev/null || true)
 USERDATA_HOME=$(qga_call exec /bin/sh -c \
     'cat /home/wootc/Documents/wootc-e2e-userdata.txt 2>/dev/null' 2>/dev/null || true)
-if printf '%s' "$USERDATA_HOME" | grep -q "$RUN_ID"; then
+if ! printf '%s' "$USERDATA_PROBE" | grep -q WOOTC_AGENT_OK; then
+    fail "Cannot verify user data: the Phase-2 guest agent never answered, so the bridge was NOT measured"
+    info "  This is an INCONCLUSIVE check, not proof of data loss — the file may well be there."
+    info "  Fix the agent in Phase 2 (is qemu-guest-agent present and enabled in this image?), then re-run."
+elif printf '%s' "$USERDATA_HOME" | grep -q "$RUN_ID"; then
     pass "User data: Windows Documents file readable in /home/wootc with this run's ID"
 else
     USERDATA_DIAG=$(qga_call exec /bin/sh -c \

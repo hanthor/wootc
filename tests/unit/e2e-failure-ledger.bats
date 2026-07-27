@@ -169,3 +169,18 @@ setup() {
     [ "$output" -ge 2 ]
     grep -q "grep -qa '\\\\\[fisherman\\\\\]'" "$E2E"
 }
+
+@test "an unreachable Phase-2 agent is inconclusive, not proof of data loss" {
+    # The North Star assertion and its diagnostic BOTH travel through QGA into
+    # Phase-2 Linux. fedora-gnome-win11pro recorded "User data NOT visible" with
+    # a completely EMPTY diagnostic block — every layer line blank, the
+    # signature of an exec that never ran rather than a bridge that bound
+    # nothing. Silence from the agent must not be read as absence of the file.
+    grep -q 'WOOTC_AGENT_OK' "$E2E"
+    grep -q 'the Phase-2 guest agent never answered, so the bridge was NOT measured' "$E2E"
+    grep -q 'INCONCLUSIVE check, not proof of data loss' "$E2E"
+    # The probe must precede the verdict.
+    probe=$(grep -n 'USERDATA_PROBE=' "$E2E" | head -1 | cut -d: -f1)
+    verdict=$(grep -n 'fail "User data NOT visible in Phase 2' "$E2E" | head -1 | cut -d: -f1)
+    [ "$probe" -lt "$verdict" ]
+}
