@@ -829,6 +829,16 @@ if ! ensure_ntfs_support; then
          grep -qxE "CONFIG_NTFS3_FS=[ym]" /usr/lib/modules/*/config 2>/dev/null' \
         >/dev/null 2>&1; then
         log "  image provides its own NTFS driver — continuing without injection"
+    elif command -v ntfs-3g >/dev/null 2>&1; then
+        # The DEPLOYER ships ntfs-3g (its Containerfile) and both Phase-2 paths
+        # already take it from there when the image has none:
+        #   composefs → the early cpio copies /usr/bin/ntfs-3g + libntfs-3g
+        #   ostree    → the NTFS_BINS fallback copies it into the deployment
+        # So an image without a driver is NOT unbootable; refusing here blocked
+        # dakota on every runner whose initramfs cannot reach EPEL/CRB, which is
+        # both self-hosted boxes (bluefin-dakota-win11pro-phase3, 2026-07-27:
+        # three injection attempts over 10 minutes, then this refusal at 27m).
+        log "  image has no NTFS driver and injection failed — Phase 2 will carry the DEPLOYER's ntfs-3g instead"
     else
         err "  [FAIL] ${IMAGE} has NO NTFS driver (no kernel ntfs3, no ntfs-3g) and injection failed."
         err "         Phase 2 could not mount the Windows volume that holds root.disk, so it would"

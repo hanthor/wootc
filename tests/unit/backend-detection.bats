@@ -231,3 +231,17 @@ setup() {
     grep -q 'ntfs-3g injection: pulling' "$DEPLOY"
     grep -q 'the injection below will fail for that reason, not a repo one' "$DEPLOY"
 }
+
+@test "an image without an NTFS driver is not refused when the deployer has one" {
+    # Both Phase-2 paths already take ntfs-3g from the DEPLOYER when the image
+    # lacks it: composefs via the early cpio, ostree via the NTFS_BINS fallback.
+    # Refusing on the image alone blocked dakota on every runner whose initramfs
+    # cannot reach EPEL/CRB — i.e. both self-hosted boxes.
+    grep -q "Phase 2 will carry the DEPLOYER's ntfs-3g instead" "$DEPLOY"
+    # The deployer-capability arm must sit between "image has one" and the refusal.
+    img_line=$(grep -n 'image provides its own NTFS driver' "$DEPLOY" | head -1 | cut -d: -f1)
+    dep_line=$(grep -n "Phase 2 will carry the DEPLOYER's ntfs-3g" "$DEPLOY" | head -1 | cut -d: -f1)
+    fail_line=$(grep -n 'has NO NTFS driver' "$DEPLOY" | head -1 | cut -d: -f1)
+    [ "$img_line" -lt "$dep_line" ]
+    [ "$dep_line" -lt "$fail_line" ]
+}
