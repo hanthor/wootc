@@ -245,3 +245,18 @@ setup() {
     [ "$img_line" -lt "$dep_line" ]
     [ "$dep_line" -lt "$fail_line" ]
 }
+
+@test "no assignment in the deployer aborts on a non-matching grep or empty ls" {
+    # Under `set -o pipefail` a failing ls/grep fails its pipeline, and as the
+    # last command of an `||` list that aborts the deployer under set -e with NO
+    # message. dakota died exactly there: the log ends at "skipping chroot
+    # preparation" and the next line is the exit-1 post-mortem.
+    #
+    # A composefs deployment's /usr/lib/modules is empty (content lives in the
+    # .ostree.cfs), and `grep -c` exits 1 on ZERO matches — so each site aborted
+    # precisely in the case it existed to measure.
+    run awk '/^[^#]*[A-Za-z_]+=\$\(/{buf=$0; while (buf !~ /\)$/ && (getline nxt)>0) buf=buf" "nxt; if (buf ~ /\| *(grep|ls|sort|awk)/ && buf !~ /\|\| true/) print}' "$DEPLOY"
+    [ -z "$output" ]
+    # And the KVER fallback specifically must tolerate an empty module tree.
+    grep -q 'usr/lib/modules" 2>/dev/null | sort -V | tail -1 || true' "$DEPLOY"
+}

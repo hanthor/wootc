@@ -1359,8 +1359,16 @@ if [[ -n "$VERIFY_ROOT" ]]; then
     # no error message anywhere — guard the pairing, not just the pick.
     KVER=$(for d in "$DEPLOY_ROOT"/usr/lib/modules/*/; do
         [[ -f "$d/vmlinuz" ]] && basename "$d"
-    done | sort -V | tail -1)
-    [[ -n "$KVER" ]] || KVER=$(ls "$DEPLOY_ROOT/usr/lib/modules" 2>/dev/null | sort -V | tail -1)
+    done | sort -V | tail -1 || true)
+    # `|| true` is load-bearing under `set -o pipefail`. A composefs deployment's
+    # /usr/lib/modules is EMPTY or absent (its content lives in the .ostree.cfs),
+    # so `ls` fails, the pipeline fails, and as the last command of an `||` list
+    # that aborts the deployer under set -e — with NO message. dakota died
+    # exactly here: the log ends at "skipping chroot preparation" and the next
+    # line is the exit-1 post-mortem (himachal 20260727T114614Z).
+    # An empty KVER is FINE for composefs: the branch below needs both a KVER
+    # and ostree initramfs images, and composefs regenerates nothing here.
+    [[ -n "$KVER" ]] || KVER=$(ls "$DEPLOY_ROOT/usr/lib/modules" 2>/dev/null | sort -V | tail -1 || true)
     shopt -s nullglob
     OSTREE_INITRDS=("$DEPLOY_ROOT"/boot/ostree/*/initramfs*.img)
     shopt -u nullglob
@@ -1566,7 +1574,7 @@ if [[ -n "$VERIFY_ROOT" ]]; then
         # correctly-present hook produced zero output and sysroot.mount timed
         # out). Require the .wants symlink, which is what actually makes it run.
         GUARD_HITS=$(chroot "$DEPLOY_ROOT" lsinitrd "$INITRD_CHROOT_PATH" 2>/dev/null \
-            | grep -cE 'initrd-root-device.target.wants/wootc-attach.service')
+            | grep -cE 'initrd-root-device.target.wants/wootc-attach.service' || true)
         log "  guard: lsinitrd listed $GUARD_ENTRIES entries, wootc-attach-loop matches=$GUARD_HITS"
         # The wants symlink alone is NOT enough: it can dangle. Proven the hard
         # way — the symlink was present but usr/lib/systemd/system/
@@ -1575,7 +1583,7 @@ if [[ -n "$VERIFY_ROOT" ]]; then
         # attached. Require the actual UNIT FILE too, matched at end-of-line so a
         # wants symlink of the same name does not satisfy it.
         GUARD_UNIT=$(chroot "$DEPLOY_ROOT" lsinitrd "$INITRD_CHROOT_PATH" 2>/dev/null \
-            | grep -cE 'usr/lib/systemd/system/wootc-attach\.service$')
+            | grep -cE 'usr/lib/systemd/system/wootc-attach\.service$' || true)
         log "  guard: wootc-attach.service unit file present=$GUARD_UNIT"
         if [[ "${GUARD_UNIT:-0}" -lt 1 ]]; then
             err "  [FAIL] Phase-2 initramfs has the wants symlink but NO wootc-attach.service unit file (dangling) — root.disk would never attach; aborting deploy"
@@ -1598,7 +1606,7 @@ if [[ -n "$VERIFY_ROOT" ]]; then
         # With a raw root.disk the hook needs only losetup, which the target
         # image already provides — so there is no staged binary to verify. The
         # hook's own presence is now the whole requirement.
-        GUARD_LOSETUP=$(chroot "$DEPLOY_ROOT" lsinitrd "$INITRD_CHROOT_PATH" 2>/dev/null | grep -c 'losetup')
+        GUARD_LOSETUP=$(chroot "$DEPLOY_ROOT" lsinitrd "$INITRD_CHROOT_PATH" 2>/dev/null | grep -c 'losetup' || true)
         log "  guard: losetup present in initramfs=$GUARD_LOSETUP"
         if [[ "${GUARD_LOSETUP:-0}" -lt 1 ]]; then
             err "  [FAIL] Phase-2 initramfs has no losetup — root.disk cannot be attached"
@@ -1884,8 +1892,8 @@ QGAEOF
                     err "  [FAIL] composefs: no BLS entry under $TESP/loader/entries — cannot stage Phase 2"
                     exit 1
                 fi
-                cfs_linux=$(grep -m1 '^linux '  "${cfs_entries[0]}" | awk '{print $2}')
-                cfs_initrd=$(grep -m1 '^initrd ' "${cfs_entries[0]}" | awk '{print $2}')
+                cfs_linux=$(grep -m1 '^linux '  "${cfs_entries[0]}" | awk '{print $2}' || true)
+                cfs_initrd=$(grep -m1 '^initrd ' "${cfs_entries[0]}" | awk '{print $2}' || true)
                 cfs_opts=$(grep -m1 '^options ' "${cfs_entries[0]}" | sed 's/^options *//')
                 KSRC="$TESP$cfs_linux"; ISRC="$TESP$cfs_initrd"
                 if [[ ! -s "$KSRC" || ! -s "$ISRC" ]]; then
@@ -1948,7 +1956,7 @@ QGAEOF
                     exit 1
                 fi
                 # Keep root=UUID + composefs=<hash>; drop unresolved \$vars + quiet.
-                cfs_opts=$(printf '%s' "$cfs_opts" | tr ' ' '\n' | grep -v '\$' | grep -vE '^(quiet|rhgb)$' | tr '\n' ' ')
+                cfs_opts=$(printf '%s' "$cfs_opts" | tr ' ' '\n' | grep -v '\$' | grep -vE '^(quiet|rhgb)$' | tr '\n' ' ' || true)
                 mkdir -p /mnt/esp/loader/entries
                 cat > /mnt/esp/loader/entries/wootc.conf <<BLSEOF
 title wootc Linux
@@ -2019,7 +2027,7 @@ BLSEOF
                     fi
 
                     ROOT_OPTIONS=$(grep '^options ' "${BLS_DIR:-$DEPLOY_ROOT/boot/loader/entries}"/*.conf 2>/dev/null | head -1 | sed 's/^options *//')
-                    ROOT_OPTIONS=$(printf '%s' "$ROOT_OPTIONS" | tr ' ' '\n' | grep -v '\$' | grep -v -E '^(quiet|rhgb)$' | tr '\n' ' ')
+                    ROOT_OPTIONS=$(printf '%s' "$ROOT_OPTIONS" | tr ' ' '\n' | grep -v '\$' | grep -v -E '^(quiet|rhgb)$' | tr '\n' ' ' || true)
                     mkdir -p /mnt/esp/loader/entries
                     cat > /mnt/esp/loader/entries/wootc.conf <<BLSEOF
 title wootc Linux
@@ -2156,7 +2164,7 @@ BLSEOF
                 # serial OR framebuffer, meaning the panic happens before any
                 # console driver registers. earlycon+ignore_loglevel force the
                 # UART console up immediately so the actual panic prints.
-                ROOT_OPTIONS=$(printf '%s' "$ROOT_OPTIONS" | tr ' ' '\n' | grep -v '\$' | grep -v -E '^(quiet|rhgb)$' | tr '\n' ' ')
+                ROOT_OPTIONS=$(printf '%s' "$ROOT_OPTIONS" | tr ' ' '\n' | grep -v '\$' | grep -v -E '^(quiet|rhgb)$' | tr '\n' ' ' || true)
 
                 # Write the Phase-2 menu to EVERY grub.cfg location the loaded
                 # grub could read. BCD chains \EFI\fedora\shimx64.efi, which
