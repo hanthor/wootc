@@ -599,7 +599,7 @@ qga_wait_windows() {
         # fail in minutes with a verdict that names the actual condition.
         if [ "$elapsed" -ge 900 ] && [ $((elapsed % 300)) -eq 0 ]; then
             cpu=$($DOCKER exec "$CONTAINER_NAME" sh -c \
-                "ps -eo pcpu,args | grep '[q]emu-system' | head -1 | awk '{print \$1}'" 2>/dev/null | tr -d ' \r\n')
+                "ps -eo pcpu,args | grep '[q]emu-system' | head -1 | awk '{print \$1}'" 2>/dev/null | tr -d ' \r\n' || true)
             if [ -n "$cpu" ] && awk -v c="$cpu" 'BEGIN{exit !(c < 10)}' 2>/dev/null; then
                 idle_hits=$((idle_hits + 1))
                 warn "  guest CPU ${cpu}% — Windows Setup may be waiting for input (${idle_hits}/3)"
@@ -2190,7 +2190,7 @@ while ! past_deadline "$DEPLOY_DEADLINE"; do
                 info "[HEARTBEAT] QGA unavailable; guest-side progress unknown"
             fi
             GUEST_CPU=$($DOCKER exec "$CONTAINER_NAME" sh -c \
-                "ps -eo pcpu,args | grep '[q]emu-system' | head -1 | awk '{print \$1}'" 2>/dev/null | tr -d ' \r\n')
+                "ps -eo pcpu,args | grep '[q]emu-system' | head -1 | awk '{print \$1}'" 2>/dev/null | tr -d ' \r\n' || true)
             if [ -z "$GUEST_CPU" ]; then
                 warn "  serial silent ${SERIAL_AGE}s and NO QEMU process — the guest is gone"
             elif awk -v c="$GUEST_CPU" 'BEGIN{exit !(c < 15)}' 2>/dev/null; then
@@ -2346,7 +2346,13 @@ while ! past_deadline "$BOOT_DEADLINE"; do
             # /dev/loopN" on success, and a btrfs/UUID-mismatch sysroot.mount
             # timeout is a DIFFERENT bug (GUI takes 9+10 attached cleanly and
             # still hit emergency — #35). Report what the serial actually says.
-            ATTACHED=$(printf '%s\n' "$NEW_OUTPUT" | grep -aiE "attached raw root.disk .* as /dev/loop" | tail -1)
+            # `|| true` is load-bearing under `set -o pipefail`: a grep that
+            # matches NOTHING fails the pipeline, so this assignment aborted the
+            # whole run — and it sits in the branch that explains WHY Phase 2
+            # dropped to an emergency shell. The diagnostic killed the run
+            # before it could report (el10-gnome-win11pro-phase3, 2026-07-27).
+            # Absence of the attach line is the very thing being tested for.
+            ATTACHED=$(printf '%s\n' "$NEW_OUTPUT" | grep -aiE "attached raw root.disk .* as /dev/loop" | tail -1 || true)
             if [ -n "$ATTACHED" ]; then
                 fail "Phase 2 dropped to an emergency shell — root.disk ATTACHED but sysroot.mount failed"
                 info "  attach succeeded: $(printf '%s' "$ATTACHED" | sed 's/.*wootc:/wootc:/')"
@@ -2578,8 +2584,12 @@ fi
 # as a booted system. So a Phase 2 that never mounted its root could sail
 # through to "ALL TESTS PASSED". Demand positive evidence instead: the
 # loop-attach hook reporting success, or the host bridge, or the real root.
+# `|| true` is load-bearing under `set -o pipefail`. Without it a grep that
+# matches nothing fails the pipeline and set -e aborts the run — so this HARD
+# GATE could never reach its own else branch. The one case it exists to catch,
+# "Phase 2 produced NO proof of life", was the one case it could not report.
 PHASE2_PROOF=$(printf '%s' "$PASSTHROUGH_MARKERS" | grep -aiE \
-    "wootc: attached dynamic VHDX|host NTFS mounted via|wootc-host-bind|Reached target (multi-user|graphical)" | head -3)
+    "wootc: attached dynamic VHDX|host NTFS mounted via|wootc-host-bind|Reached target (multi-user|graphical)" | head -3 || true)
 if [ -n "$PHASE2_PROOF" ]; then
     pass "Phase 2 proof of life: $(printf '%s' "$PHASE2_PROOF" | head -1 | cut -c1-70)"
 else

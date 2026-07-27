@@ -113,3 +113,20 @@ setup() {
     # And the caller states a verdict rather than relying on set -e.
     grep -q 'qga_sync_oem || { fail "Cannot proceed' "$E2E"
 }
+
+@test "a non-matching grep in a checked assignment cannot abort the run" {
+    # Under `set -o pipefail` a grep that matches NOTHING fails its pipeline, so
+    # `X=$(... | grep ... )` aborts under set -e. Every instance of this sat in a
+    # check whose whole purpose was to detect ABSENCE, so the one case each
+    # existed to catch was the one case it could not report:
+    #   - ATTACHED=   explains why Phase 2 emergency-shelled (it aborted instead)
+    #   - PHASE2_PROOF= the hard gate's "NO proof of life" branch was unreachable
+    #   - GUEST_CPU=   the "NO QEMU process — the guest is gone" branch likewise
+    run bash -c 'set -euo pipefail; X=$(printf "nope\n" | grep -a "needle" | tail -1); echo reached'
+    [ "$status" -ne 0 ]
+    run bash -c 'set -euo pipefail; X=$(printf "nope\n" | grep -a "needle" | tail -1 || true); echo "reached:[$X]"'
+    [ "$status" -eq 0 ]
+    # No assignment in the harness may pipe through grep without a guard.
+    run awk '/^[^#]*[A-Za-z_]+=\$\(/{buf=$0; while (buf !~ /\)$/ && (getline nxt)>0) buf=buf" "nxt; if (buf ~ /grep/ && buf !~ /\|\| true/) print}' "$E2E"
+    [ -z "$output" ]
+}
