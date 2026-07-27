@@ -749,20 +749,38 @@ ensure_ntfs_support() {
     # mirror error while the win11pro run of the SAME image succeeded — not an
     # edition bug, a missing retry). Same fix class as the go-native pull.
     local inj_ok=""
-    local attempt
+    # ACQUIRE FIRST. `podman run` on a non-local image PULLS it, and a multi-GB
+    # bootc image cannot pull AND run dnf inside the 150s below — so injection
+    # failed on every cold cache and blamed "(network/repo?)", which is not what
+    # went wrong. It only ever succeeded when the image happened to be cached,
+    # which is why this looked intermittent. Same defect as the backend probe
+    # (375ae2f), one function later.
+    if ! timeout 120 podman image exists "$IMAGE" 2>/dev/null; then
+        log "  ntfs-3g injection: pulling ${IMAGE} first (not local yet)"
+        if ! timeout "${WOOTC_PROBE_PULL_TIMEOUT:-1800}" podman pull "$IMAGE" >/dev/null 2>&1; then
+            err "  [WARN] could not pull ${IMAGE} — the injection below will fail for that reason, not a repo one"
+        fi
+    fi
+    local attempt inj_err
+    inj_err="${TMPDIR:-/tmp}/wootc-ntfs-inject.err"
     for attempt in 1 2 3; do
         timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
-        if timeout 150 podman run --name "$cname" --network=host "$IMAGE" sh -c \
+        if timeout 300 podman run --name "$cname" --network=host "$IMAGE" sh -c \
             'dnf install -y ntfs-3g || \
              { { dnf install -y epel-release || \
                  dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm; } && \
                { dnf config-manager --set-enabled crb 2>/dev/null || true; } && \
                dnf install -y ntfs-3g; } || \
-             microdnf install -y ntfs-3g || rpm-ostree install ntfs-3g'; then
+             microdnf install -y ntfs-3g || rpm-ostree install ntfs-3g' 2>"$inj_err"; then
             inj_ok=1
             break
         fi
-        err "  [WARN] ntfs-3g install attempt ${attempt}/3 failed in ${IMAGE} (network/repo?)"
+        err "  [WARN] ntfs-3g install attempt ${attempt}/3 failed in ${IMAGE}"
+        # podman's OWN stderr, not just the container's: when the container
+        # never starts (image not pulled, netavark, storage lock) `podman logs`
+        # is EMPTY, which is exactly the case that kept being misread as a repo
+        # problem. Print both.
+        [ -s "$inj_err" ] && { err "  podman: $(tail -3 "$inj_err" | tr '\n' ' ')"; }
         timeout 60 podman logs "$cname" 2>&1 | tail -10 >&2 || true
         [ "$attempt" -lt 3 ] && sleep $((attempt * 10))
     done
@@ -797,8 +815,18 @@ ensure_ntfs_support() {
 # 80 minutes earlier. Fail there instead, naming the cause.
 if ! ensure_ntfs_support; then
     log "NTFS injection unavailable; checking whether the image can mount NTFS on its own"
+    # Use the IDENTICAL capability test ensure_ntfs_support uses. My first
+    # version omitted the CONFIG_NTFS3_FS grep, and deploy.sh warns explicitly
+    # why that matters: a kernel with CONFIG_NTFS3=y is built in, ships no .ko,
+    # and mounts ntfs3 fine — "a run where this injection FAILED still booted
+    # Phase-2 successfully ... making these failures fatal broke deploys that
+    # worked". A weaker probe here would refuse deploys that work.
+    # (`/proc/filesystems` inside the container reflects the DEPLOYER's kernel,
+    # not the image's, so it is checked last and never alone.)
     if timeout 300 podman run --rm --network=host "$IMAGE" sh -c \
-        'grep -qw ntfs3 /proc/filesystems 2>/dev/null || command -v mount.ntfs-3g >/dev/null 2>&1 || test -e /usr/lib/modules/*/kernel/fs/ntfs3/ntfs3.ko*' \
+        'command -v ntfs-3g >/dev/null 2>&1 || command -v mount.ntfs >/dev/null 2>&1 || \
+         ls /usr/lib/modules/*/kernel/fs/ntfs3/ntfs3.ko* >/dev/null 2>&1 || \
+         grep -qxE "CONFIG_NTFS3_FS=[ym]" /usr/lib/modules/*/config 2>/dev/null' \
         >/dev/null 2>&1; then
         log "  image provides its own NTFS driver — continuing without injection"
     else

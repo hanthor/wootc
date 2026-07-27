@@ -213,3 +213,21 @@ setup() {
     # The tail must go to stderr, which is what reaches the console.
     grep -A 4 'deployer log, last 60 lines' "$DEPLOY" | grep -q '>&2'
 }
+
+@test "the NTFS gate uses the same capability test as the injector" {
+    # deploy.sh states from a real run that this check is NOT authoritative on a
+    # weaker form: CONFIG_NTFS3=y kernels are built in, ship no .ko, mount fine,
+    # and "making these failures fatal broke deploys that worked". The gate must
+    # therefore test exactly what ensure_ntfs_support tests — including the
+    # CONFIG_NTFS3_FS grep — or it will refuse deploys that work.
+    run grep -c 'CONFIG_NTFS3_FS=\[ym\]' "$DEPLOY"
+    [ "$output" -ge 2 ]
+}
+
+@test "ntfs-3g injection acquires the image before running dnf in it" {
+    # `podman run` on a non-local image pulls it first; a multi-GB bootc image
+    # cannot pull AND dnf-install inside the old 150s, so injection failed on
+    # every cold cache while blaming "(network/repo?)".
+    grep -q 'ntfs-3g injection: pulling' "$DEPLOY"
+    grep -q 'the injection below will fail for that reason, not a repo one' "$DEPLOY"
+}
