@@ -9,18 +9,16 @@ concurrency:
   group: e2e-kvm-pages
   cancel-in-progress: false
 
-# Runs on a self-hosted runner with KVM support.
-# Label the runner: kvm, linux, x64
-#
-# To set up a self-hosted runner:
-#   https://github.com/tuna-os/wootc/settings/actions/runners/new
+# Runs on Runs-On (self-hosted-in-AWS autoscaler), on the build-kvm runner
+# profile defined in .github/runs-on.yml — nested-virt: true on a c8i/m8i/r8i
+# instance for hardware-accelerated KVM.
 
 on:
   workflow_dispatch:        # manual trigger
 
 jobs:
   e2e:
-    runs-on: [self-hosted, kvm]
+    runs-on: runs-on=${{ github.run_id }}/runner=build-kvm
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
