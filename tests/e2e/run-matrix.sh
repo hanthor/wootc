@@ -184,7 +184,12 @@ run_case() {
     remote_script=$(cat <<REMOTE
 set +e
 cd ~/wootc/tests/e2e
-rm -f "$log"
+# ARCHIVE, do not delete. The poll treats a missing log as still-starting, so
+# the file must go — but deleting it destroyed the previous run's only readable
+# record. That happened twice on 2026-07-27: a dakota failure's log was gone
+# before its cause had been read, and the relaunch's pkill also pre-empted the
+# old run's artifact collection. One generation of history costs nothing.
+mv -f "$log" "$log.prev" 2>/dev/null || rm -f "$log"
 pkill -9 -f "run-e2e.sh.*--instance=$inst" 2>/dev/null; sleep 1
 podman rm -f "$ctr" 2>/dev/null
 # dockur's PID-1 supervisor can leave qemu orphaned past podman rm -f; an
