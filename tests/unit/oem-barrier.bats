@@ -95,7 +95,9 @@ setup() {
 
 @test "the refresh happens BEFORE the OEM script is launched" {
     local refresh_line launch_line
-    refresh_line=$(grep -n '^qga_sync_oem$' "$E2E" | head -1 | cut -d: -f1)
+    # The call now states a verdict (`qga_sync_oem || { fail ...; exit 1; }`)
+    # rather than relying on set -e, so match the invocation, not a bare line.
+    refresh_line=$(grep -n '^qga_sync_oem\b' "$E2E" | head -1 | cut -d: -f1)
     launch_line=$(grep -n 'Start-Process -FilePath' "$E2E" | head -1 | cut -d: -f1)
     [ -n "$refresh_line" ]
     [ -n "$launch_line" ]
