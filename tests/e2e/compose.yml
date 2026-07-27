@@ -43,9 +43,10 @@ services:
       RAM_CHECK: "${WOOTC_E2E_RAM_CHECK:-Y}"
       # BitLocker runs need materially more: root.disk AND the deployer's 20 GiB
       # scratch live on a volume carved out of C:, so C: must be able to shrink
-      # by DiskSizeGB + 20 + 6 (61 GiB by default) and still hold Windows. At 80G
-      # that shrink is impossible ("Not enough room on C: to carve an unencrypted
-      # volume for Linux", run 30180970208). Non-BitLocker runs keep 80G.
+      # by DiskSizeGB + 20 + 6 (61 GiB by default) and still hold Windows.
+      # At 80G that shrink is impossible ("Not enough room on C: to carve
+      # an unencrypted volume for Linux", run 30180970208). Non-BitLocker
+      # runs keep 80G.
       DISK_SIZE: "${WOOTC_E2E_DISK_SIZE:-80G}"
       DISK_FMT: "qcow2"
       # Optional spare disk for the Phase-3 graduate-to-native target (rung 3).
@@ -81,14 +82,12 @@ services:
       - /dev/net/tun
     cap_add:
       - NET_ADMIN
-    # Testing #59: on GitHub-hosted ubuntu-latest, swtpm starts with correct
-    # arguments but NEVER binds /tmp/swtpm.sock, so dockur silently disables TPM
-    # and every Windows 11 case fails the preflight. The same invocation works on
-    # a self-hosted Fedora/bootc host, so the variable is the runner confinement
-    # — and dockur already ships a "/run/swtpm" copy described in its own source
-    # as a "workaround to circumvent AppArmor profile". Ubuntu AppArmor is the
-    # leading suspect; swtpm stderr is discarded by its -d daemonization, so a
-    # denial would be invisible.
+    # RESOLVED (#59, 2026-07-27): swtpm never bound /tmp/swtpm.sock, dockur
+    # silently disabled TPM, and every Windows 11 case failed the preflight.
+    # AppArmor was the leading suspect and was WRONG. The cause was ours:
+    # build-ssh-image.sh installed our wrapper as the ENTRYPOINT, so a plain
+    # shell became PID 1 instead of tini, and swtpm's -d daemonization never
+    # wrote its pid file. Fixed in 4a087eb; hosted runners now boot with TPM.
     # NOTE (#59): an `apparmor=unconfined` + `label=disable` experiment lived
     # here. It did not fix the GitHub-runner TPM failure, and on SELinux hosts
     # (himachal/dilli are bootc/Fedora) `label=disable` changes container
