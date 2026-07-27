@@ -1938,6 +1938,7 @@ DEPLOY_DEADLINE=$(deadline_in "$TIMEOUT")
 LAST_PROGRESS_MIN=-1
 DEPLOY_COMPLETE=false
 DEPLOYER_REBOOT_SEEN=false
+DEPLOYER_FATAL_SEEN=false
 KERNEL_REBOOT_SEEN=false
 WINDOWS_BACK_STREAK=0
 LAST_GUEST_HEARTBEAT=""
@@ -2089,6 +2090,7 @@ while ! past_deadline "$DEPLOY_DEADLINE"; do
             info "wootc: kernel reboot observed (not proof of a successful deploy)"
         fi
         if echo "$NEW_OUTPUT" | grep -qE "fatal|panic|kernel panic|\[FAIL\]"; then
+            DEPLOYER_FATAL_SEEN=true
             fail "Deployer error:"
             echo "$NEW_OUTPUT" | grep -E "fatal|panic|kernel panic|\[FAIL\]"
             break
@@ -2173,7 +2175,17 @@ while ! past_deadline "$DEPLOY_DEADLINE"; do
 done
 
 [ "$DEPLOY_COMPLETE" = true ] || {
-    fail "Deployment did not complete within $((TIMEOUT/60)) minutes"
+    # Do not call a fatal error a timeout. The loop BREAKS on a deployer fatal,
+    # so this line was reporting "did not complete within 90 minutes" for a
+    # deploy that had aborted at 33 with `bootc install to-filesystem: exit
+    # status 1` printed directly above it — which reads as "too slow, retry"
+    # when the truth is "it failed, and here is why".
+    _deploy_mins=$(elapsed_min_since "$DEPLOY_STARTED")
+    if [ "${DEPLOYER_FATAL_SEEN:-false}" = true ]; then
+        fail "Deployment FAILED after ${_deploy_mins}m — the deployer reported a fatal error (above); this is NOT a timeout"
+    else
+        fail "Deployment did not complete within $((TIMEOUT/60)) minutes (waited ${_deploy_mins}m)"
+    fi
     info "Last 30 lines of QEMU console:"
     tail -30 "$PTY"
     exit 1
