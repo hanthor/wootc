@@ -41,6 +41,21 @@ run_fast() {
         echo "!! bats not installed — skipping payload unit suites" >&2
     fi
 
+    # Python unit tests are standalone scripts (no pytest dependency). They were
+    # NOT wired in when tests/unit/test_qga_write.py landed, so the #42 guard
+    # against short/zero-byte QGA writes never ran in CI — a test nothing
+    # executes is not a test.
+    if command -v python3 >/dev/null; then
+        echo "── python unit tests (tests/unit/test_*.py) ──"
+        for t in tests/unit/test_*.py; do
+            [ -e "$t" ] || continue
+            echo "   $t"
+            python3 "$t" || rc=1
+        done
+    else
+        echo "!! python3 not installed — skipping python unit tests" >&2
+    fi
+
     if command -v go >/dev/null; then
         echo "── go test (fisherman TUI, cross-platform app) ──"
         # app/main.go has //go:embed all:frontend/dist, so the package will not
