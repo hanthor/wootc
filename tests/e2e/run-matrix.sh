@@ -219,6 +219,22 @@ nohup bash run-e2e.sh "$image" --keep --instance=$inst \$EXTRA_ARGS > "$log" 2>&
 echo "LAUNCHED-$name"
 REMOTE
 )
+    # Do not pile onto a host that is already struggling. himachal reached LOAD
+    # AVERAGE 100 and then froze hard enough to need a power cycle (2026-07-27),
+    # which cost the phase3 axis an entire cycle. A busy host is a reason to
+    # WAIT, not a reason to add another Windows VM to it.
+    local load_wait=0 load1 ncpu
+    while [ "$load_wait" -lt "${WOOTC_MATRIX_LOAD_WAIT_S:-1800}" ]; do
+        read -r load1 ncpu < <(ssh -n -o ConnectTimeout=10 -o BatchMode=yes "$host" \
+            'printf "%s %s" "$(cut -d" " -f1 /proc/loadavg)" "$(nproc)"' 2>/dev/null) || break
+        [ -n "${load1:-}" ] && [ -n "${ncpu:-}" ] || break
+        # Saturated = 1-minute load at or above the core count.
+        awk -v l="$load1" -v c="$ncpu" 'BEGIN{exit !(l < c)}' 2>/dev/null && break
+        echo "[$host/$inst] load ${load1} on ${ncpu} cores — waiting before launching $name"
+        sleep 120
+        load_wait=$((load_wait + 120))
+    done
+
     for attempt in 1 2 3; do
         if ssh -o ConnectTimeout=15 "$host" "bash -s" <<< "$remote_script" 2>/dev/null | grep -q "LAUNCHED-$name"; then
             launched=true; break

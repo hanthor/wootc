@@ -64,3 +64,17 @@ setup() {
     [ -n "$cap_line" ]
     [ "$cap_line" -gt "$jobs_line" ]
 }
+
+@test "a case waits for a loaded host instead of piling onto it" {
+    # himachal reached load average 100 and then froze hard enough to need a
+    # power cycle (2026-07-27), costing the phase3 axis a whole cycle. A busy
+    # host is a reason to WAIT, not to add another Windows VM to it.
+    grep -q '/proc/loadavg' "$RUNNER"
+    grep -q 'waiting before launching' "$RUNNER"
+    # The wait must happen BEFORE the launch attempts.
+    wait_line=$(grep -n 'load .* on .* cores — waiting before launching' "$RUNNER" | head -1 | cut -d: -f1)
+    launch_line=$(grep -n 'for attempt in 1 2 3; do' "$RUNNER" | head -1 | cut -d: -f1)
+    [ -n "$wait_line" ]
+    [ -n "$launch_line" ]
+    [ "$wait_line" -lt "$launch_line" ]
+}
