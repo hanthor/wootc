@@ -238,6 +238,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Name the command that aborts the deploy. `set -e` here is silent, and the
+# "last 60 lines" dump only shows the last SUCCESSFUL log line — so a failing
+# command that logs nothing is invisible. bluefin-dakota-win11pro (run
+# 30267737413) exited 32 with its final line being "skipping dracut regen",
+# leaving the actual failure unlocatable from a 60-minute run. -E is already
+# set, so this propagates into functions and subshells.
+wootc_report_abort() {
+    local rc="$1" cmd="$2"
+    case "$cmd" in exit*) return 0 ;; esac
+    err "ABORT: line ${BASH_LINENO[0]:-?}: ${cmd} (exit ${rc})"
+}
+trap 'wootc_report_abort "$?" "$BASH_COMMAND"' ERR
+
 # ── Parse kernel cmdline ────────────────────────────────────────────────────
 read_cmdline() {
     local key="$1" default="${2:-}"

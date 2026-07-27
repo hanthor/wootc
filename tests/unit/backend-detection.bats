@@ -273,3 +273,16 @@ setup() {
     run grep -nE '^\s+umount [^|]*$' "$DEPLOY"
     [ -z "$output" ]
 }
+
+@test "the deployer names the command that aborts it" {
+    # set -e is silent, and the "last 60 lines" dump shows only the last
+    # SUCCESSFUL log line — so a failing command that logs nothing is
+    # invisible. bluefin-dakota-win11pro (run 30267737413) exited 32 with its
+    # final line "skipping dracut regen", leaving the actual failure
+    # unlocatable after a 60-minute run.
+    grep -q 'wootc_report_abort' "$DEPLOY"
+    grep -q "trap 'wootc_report_abort" "$DEPLOY"
+    grep -q 'ABORT: line' "$DEPLOY"
+    # fail+exit sites already report; the trap must stay quiet for them.
+    grep -q 'case "$cmd" in exit\*) return 0 ;; esac' "$DEPLOY"
+}
