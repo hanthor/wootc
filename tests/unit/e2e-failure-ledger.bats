@@ -69,9 +69,19 @@ setup() {
     grep -A 14 'if \[ -s "\$WOOTC_FAILURE_LEDGER" \]' "$E2E" | grep -q "exit 1"
 }
 
-@test "the two Phase-2 checks that produced the false green do record failures" {
-    # Both set PASSTHROUGH_OK=false, which nothing read. They must call fail()
-    # so the ledger — which IS read — carries them.
-    grep -q 'fail "Passthrough: errors detected in boot output:"' "$E2E"
+@test "the user-data check records a failure — it is the North Star assertion" {
+    # It set PASSTHROUGH_OK=false, which nothing read. It must call fail() so
+    # the ledger — which IS read — carries it.
     grep -q 'fail "User data NOT visible in Phase 2' "$E2E"
+}
+
+@test "a recovered ntfs3 mount error does not fail the run" {
+    # The passthrough tries ntfs3 and falls back to fuse-ntfs-3g. On EL10, whose
+    # kernel has no ntfs3, a HEALTHY boot logs a mount failure and then mounts.
+    # Treating that as fatal would trade the old false green for a false red.
+    grep -q 'warn "Passthrough: mount errors in boot output' "$E2E"
+    # Only unrecoverable conditions may fail.
+    grep -q 'fail "Passthrough: unrecoverable errors detected in boot output:"' "$E2E"
+    run grep -c 'grep -qiE "panic|kernel BUG|ntfs3\.\*refus"' "$E2E"
+    [ "$output" -ge 1 ]
 }

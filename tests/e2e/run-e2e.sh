@@ -2424,11 +2424,23 @@ else
     info "Passthrough: loop device setup NOT detected (may need console=ttyS0)"
 fi
 
-# Check for fatal errors that would block migration
-if echo "$PASSTHROUGH_MARKERS" | grep -qiE "failed.*host|host.*failed|panic|kernel BUG|ntfs3.*error|ntfs3.*refus"; then
-    fail "Passthrough: errors detected in boot output:"
-    echo "$PASSTHROUGH_MARKERS" | grep -iE "failed.*host|host.*failed|panic|kernel BUG|ntfs3.*error|ntfs3.*refus"
+# Check for fatal errors that would block migration.
+#
+# A mount error in the boot output is NOT by itself a failure: the passthrough
+# tries ntfs3 first and falls back to fuse-ntfs-3g, so on an image whose kernel
+# lacks ntfs3 (EL10) a healthy boot legitimately logs
+#   "wootc: ntfs3 mount failed: ... unknown filesystem type 'ntfs3'"
+# and then mounts successfully. Matching that as fatal turns every such run red
+# on a working fallback. The end state is the evidence, and it is checked
+# directly below (the host NTFS mount and the user-data read), so this scan is
+# limited to conditions nothing can recover from.
+if echo "$PASSTHROUGH_MARKERS" | grep -qiE "panic|kernel BUG|ntfs3.*refus"; then
+    fail "Passthrough: unrecoverable errors detected in boot output:"
+    echo "$PASSTHROUGH_MARKERS" | grep -iE "panic|kernel BUG|ntfs3.*refus"
     PASSTHROUGH_OK=false
+elif echo "$PASSTHROUGH_MARKERS" | grep -qiE "failed.*host|host.*failed|ntfs3.*error"; then
+    warn "Passthrough: mount errors in boot output (a fallback may have recovered these):"
+    echo "$PASSTHROUGH_MARKERS" | grep -iE "failed.*host|host.*failed|ntfs3.*error" | sed 's/^/    /'
 fi
 
 # Look for wootc passthrough systemd service
