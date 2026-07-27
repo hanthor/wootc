@@ -124,19 +124,24 @@ hosted-runner matrix (`.github/workflows/e2e-matrix.yml`). Legend:
 ✅ proven green · 🟡 in progress / partially proven · 🔴 known-red (tracked
 issue) · ⚪ not yet run.
 
-**Last full matrix sweep: 2026-07-25 — 12 of 22 cases green.** ✅ here means a
-case passed a real end-to-end run, not that it is re-verified on every commit;
-fixes have landed since the sweep and re-verification is ongoing. A case is only
+**Last full matrix sweep: 2026-07-25 — 12 of 22 cases green.** A case is only
 marked ✅ once the whole chain passes (Windows seed → deploy → Phase-2 boot →
 seeded file readable from Linux).
 
-> ⚠️ **Harness blocker (2026-07-26):** every Windows 11 case currently fails on
-> GitHub-hosted runners before wootc runs at all — `swtpm` never binds its
-> socket, so dockur silently disables TPM and the VM comes up without TPM 2.0
-> ([#59](https://github.com/tuna-os/wootc/issues/59)). This is an environment
-> problem, not a regression in the statuses above: the identical container works
-> on a self-hosted host. Re-verification of the ✅ rows is paused until it is
-> fixed.
+> ⚠️ **Every ✅ below predates 2026-07-27 and is currently UNVERIFIED.** Until
+> commit `3d7f9e2`, `fail()` only printed — a failed check that did not itself
+> abort could not stop the run reaching "ALL TESTS PASSED". A real BitLocker run
+> was recorded PASS with `[FAIL] User data NOT visible in Phase 2 $HOME` in its
+> own log, which is the North Star assertion itself. The harness now records
+> every failure to a ledger and gates the banner on it, so this class of false
+> green cannot recur — but the counts above were produced by the old harness and
+> are being re-run. Treat them as claims awaiting evidence, not as status.
+
+> ℹ️ **Resolved (2026-07-27):** the hosted-runner TPM blocker
+> ([#59](https://github.com/tuna-os/wootc/issues/59)) was ours, not GitHub's —
+> our sshd wrapper took PID 1 from `tini`, so `swtpm`'s `-d` daemonization never
+> wrote its pid file and dockur silently disabled TPM. Fixed in `4a087eb`;
+> GitHub-hosted runners are back in scope.
 
 **Image family × phase** (Windows 11 Pro, Secure Boot + TPM 2.0):
 
