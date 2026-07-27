@@ -2487,9 +2487,14 @@ fi
 # on a working fallback. The end state is the evidence, and it is checked
 # directly below (the host NTFS mount and the user-data read), so this scan is
 # limited to conditions nothing can recover from.
-if echo "$PASSTHROUGH_MARKERS" | grep -qiE "panic|kernel BUG|ntfs3.*refus"; then
+# Match a REAL panic, not the word. `[drm] Registered 1 planes with drm panic`
+# is the kernel's drm_panic HANDLER registering during a healthy boot, and the
+# bare "panic" pattern matched it — turning every fedora/bonito cell red the
+# moment failures became binding (fedora-gnome/kde/niri, run 30230608430).
+# A kernel panic announces itself as "Kernel panic - not syncing".
+if echo "$PASSTHROUGH_MARKERS" | grep -qiE "Kernel panic - not syncing|kernel BUG at|ntfs3.*refus"; then
     fail "Passthrough: unrecoverable errors detected in boot output:"
-    echo "$PASSTHROUGH_MARKERS" | grep -iE "panic|kernel BUG|ntfs3.*refus"
+    echo "$PASSTHROUGH_MARKERS" | grep -iE "Kernel panic - not syncing|kernel BUG at|ntfs3.*refus"
     PASSTHROUGH_OK=false
 elif echo "$PASSTHROUGH_MARKERS" | grep -qiE "failed.*host|host.*failed|ntfs3.*error"; then
     warn "Passthrough: mount errors in boot output (a fallback may have recovered these):"

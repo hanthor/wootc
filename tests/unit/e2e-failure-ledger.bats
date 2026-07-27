@@ -82,6 +82,22 @@ setup() {
     grep -q 'warn "Passthrough: mount errors in boot output' "$E2E"
     # Only unrecoverable conditions may fail.
     grep -q 'fail "Passthrough: unrecoverable errors detected in boot output:"' "$E2E"
-    run grep -c 'grep -qiE "panic|kernel BUG|ntfs3\.\*refus"' "$E2E"
+    run grep -c 'grep -qiE "Kernel panic - not syncing|kernel BUG at|ntfs3\.\*refus"' "$E2E"
     [ "$output" -ge 1 ]
+}
+
+@test "a drm_panic handler registration is not a kernel panic" {
+    # "[drm] Registered 1 planes with drm panic" is the kernel's drm_panic
+    # HANDLER registering during a perfectly healthy boot. The bare "panic"
+    # pattern matched it, and once failures became binding that turned every
+    # fedora/bonito cell red (fedora-gnome/kde/niri, run 30230608430).
+    pat='Kernel panic - not syncing|kernel BUG at|ntfs3.*refus'
+    run bash -c "echo '[   11.675448] virtio-pci 0000:00:01.0: [drm] Registered 1 planes with drm panic' | grep -qiE '$pat'"
+    [ "$status" -ne 0 ]
+    run bash -c "echo 'Kernel panic - not syncing: VFS: Unable to mount root fs' | grep -qiE '$pat'"
+    [ "$status" -eq 0 ]
+    run bash -c "echo 'kernel BUG at fs/ntfs3/inode.c:123' | grep -qiE '$pat'"
+    [ "$status" -eq 0 ]
+    # And the harness must use exactly that pattern.
+    grep -q 'Kernel panic - not syncing|kernel BUG at|ntfs3.\*refus' "$E2E"
 }
