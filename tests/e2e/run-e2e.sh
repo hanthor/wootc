@@ -106,8 +106,8 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-pass() { echo -e "${GREEN}[PASS]${NC} $*"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
+pass() { printf '%b[PASS]%b %s\n' "$GREEN" "$NC" "$*"; }
+warn() { printf '%b[WARN]%b %s\n' "$YELLOW" "$NC" "$*"; }
 # Every fail() is RECORDED, and the final banner is gated on the ledger being
 # empty. Until now fail() only echoed: a fail site that did not itself `exit 1`
 # was decorative, and the run sailed on to "ALL TESTS PASSED".
@@ -126,17 +126,22 @@ WOOTC_FAILURE_LEDGER="${TMPDIR:-/tmp}/wootc-e2e-failures.$$"
 : > "$WOOTC_FAILURE_LEDGER" 2>/dev/null || WOOTC_FAILURE_LEDGER=/dev/null
 export WOOTC_FAILURE_LEDGER
 fail() {
-    echo -e "${RED}[FAIL]${NC} $*" >&2
+    # printf '%b' the COLOURS, '%s' the MESSAGE. `echo -e` interpreted escapes
+    # in the message too, so any Windows path was corrupted in the one place it
+    # mattered most: "C:\\OEM\\run-wootc-e2e.ps1" printed as
+    # "C:\\OEMun-wootc-e2e.ps1" because \r became a carriage return. \t, \n and
+    # \b mangle just as silently.
+    printf '%b[FAIL]%b %s\n' "$RED" "$NC" "$*" >&2
     printf '%s\n' "$*" >> "$WOOTC_FAILURE_LEDGER" 2>/dev/null || true
 }
-info() { echo -e "${YELLOW}[INFO]${NC} $*"; }
+info() { printf '%b[INFO]%b %s\n' "$YELLOW" "$NC" "$*"; }
 # WOOTC_LAST_STEP is carried into the exit stamp. Without it the EXIT trap
 # overwrote stage= with a bare "exited (status 1)", discarding the only record
 # of WHERE a run died — three hosted win10 cells (run 30230608430) failed
 # identically and their state files could say nothing but "exited", while the
 # workflow logs stayed locked until the whole matrix finished.
 WOOTC_LAST_STEP="startup"
-step() { echo -e "${CYAN}[STEP]${NC} $*"; WOOTC_LAST_STEP="$*"; run_state "step: $*"; }
+step() { printf '%b[STEP]%b %s\n' "$CYAN" "$NC" "$*"; WOOTC_LAST_STEP="$*"; run_state "step: $*"; }
 
 # ── wall-clock deadlines ────────────────────────────────────────────────────
 # Wait loops used to track time by incrementing a counter alongside `sleep 5`.
@@ -719,6 +724,15 @@ qga_sync_oem() {
             if [ "$try" -lt 3 ]; then
                 warn "OEM payload write failed for $relative (attempt $try/3) — clearing holders and retrying"
                 qga_powershell 'cmd.exe /d /c "schtasks.exe /Delete /TN \"wootc-e2e-setup\" /F >NUL 2>&1"; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and ($_.CommandLine -like "*run-wootc-e2e.ps1*" -or $_.CommandLine -like "*setup-wootc.ps1*") } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }' >/dev/null 2>&1 || true
+                # Killing holders is NOT enough on the restore path: the file
+                # carries the PRIME image's attributes and ACLs, so the write
+                # still fails "Access is denied" with nothing holding it. The
+                # wootc-config.txt refresh below already solves this — clear the
+                # attributes, take ownership, grant, DELETE, and let the next
+                # attempt CREATE rather than overwrite. el10-gnome-win10pro
+                # (2026-07-27) failed all three attempts on run-wootc-e2e.ps1
+                # with holder-killing alone.
+                qga_powershell "\$p='${target//\\/\\\\}'; if (Test-Path \$p) { try { attrib -r -s -h \$p } catch {}; cmd.exe /d /c \"takeown /f \`\"\$p\`\" >NUL 2>&1 & icacls \`\"\$p\`\" /grant *S-1-1-0:F >NUL 2>&1\"; Remove-Item -LiteralPath \$p -Force -ErrorAction SilentlyContinue }" >/dev/null 2>&1 || true
                 sleep 5
             else
                 fail "Could not transfer OEM payload file to the guest: $relative -> $target"

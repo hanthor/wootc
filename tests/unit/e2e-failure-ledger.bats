@@ -130,3 +130,29 @@ setup() {
     run awk '/^[^#]*[A-Za-z_]+=\$\(/{buf=$0; while (buf !~ /\)$/ && (getline nxt)>0) buf=buf" "nxt; if (buf ~ /grep/ && buf !~ /\|\| true/) print}' "$E2E"
     [ -z "$output" ]
 }
+
+@test "log helpers do not mangle Windows paths" {
+    # `echo -e` interprets escapes in the MESSAGE, so C:\OEM\run-wootc-e2e.ps1
+    # printed as C:\OEMun-wootc-e2e.ps1 (\r became a carriage return) in the one
+    # place it mattered — the line naming the file that could not be
+    # transferred. \t, \n and \b corrupt just as silently.
+    run bash -c 'RED="\033[0;31m"; NC="\033[0m"; printf "%b[FAIL]%b %s\n" "$RED" "$NC" "C:\OEM\run-wootc-e2e.ps1"'
+    [[ "$output" == *'C:\OEM\run-wootc-e2e.ps1'* ]]
+    # No helper may use `echo -e` with the message in the format position.
+    run grep -nE '^(fail|warn|info|pass|step)\(\) \{[^}]*echo -e' "$E2E"
+    [ -z "$output" ]
+}
+
+@test "a locked OEM payload file is force-replaced, not just unheld" {
+    # Killing holders is not enough on the restore path: the file carries the
+    # PRIME image's attributes/ACLs and the write still fails "Access is
+    # denied". el10-gnome-win10pro burned all three attempts on
+    # run-wootc-e2e.ps1 with holder-killing alone.
+    grep -q 'attrib -r -s -h' "$E2E"
+    grep -q 'takeown /f' "$E2E"
+    # ...and the force-replace must be inside the payload retry, not only in the
+    # config refresh that already had it.
+    retry_line=$(grep -n 'OEM payload write failed for' "$E2E" | head -1 | cut -d: -f1)
+    forced=$(awk -v s="$retry_line" 'NR>s && NR<s+15 && /takeown \/f/{print NR; exit}' "$E2E")
+    [ -n "$forced" ]
+}
