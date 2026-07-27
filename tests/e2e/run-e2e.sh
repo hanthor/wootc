@@ -16,7 +16,18 @@
 #     tests/e2e/iso-cache/windows-11.iso       # default offline installer cache
 #     WOOTC_WINDOWS_ISO=/path/to/windows.iso ./run-e2e.sh
 
-set -euo pipefail
+set -Eeuo pipefail
+
+# A `set -e` abort is otherwise COMPLETELY SILENT. The BitLocker run
+# 20260726T234431Z exited 1 while "Waiting for Phase 2 Linux system to boot..."
+# with no [FAIL] line anywhere, so the matrix could record only EXITED and the
+# reason was unrecoverable from the log — a 39-minute run yielding nothing.
+#
+# Verified not to fire spuriously: a `return 1` reaching `|| true`, and a
+# failing command in an `if` condition, are both exempt; an explicit `exit 1`
+# does not fire ERR either, so a fail+exit site keeps its own message as the
+# last [FAIL] line. -E is what propagates this into functions and subshells.
+trap 'wootc_err_rc=$?; printf "[FAIL] run-e2e.sh aborted at line %s: %s (exit %s)\n" "$LINENO" "$BASH_COMMAND" "$wootc_err_rc" >&2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
