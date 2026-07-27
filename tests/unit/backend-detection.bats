@@ -260,3 +260,16 @@ setup() {
     # And the KVER fallback specifically must tolerate an empty module tree.
     grep -q 'usr/lib/modules" 2>/dev/null | sort -V | tail -1 || true' "$DEPLOY"
 }
+
+@test "teardown never turns a successful deploy into a failure" {
+    # The composefs path SKIPS the dev/proc/sys binds (read-only tree, no
+    # chroot), so an unconditional umount fails there — and umount's exit 32
+    # became the deployer's exit status under set -e, killing it immediately
+    # after "[PASS] Phase-2 setup completed with no problems". The deploy had
+    # succeeded; the teardown reported a dead deployer and Phase 2 never got its
+    # reboot (himachal 20260727T124314Z).
+    grep -q 'mountpoint -q "\$DEPLOY_ROOT/\$fs" 2>/dev/null && umount' "$DEPLOY"
+    # No bare umount may abort the script.
+    run grep -nE '^\s+umount [^|]*$' "$DEPLOY"
+    [ -z "$output" ]
+}

@@ -379,7 +379,7 @@ scan_for_root_disk() {
             if [[ -f "/mnt/scan${ROOT_DISK_PATH}" ]]; then
                 log "  found ${ROOT_DISK_PATH} on ${dev} (mounted via ${drv})"
                 NTFS_PART="$dev"
-                umount /mnt/scan
+                umount /mnt/scan 2>/dev/null || err "  [WARN] could not unmount /mnt/scan (busy?) — continuing"
                 return 0
             fi
             # Say WHAT is on the volume instead of just "not here" — the BitLocker
@@ -394,7 +394,7 @@ scan_for_root_disk() {
             [[ -d /mnt/scan/wootc ]] && \
                 log "    wootc/: $(ls -A /mnt/scan/wootc 2>/dev/null | tr '\n' ' ')" && \
                 log "    wootc/disks/: $(ls -lA /mnt/scan/wootc/disks 2>/dev/null | tail -n +2 | tr '\n' ';' | cut -c1-200)"
-            umount /mnt/scan
+            umount /mnt/scan 2>/dev/null || err "  [WARN] could not unmount /mnt/scan (busy?) — continuing"
         else
             # Silence here is what made #36 unattributable for two runs.
             log "  ${dev}: not mountable as NTFS (TYPE=${fstype:-none}; ntfs3, ntfs3+force, ntfs-3g all failed)"
@@ -1141,7 +1141,7 @@ for p in "$VERIFY_ROOT_DEVICE" "${VERIFY_LOOP}"p*; do
             VERIFY_ROOT="$p"
             break
         fi
-        umount /mnt/verify 2>/dev/null
+        umount /mnt/verify 2>/dev/null || true
     fi
 done
 
@@ -1631,7 +1631,16 @@ if [[ -n "$VERIFY_ROOT" ]]; then
         log "  [PASS] Phase-2 setup completed with no problems"
     fi
 
-    for fs in sys proc dev; do umount "$DEPLOY_ROOT/$fs"; done
+    # Unmount only what was actually mounted. The composefs path SKIPS the
+    # dev/proc/sys binds (its tree is read-only and it runs no chroot), so an
+    # unconditional umount fails there — and umount's exit 32 became the
+    # deployer's exit status under set -e, killing it immediately after
+    # "[PASS] Phase-2 setup completed with no problems". The deploy had
+    # SUCCEEDED; the teardown reported it as a dead deployer, and Phase 2 never
+    # got its reboot (himachal 20260727T124314Z).
+    for fs in sys proc dev; do
+        mountpoint -q "$DEPLOY_ROOT/$fs" 2>/dev/null && umount "$DEPLOY_ROOT/$fs" 2>/dev/null || true
+    done
 
     # Check dracut module
     if [[ -d "$DEPLOY_ROOT/usr/lib/dracut/modules.d/99wootc-boot" ]]; then
@@ -2216,7 +2225,7 @@ GRUBEOF
             fi
             fi
             fi   # close CFS_HANDLED guard (generic ostree/BLS staging path)
-            umount /mnt/esp
+            umount /mnt/esp 2>/dev/null || err "  [WARN] could not unmount /mnt/esp (busy?) — continuing"
         else
             err "  [WARN] Could not mount ESP ${ESP_DEV}; Phase-2 boot will fail"
         fi
@@ -2274,11 +2283,15 @@ GRUBEOF
     # The composefs target ESP is mounted UNDER boot/, so it must go first or
     # the boot umount fails busy.
     [[ -n "${ESP_BOUND_AT:-}" ]] && umount "$ESP_BOUND_AT" 2>/dev/null || true
-    umount "$DEPLOY_ROOT/boot"
+    # Unmount defensively: a busy unmount here would abort the script under
+    # set -e with umount's exit 32, AFTER verification has fully passed —
+    # turning a successful deploy into a dead deployer that never reboots into
+    # Phase 2. Report, do not die.
+    umount "$DEPLOY_ROOT/boot" 2>/dev/null || err "  [WARN] could not unmount $DEPLOY_ROOT/boot (busy?) — continuing"
     if [[ "$DEPLOY_VAR_BOUND" == true ]]; then
-        umount "$DEPLOY_ROOT/var"
+        umount "$DEPLOY_ROOT/var" 2>/dev/null || err "  [WARN] could not unmount $DEPLOY_ROOT/var (busy?) — continuing"
     fi
-    umount /mnt/verify
+    umount /mnt/verify 2>/dev/null || err "  [WARN] could not unmount /mnt/verify (busy?) — continuing"
 else
     err "  [WARN] Could not mount installed root for verification (checking via loop file only)"
 fi
