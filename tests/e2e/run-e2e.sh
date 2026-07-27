@@ -124,7 +124,13 @@ fail() {
     printf '%s\n' "$*" >> "$WOOTC_FAILURE_LEDGER" 2>/dev/null || true
 }
 info() { echo -e "${YELLOW}[INFO]${NC} $*"; }
-step() { echo -e "${CYAN}[STEP]${NC} $*"; run_state "step: $*"; }
+# WOOTC_LAST_STEP is carried into the exit stamp. Without it the EXIT trap
+# overwrote stage= with a bare "exited (status 1)", discarding the only record
+# of WHERE a run died — three hosted win10 cells (run 30230608430) failed
+# identically and their state files could say nothing but "exited", while the
+# workflow logs stayed locked until the whole matrix finished.
+WOOTC_LAST_STEP="startup"
+step() { echo -e "${CYAN}[STEP]${NC} $*"; WOOTC_LAST_STEP="$*"; run_state "step: $*"; }
 
 # ── wall-clock deadlines ────────────────────────────────────────────────────
 # Wait loops used to track time by incrementing a counter alongside `sleep 5`.
@@ -247,7 +253,7 @@ run_state "started"
 # preflight abort leaves stage=started forever, indistinguishable from a live
 # run — the remote launch guard then refuses to start the next run. Replaced
 # by `trap cleanup EXIT` further down.
-trap 'run_state "exited (status $?)"' EXIT
+trap 'run_state "exited (status $?) during: ${WOOTC_LAST_STEP:-startup}"' EXIT
 info "Run ID: $RUN_ID (status: $RUN_STATE_FILE)"
 printf '%s\n' "$RUN_ID" > "$ARTIFACT_DIR/run-id.txt"
 uname -a > "$ARTIFACT_DIR/host-uname.txt" 2>&1 || true
@@ -346,7 +352,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 cleanup() {
     local result=$?
-    run_state "exited (status $result)"
+    run_state "exited (status $result) during: ${WOOTC_LAST_STEP:-startup}"
     if [ "$VIDEO_STARTED" = true ]; then
         WOOTC_CONTAINER_RUNTIME="$DOCKER" "$SCRIPT_DIR/record-video.sh" stop "$VIDEO_DIR" || true
     fi
