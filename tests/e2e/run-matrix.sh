@@ -104,9 +104,24 @@ read -ra HOSTARR <<< "$HOSTS"
 # disjoint --instance in run-e2e.sh: own container name, own storage dir.
 LETTERS=(a b c d)
 SLOTS=()   # "host<TAB>instance<TAB>vm_ram_gib"
+# phase3 cases carry a 40 GiB spare disk that dockur formats at start, on top
+# of a full Windows install. Two of those on one host is not a throughput win:
+# himachal (18 cores, 15 GiB) hit LOAD AVERAGE 100 running two, stopped
+# answering ssh, and both runs died at 14 minutes having reached only
+# "Waiting for QGA". The hosted matrix skips phase3 for the same disk reasons.
+# One VM per host whenever the queue contains any.
+PHASE3_IN_QUEUE=false
+for c in "${CASES[@]}"; do
+    case "$c" in *phase3=on*) PHASE3_IN_QUEUE=true; break ;; esac
+done
+
 for host in "${HOSTARR[@]}"; do
     read -r n vm_ram < <(size_host "$host")
     [ "$JOBS" != auto ] && n="$JOBS"
+    if [ "$PHASE3_IN_QUEUE" = true ] && [ "$n" -gt 1 ]; then
+        echo "runner $host: capping to 1 concurrent VM (phase3 cases are disk-heavy)"
+        n=1
+    fi
     [ -n "$VM_RAM_OVERRIDE" ] && vm_ram="$VM_RAM_OVERRIDE"
     echo "runner $host: $n concurrent VM(s) × ${vm_ram}G RAM"
     for (( s=0; s<n; s++ )); do
