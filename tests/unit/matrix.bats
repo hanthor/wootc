@@ -50,3 +50,17 @@ setup() {
     # still be expanded ON THE REMOTE (escaped \$) and not by the local shell.
     grep -q 'run-e2e.sh "\$image" --keep --instance=\$inst \\\$EXTRA_ARGS' "$RUNNER"
 }
+
+@test "himachal has a hard ceiling of one concurrent VM" {
+    # Two VMs drove himachal (18 cores, 15 GiB) to load average 100 and then to
+    # a full freeze needing a power cycle (2026-07-27). The ceiling must beat
+    # BOTH size_host's arithmetic and an explicit --jobs, because the failure
+    # mode is a dead machine rather than a slow run.
+    grep -q 'himachal) echo 1 ;;' "$RUNNER"
+    # Applied after --jobs is honoured, so it cannot be overridden from the CLI.
+    jobs_line=$(grep -n '\[ "\$JOBS" != auto \] && n="\$JOBS"' "$RUNNER" | cut -d: -f1)
+    cap_line=$(grep -n 'host_cap=\$(host_max_jobs "\$host")' "$RUNNER" | cut -d: -f1)
+    [ -n "$jobs_line" ]
+    [ -n "$cap_line" ]
+    [ "$cap_line" -gt "$jobs_line" ]
+}

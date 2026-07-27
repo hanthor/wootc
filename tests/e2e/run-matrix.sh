@@ -115,12 +115,31 @@ for c in "${CASES[@]}"; do
     case "$c" in *phase3=on*) PHASE3_IN_QUEUE=true; break ;; esac
 done
 
+# Per-host HARD ceiling on concurrent VMs. This is not a hint: it overrides
+# size_host's arithmetic AND an explicit --jobs, because the cost of getting it
+# wrong is not a slow run, it is a dead machine.
+#
+# himachal = 1. Two VMs took it to load average 100, then it stopped answering
+# ssh entirely and needed a power cycle (2026-07-27). 18 cores made it look like
+# it could take two; 15 GiB of RAM and one disk say otherwise.
+host_max_jobs() {
+    case "$1" in
+        himachal) echo 1 ;;
+        *)        echo 99 ;;
+    esac
+}
+
 for host in "${HOSTARR[@]}"; do
     read -r n vm_ram < <(size_host "$host")
     [ "$JOBS" != auto ] && n="$JOBS"
     if [ "$PHASE3_IN_QUEUE" = true ] && [ "$n" -gt 1 ]; then
         echo "runner $host: capping to 1 concurrent VM (phase3 cases are disk-heavy)"
         n=1
+    fi
+    host_cap=$(host_max_jobs "$host")
+    if [ "$n" -gt "$host_cap" ]; then
+        echo "runner $host: hard ceiling of $host_cap concurrent VM(s) for this host"
+        n="$host_cap"
     fi
     [ -n "$VM_RAM_OVERRIDE" ] && vm_ram="$VM_RAM_OVERRIDE"
     echo "runner $host: $n concurrent VM(s) × ${vm_ram}G RAM"
