@@ -31,7 +31,13 @@ set -Eeuo pipefail
 # barrier" sat 70 lines above it, and the matrix takes the LAST [FAIL] as the
 # verdict. Sites that call fail+exit have already said their piece, so say
 # nothing for them. -E propagates the trap into functions and subshells.
-trap 'wootc_err_rc=$?; case "$BASH_COMMAND" in exit*) ;; *) printf "[FAIL] run-e2e.sh aborted: %s (exit %s)\n" "$BASH_COMMAND" "$wootc_err_rc" >&2 ;; esac' ERR
+wootc_report_abort() {
+    local rc="$1" cmd="$2"
+    # fail+exit sites have already printed their own reason.
+    case "$cmd" in exit*) return 0 ;; esac
+    printf '[FAIL] run-e2e.sh aborted: %s (exit %s)\n' "$cmd" "$rc" >&2
+}
+trap 'wootc_report_abort "$?" "$BASH_COMMAND"' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
