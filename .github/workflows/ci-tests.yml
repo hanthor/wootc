@@ -25,7 +25,7 @@ concurrency:
 jobs:
   fast:
     name: fast tier (bats + go)
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
     steps:
       - uses: actions/checkout@v7
         with: { submodules: recursive }
@@ -38,7 +38,7 @@ jobs:
 
   integration:
     name: migration integration (container)
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
     steps:
       - uses: actions/checkout@v7
         with: { submodules: recursive }
@@ -47,7 +47,7 @@ jobs:
 
   lint:
     name: lint (shellcheck + yamllint)
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
     steps:
       - uses: actions/checkout@v7
       - name: Install linters
@@ -69,7 +69,7 @@ jobs:
 
   gui-shots:
     name: GUI screenshots render
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
     steps:
       - uses: actions/checkout@v7
       - name: Render the Linux GUIs headlessly

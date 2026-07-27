@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
     steps:
       - uses: actions/checkout@v7
         with:
@@ -47,7 +47,7 @@ jobs:
           "
 
   build-deployer:
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
     steps:
       - uses: actions/checkout@v7
         with:
@@ -79,7 +79,7 @@ jobs:
           retention-days: 7
 
   build-app:
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
     steps:
       - uses: actions/checkout@v7
 
@@ -119,7 +119,7 @@ jobs:
           retention-days: 7
 
   validate-recipe:
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
     steps:
       - uses: actions/checkout@v7
         with:
@@ -146,7 +146,7 @@ jobs:
           /tmp/fisherman validate /tmp/test-recipe.json
 
   gui-tests:
-    runs-on: ubuntu-latest
+    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
     steps:
       - uses: actions/checkout@v7
 
