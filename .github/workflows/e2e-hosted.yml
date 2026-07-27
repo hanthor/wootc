@@ -45,7 +45,7 @@ permissions:
 
 jobs:
   e2e:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 330          # under the 6 h hard cap, with headroom
     steps:
       - uses: actions/checkout@v7

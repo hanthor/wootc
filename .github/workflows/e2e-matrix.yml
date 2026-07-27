@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   plan:
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
