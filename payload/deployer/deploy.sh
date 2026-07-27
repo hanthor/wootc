@@ -178,9 +178,24 @@ SCRATCH_IMG=""
 JOURNAL_STREAM_PID=""
 HEARTBEAT_PID=""
 cleanup() {
-    local mount
+    local _rc=$? mount
     [[ -n "$JOURNAL_STREAM_PID" ]] && kill "$JOURNAL_STREAM_PID" 2>/dev/null || true
     [[ -n "$HEARTBEAT_PID" ]] && kill "$HEARTBEAT_PID" 2>/dev/null || true
+
+    # On FAILURE, put the deployer's own log tail on the SERIAL. log() writes to
+    # $PERSIST_LOG on the NTFS, and err() to stderr — so on a failed deploy,
+    # where Windows never returns to hand the file back, the detailed record is
+    # stranded on a disk image nobody can read without libguestfs (absent from
+    # our runners). dakota died at t=1124s having emitted exactly two serial
+    # lines: its version, and a cleanup warning. The reason was written down and
+    # unreachable (himachal 20260727T082629Z, and the hosted cell before it).
+    if [[ "$_rc" -ne 0 && -s "${PERSIST_LOG:-/nonexistent}" ]]; then
+        err "──── deployer log, last 60 lines (exit $_rc) ────"
+        tail -n 60 "$PERSIST_LOG" 2>/dev/null | while IFS= read -r _line; do
+            printf '\033[1;31m[wootc]\033[0m   %s\n' "$_line" >&2
+        done
+        err "──── end deployer log ────"
+    fi
     # Persist the boot journal to NTFS while it is still mounted: the VM has
     # no console input, so this is the only way to read fisherman/podman
     # errors after the fail-path reboot to Windows.
@@ -707,7 +722,7 @@ ensure_ntfs_support() {
     # loop-attach guard. Making these failures fatal broke deploys that worked.
     log "No NTFS driver in ${IMAGE}; injecting ntfs-3g (persisted layer)…"
     local derived="localhost/wootc-ntfs-injected:latest" cname="wootc-ntfs-inject"
-    podman rm -f "$cname" >/dev/null 2>&1 || true
+    timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
     # FOREGROUND run, not `-d`: detached mode does not work in the deployer
     # initramfs (every previous injection died at "could not start the
     # container"), while the plain `podman run` used elsewhere here works fine.
@@ -736,7 +751,7 @@ ensure_ntfs_support() {
     local inj_ok=""
     local attempt
     for attempt in 1 2 3; do
-        podman rm -f "$cname" >/dev/null 2>&1 || true
+        timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
         if timeout 150 podman run --name "$cname" --network=host "$IMAGE" sh -c \
             'dnf install -y ntfs-3g || \
              { { dnf install -y epel-release || \
@@ -748,20 +763,20 @@ ensure_ntfs_support() {
             break
         fi
         err "  [WARN] ntfs-3g install attempt ${attempt}/3 failed in ${IMAGE} (network/repo?)"
-        podman logs "$cname" 2>&1 | tail -10 >&2 || true
+        timeout 60 podman logs "$cname" 2>&1 | tail -10 >&2 || true
         [ "$attempt" -lt 3 ] && sleep $((attempt * 10))
     done
     if [ -z "$inj_ok" ]; then
         err "  [WARN] ntfs-3g install failed after 3 attempts in ${IMAGE}; relying on the image's own NTFS support"
-        podman rm -f "$cname" >/dev/null 2>&1 || true
+        timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
         return 1
     fi
-    if ! podman commit -q "$cname" "$derived" >/dev/null 2>&1; then
+    if ! timeout 300 podman commit -q "$cname" "$derived" >/dev/null 2>&1; then
         err "  [WARN] could not commit the NTFS-injected image (disk space?); deploying the original"
-        podman rm -f "$cname" >/dev/null 2>&1 || true
+        timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
         return 1
     fi
-    podman rm -f "$cname" >/dev/null 2>&1 || true
+    timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
     IMAGE="$derived"
     log "  [PASS] injected ntfs-3g; deploying ${IMAGE}"
     # Prove it actually landed rather than trusting the commit.
@@ -782,7 +797,7 @@ ensure_ntfs_support() {
 # 80 minutes earlier. Fail there instead, naming the cause.
 if ! ensure_ntfs_support; then
     log "NTFS injection unavailable; checking whether the image can mount NTFS on its own"
-    if podman run --rm --network=host "$IMAGE" sh -c \
+    if timeout 300 podman run --rm --network=host "$IMAGE" sh -c \
         'grep -qw ntfs3 /proc/filesystems 2>/dev/null || command -v mount.ntfs-3g >/dev/null 2>&1 || test -e /usr/lib/modules/*/kernel/fs/ntfs3/ntfs3.ko*' \
         >/dev/null 2>&1; then
         log "  image provides its own NTFS driver — continuing without injection"
@@ -825,12 +840,23 @@ if [[ "$COMPOSEFS" == auto || "$BOOTLOADER" == auto ]]; then
     # localhost/wootc-ntfs-injected), and remote when injection failed — which
     # is precisely when the fallback fired. `podman image exists` covers both
     # without trying to pull a localhost-only tag.
-    if ! podman image exists "$IMAGE" 2>/dev/null; then
+    # EVERY podman call here is bounded. An unbounded one is a silent hang: the
+    # ntfs-3g injection immediately above ends with `podman rm -f`, and podman
+    # storage can still be locked when the next command arrives. dakota on
+    # himachal (2026-07-27) went completely silent right here at t=571s and
+    # produced NOTHING for the remaining 80 minutes — fisherman never started,
+    # so the run burned its whole budget with no output to say why.
+    #
+    # The announcement comes FIRST, so the next occurrence proves whether this
+    # point was even reached rather than leaving it to inference.
+    log "  backend probe: checking whether $IMAGE is already local"
+    if ! timeout 120 podman image exists "$IMAGE" 2>/dev/null; then
         log "  backend probe: pulling $IMAGE (not local yet)"
         if ! timeout "${WOOTC_PROBE_PULL_TIMEOUT:-1800}" podman pull "$IMAGE" >/dev/null 2>&1; then
             err "  [WARN] could not pull $IMAGE for backend detection (network/registry?)"
         fi
     fi
+    log "  backend probe: image ready, inspecting"
     if ! DETECT="$(timeout 120 podman run --rm --network=host "$IMAGE" sh -c '
         if { ls /usr/lib/bootupd/updates/EFI/*/grubx64.efi >/dev/null 2>&1 ||
              { test -f /usr/lib/bootupd/updates/EFI.json &&
@@ -871,7 +897,7 @@ if [[ "$COMPOSEFS" == auto || "$BOOTLOADER" == auto ]]; then
     ' 2>/dev/null)"; then
         err "  [WARN] backend probe failed against $IMAGE; falling back to default backend (ostree/grub2, ext4 sealed)"
         err "  [WARN] a composefs-native image WILL be mis-deployed as ostree when this fires — treat any resulting pass as untested for composefs"
-        err "  [WARN] image local? $(podman image exists "$IMAGE" 2>/dev/null && echo yes || echo NO)"
+        err "  [WARN] image local? $(timeout 60 podman image exists "$IMAGE" 2>/dev/null && echo yes || echo NO)"
         DETECT="BACKEND=ostree
 SEALED=1"
     fi

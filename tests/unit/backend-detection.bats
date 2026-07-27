@@ -189,3 +189,27 @@ setup() {
     grep -q 'no NTFS driver for Phase 2' "$DEPLOY"
     grep -q 'Refusing to finish a deployment that cannot boot' "$DEPLOY"
 }
+
+@test "no unbounded podman call in the deployer" {
+    # An unbounded podman call is a SILENT HANG. dakota on himachal went quiet
+    # at t=571s — right after the ntfs-3g injection's `podman rm -f` — and
+    # produced nothing for the remaining 80 minutes; fisherman never started and
+    # the run burned its whole budget with no output to say why. podman storage
+    # can still be locked when the next command arrives, so every call must be
+    # bounded and the deployer must keep talking.
+    run bash -c "grep -nE '^[^#]*\\bpodman ' '$DEPLOY' | grep -v 'timeout '"
+    [ -z "$output" ]
+}
+
+@test "a failed deploy puts its own log tail on the serial" {
+    # log() writes to $PERSIST_LOG on the NTFS and err() to stderr, so on a
+    # FAILED deploy — where Windows never returns to hand the file back — the
+    # detailed record is stranded inside data.qcow2, unreadable without
+    # libguestfs (not installed on our runners). dakota died having emitted two
+    # serial lines total: its version and a cleanup warning.
+    grep -q 'deployer log, last 60 lines' "$DEPLOY"
+    # Only on failure, and only when there is something to show.
+    grep -q '_rc" -ne 0 && -s "${PERSIST_LOG' "$DEPLOY"
+    # The tail must go to stderr, which is what reaches the console.
+    grep -A 4 'deployer log, last 60 lines' "$DEPLOY" | grep -q '>&2'
+}
