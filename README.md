@@ -173,7 +173,7 @@ ostree images that ship no `bootupd`.
 | Root filesystem: `btrfs` (sealed) | 🔴 | formats fine, but ostree Phase-2 `sysroot.mount` times out — [#35](https://github.com/tuna-os/wootc/issues/35); opt-in via `wootc.filesystem=btrfs` |
 | Encryption: none | ✅ | |
 | Encryption: `tpm2-luks` | 🔴 | Phase-2 dracut regen fails on the LUKS root — [#33](https://github.com/tuna-os/wootc/issues/33) |
-| BitLocker FDE (unencrypted-volume path) | 🟡 | root-caused and fixed, verification in flight — [#34](https://github.com/tuna-os/wootc/issues/34). Windows 11 auto-encrypts *newly created* fixed volumes, so the volume carved for `root.disk` was itself BitLocker-protected; the fix disables protection, waits for full decryption, and sizes the carve for `root.disk` **plus** the deployer's scratch |
+| BitLocker FDE (unencrypted-volume path) | ✅ | proven green — [#34](https://github.com/tuna-os/wootc/issues/34). Setup carves unencrypted volume E: for `root.disk` while C: stays encrypted; drive letter resolver dynamically discovers tree location. |
 
 The full three-phase chain (Windows seed → deploy → Phase-2 bridge →
 Phase-3 native disk → seeded file on the native disk) is **green end-to-end
