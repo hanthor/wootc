@@ -10,6 +10,17 @@
 #   ./run-matrix.sh --tier smoke                       # himachal, smoke tier
 #   ./run-matrix.sh --tier full --hosts "kanpur dilli himachal"
 #   ./run-matrix.sh --grep fedora --hosts dilli        # only cases matching name
+#
+#   --grep is a REGEX over the case name, so an iteration loop can name the few
+#   cells that exercise DISTINCT code paths instead of re-running permutations.
+#   The 23-cell matrix collapses to five: an ostree baseline (regression
+#   detector), win10, composefs, BitLocker, and the bonito bridge. The other 18
+#   are ISO-edition, desktop and phase3 variants of those same paths — running
+#   them wide while most cells are red costs 4x the runner time for the same two
+#   or three causes. Fan out to --tier full to CONFIRM, not to iterate:
+#
+#     ./run-matrix.sh --tier full --hosts dilli --grep \
+#       'el10-gnome-win11pro$|el10-gnome-win10pro$|dakota-win11pro$|el10-gnome-win11pro-bitlocker$|fedora-gnome-win11pro$'
 #   ./run-matrix.sh --tier full --dry-run              # print the plan, run nothing
 #
 # A runner host is any box with ~/wootc synced and a KVM-capable Podman
@@ -93,7 +104,7 @@ mapfile -t CASES < <(awk -F'\t' -v tier="$TIER" -v want="$GREP" '
     /^#/ || NF < 6 { next }
     { t=$1 }
     tier=="full"  || t=="smoke" {
-        if (want=="" || index($2, want)) print $2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$7
+        if (want=="" || $2 ~ want) print $2"\t"$3"\t"$4"\t"$5"\t"$6"\t"$7
     }' "$MATRIX")
 
 [ ${#CASES[@]} -gt 0 ] || { echo "No cases match tier=$TIER grep=$GREP" >&2; exit 1; }

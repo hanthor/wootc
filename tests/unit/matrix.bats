@@ -93,3 +93,14 @@ setup() {
     here_line=$(grep -n '^HERE=' "$RUNNER" | head -1 | cut -d: -f1)
     [ "$snap_line" -lt "$here_line" ]
 }
+
+@test "--grep is a regex so an iteration loop can name distinct code paths" {
+    # 23 cells collapse to five distinct paths: ostree baseline, win10,
+    # composefs, BitLocker, bonito bridge. The other 18 are ISO-edition, desktop
+    # and phase3 permutations of those — fanning out while most cells are red
+    # costs 4x the runner time for the same two or three causes. A substring
+    # match cannot express "these five".
+    grep -q '\$2 ~ want' "$RUNNER"
+    run grep -c 'index(\$2, want)' "$RUNNER"
+    [ "$output" -eq 0 ]
+}
