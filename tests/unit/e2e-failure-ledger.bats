@@ -156,3 +156,16 @@ setup() {
     forced=$(awk -v s="$retry_line" 'NR>s && NR<s+15 && /takeown \/f/{print NR; exit}' "$E2E")
     [ -n "$forced" ]
 }
+
+@test "the serial arms the deployer-death detector, not just the heartbeat" {
+    # Heartbeats fire only after the serial goes quiet, so a fisherman that
+    # started and died between samples was never "seen" — the detector stayed
+    # disarmed and the run waited out its full 90-minute budget. dakota did this
+    # twice: serial showed "[fisherman] version: dev" at t=690s and its last
+    # output at t=1124s while every heartbeat said fisherman=absent.
+    grep -q "FISHERMAN_SEEN=true" "$E2E"
+    # It must be armed from the serial scan as well as the heartbeat.
+    run grep -c 'FISHERMAN_SEEN=true' "$E2E"
+    [ "$output" -ge 2 ]
+    grep -q "grep -qa '\\\\\[fisherman\\\\\]'" "$E2E"
+}

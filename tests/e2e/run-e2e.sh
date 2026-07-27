@@ -2172,6 +2172,17 @@ while ! past_deadline "$DEPLOY_DEADLINE"; do
             DEPLOYER_REBOOT_SEEN=true
             info "wootc: deployer requested reboot"
         fi
+        # The SERIAL is the earlier witness. FISHERMAN_SEEN used to be set only
+        # by a heartbeat, but heartbeats fire only after the serial goes quiet —
+        # so a fisherman that started and died BETWEEN samples was never
+        # "seen", the death detector stayed disarmed, and the run waited out its
+        # whole budget. dakota did exactly that twice (hosted cell of run
+        # 30234854504 and himachal 2026-07-27): serial recorded
+        # "[fisherman] version: dev" at t=690s and its last words at t=1124s,
+        # while every heartbeat reported fisherman=absent and nothing concluded.
+        if echo "$NEW_OUTPUT" | grep -qa '\[fisherman\]'; then
+            FISHERMAN_SEEN=true
+        fi
         if echo "$NEW_OUTPUT" | grep -q 'reboot: Restarting system'; then
             KERNEL_REBOOT_SEEN=true
             info "wootc: kernel reboot observed (not proof of a successful deploy)"
