@@ -989,19 +989,25 @@ fi
 # qemu-nbd publishes the capacity change before the partition scan completes.
 # Wait for the root partition explicitly instead of treating a successful
 # udevadm settle as proof that /dev/nbd*p* nodes are ready.
+# Wait for the LAST partition, not for "p3". An ostree install lays down
+# ESP/boot/root (p3 = root); a composefs-native install lays down only ESP+root,
+# so p3 never appears and this loop burned its full 20s on every dakota run
+# before warning about nodes that were never going to exist. Confirmed from the
+# partition table this warning now prints: /dev/loop1p1 = 2G EFI System,
+# /dev/loop1p2 = 33G Linux root, and nothing else (run 30234854504).
 for _ in {1..20}; do
     udevadm settle --timeout=1 2>/dev/null || true
-    [[ -b "${VERIFY_LOOP}p3" ]] && break
+    [[ -b "${VERIFY_LOOP}p2" ]] && break
     sleep 1
 done
-if [[ ! -b "${VERIFY_LOOP}p3" ]]; then
+if [[ ! -b "${VERIFY_LOOP}p2" ]]; then
     # Say WHICH nodes are missing. This loop only ever probed p3, but reported
     # "partition nodes did not appear" — two very different situations wearing
     # one message: (a) the partition scan produced nothing at all, or (b) it
     # worked and this image simply does not put root on p3. A composefs-native
     # install need not share the ostree layout. dakota (20260726T234428Z) died
     # here after fisherman had written 34 GB, and the log could not tell which.
-    err "  [WARN] ${VERIFY_LOOP}p3 did not appear for verification"
+    err "  [WARN] ${VERIFY_LOOP}p2 did not appear for verification (no partitions at all?)"
     err "  [WARN] partition nodes present: $(ls -1d "${VERIFY_LOOP}"p* 2>/dev/null | tr '\n' ' ' || true)"
     err "  [WARN] partition table as the kernel sees it:"
     sfdisk -l "$VERIFY_LOOP" 2>&1 | sed 's/^/    /' >&2 || true
@@ -1010,7 +1016,14 @@ fi
 # Fisherman closes its mapper before returning. Re-open an encrypted root for
 # post-install verification; TPM modes use the token enrolled by fisherman,
 # while passphrase-only mode feeds the key over stdin (never argv or logs).
-VERIFY_ROOT_DEVICE="${VERIFY_LOOP}p3"
+# The LAST partition is root in BOTH layouts: ostree lays down ESP/boot/root
+# (p3), composefs-native lays down ESP/root (p2). Hardcoding p3 meant an
+# encrypted composefs root was never opened here at all.
+shopt -s nullglob
+_verify_parts=("${VERIFY_LOOP}"p*)
+shopt -u nullglob
+VERIFY_ROOT_DEVICE="${VERIFY_LOOP}p2"
+(( ${#_verify_parts[@]} > 0 )) && VERIFY_ROOT_DEVICE="${_verify_parts[${#_verify_parts[@]}-1]}"
 if [[ "$LUKS_TYPE" != "none" && -b "$VERIFY_ROOT_DEVICE" ]]; then
     VERIFY_CRYPT=wootc-verify-root
     if [[ "$LUKS_TYPE" == tpm2-* ]]; then
@@ -1223,12 +1236,33 @@ if [[ -n "$VERIFY_ROOT" ]]; then
     # boot. dracut resolves its default TMPDIR before doing any work and aborts
     # with "Invalid tmpdir '/var/tmp'" if that directory is absent. Prepare the
     # standard sticky temporary directories explicitly in the chroot.
-    install -d -m 1777 "$DEPLOY_ROOT/tmp"
-    mkdir -p "$DEPLOY_ROOT/var/tmp"
-    chmod 1777 "$DEPLOY_ROOT/var/tmp"
-    # ostree keeps the live initramfs on the boot partition under
-    # /boot/ostree/<stateroot>-<csum>/ — regenerate that exact file.
-    for fs in dev proc sys; do mount --bind "/$fs" "$DEPLOY_ROOT/$fs"; done
+    # A composefs-native deployment is a READ-ONLY image tree with no dev/proc/sys
+    # directories, and the branch below performs NO chroot for that layout — so
+    # preparing a chroot here is both impossible and pointless. It was fatal:
+    # `mount --bind` failed with "mount point does not exist" and set -e killed
+    # the deployer outright at t=659s, after which the harness sat through its
+    # entire 90-minute budget waiting for a process that had already died
+    # (bluefin-dakota-win11pro, run 30234854504 — every heartbeat in that run
+    # reads fisherman=absent because the install had already finished).
+    #
+    # Keyed on the deployment SHAPE as well as $COMPOSEFS, so a probe that fell
+    # back to ostree cannot drag a composefs tree down this path anyway.
+    if [[ "$COMPOSEFS" == 1 || "$DEPLOY_ROOT" == */state/deploy/* ]]; then
+        log "  verify: composefs deployment — skipping chroot preparation (this layout regenerates no initramfs here)"
+    else
+        install -d -m 1777 "$DEPLOY_ROOT/tmp"
+        mkdir -p "$DEPLOY_ROOT/var/tmp"
+        chmod 1777 "$DEPLOY_ROOT/var/tmp"
+        # ostree keeps the live initramfs on the boot partition under
+        # /boot/ostree/<stateroot>-<csum>/ — regenerate that exact file.
+        for fs in dev proc sys; do
+            mkdir -p "$DEPLOY_ROOT/$fs" 2>/dev/null || true
+            mount --bind "/$fs" "$DEPLOY_ROOT/$fs" || {
+                err "  [FAIL] cannot bind /$fs into $DEPLOY_ROOT — deployment root is read-only or missing $fs"
+                exit 1
+            }
+        done
+    fi
     # Pick the module tree that owns the BOOTABLE kernel (has vmlinuz), highest
     # version if several. `ls | head -1` chose 6.12.0-225 over -233 in
     # bluefin:lts, where -225 is a stripped leftover (no vmlinuz) — dracut then

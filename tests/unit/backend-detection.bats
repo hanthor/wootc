@@ -142,3 +142,22 @@ setup() {
     # And the fallback must say loudly that composefs was not exercised.
     grep -q 'treat any resulting pass as untested for composefs' "$DEPLOY"
 }
+
+@test "verification does not assume the ostree 3-partition layout" {
+    # A composefs-native install lays down ESP + root only, so root is p2 and p3
+    # NEVER appears. Confirmed from the partition table the probe now prints:
+    # /dev/loop1p1 = 2G EFI System, /dev/loop1p2 = 33G Linux root (run
+    # 30234854504). Waiting for p3 warned about nodes that could not exist, and
+    # the LUKS open targeted a device that was not there.
+    run grep -c 'VERIFY_LOOP}p3' "$DEPLOY"
+    [ "$output" -eq 0 ]
+    grep -q '_verify_parts\[${#_verify_parts\[@\]}-1\]' "$DEPLOY"
+}
+
+@test "a composefs deployment root is not prepared as a chroot" {
+    # It is a READ-ONLY image tree with no dev/proc/sys, and its branch performs
+    # no chroot — but `mount --bind` ran first and set -e killed the deployer
+    # silently at t=659s, after which the harness waited out 90 minutes.
+    grep -q 'skipping chroot preparation' "$DEPLOY"
+    grep -q 'DEPLOY_ROOT" == \*/state/deploy/\*' "$DEPLOY"
+}
