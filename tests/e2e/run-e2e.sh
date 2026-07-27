@@ -213,6 +213,9 @@ WOOTC_E2E_DEPLOY_TIMEOUT_DEFAULT=5400
 WOOTC_E2E_SILENCE_WARN_S="${WOOTC_E2E_SILENCE_WARN_S:-600}"
 WOOTC_E2E_HEARTBEAT_TIMEOUT_S="${WOOTC_E2E_HEARTBEAT_TIMEOUT_S:-12}"
 WOOTC_E2E_HEARTBEAT_STALE_SAMPLES="${WOOTC_E2E_HEARTBEAT_STALE_SAMPLES:-3}"
+# How many consecutive "fisherman=absent" samples, AFTER fisherman has been
+# seen alive, before the deploy is declared dead rather than slow.
+WOOTC_E2E_FISHERMAN_GONE_SAMPLES="${WOOTC_E2E_FISHERMAN_GONE_SAMPLES:-10}"
 
 WOOTC_E2E_KEEP_RUNS="${WOOTC_E2E_KEEP_RUNS:-3}"
 prune_old_artifacts() {
@@ -1933,6 +1936,8 @@ KERNEL_REBOOT_SEEN=false
 WINDOWS_BACK_STREAK=0
 LAST_GUEST_HEARTBEAT=""
 GUEST_HEARTBEAT_STALE_STREAK=0
+FISHERMAN_SEEN=false
+FISHERMAN_GONE_STREAK=0
 PTY="$STORAGE_DIR/qemu.pty"
 
 # Wait for Dockur's serial capture to appear and create the first local
@@ -2110,7 +2115,31 @@ while ! past_deadline "$DEPLOY_DEADLINE"; do
                 info "[HEARTBEAT] $GUEST_HEARTBEAT"
                 printf '%s [HEARTBEAT] %s\n' "$(date -u +%FT%TZ)" "$GUEST_HEARTBEAT" \
                     >> "$STORAGE_DIR/e2e-timeline.log" 2>/dev/null || true
+                # fisherman going present -> ABSENT is a DEATH, not a quiet
+                # patch. dakota (20260726T234428Z) wrote 34 GB, hit
+                # "/dev/loop1 partition nodes did not appear for verification",
+                # and its fisherman vanished — after which the harness waited
+                # THIRTY MORE MINUTES for a process that no longer existed and
+                # reported the generic "did not complete within 90 minutes",
+                # naming neither the death nor the verification error.
+                # A short absence is normal right at the end (fisherman exits
+                # before the completion marker is observed), so allow a grace
+                # window before concluding.
+                if echo "$GUEST_HEARTBEAT" | grep -q 'fisherman=absent'; then
+                    if [ "$FISHERMAN_SEEN" = true ]; then
+                        FISHERMAN_GONE_STREAK=$((FISHERMAN_GONE_STREAK + 1))
+                        if [ "$FISHERMAN_GONE_STREAK" -ge "$WOOTC_E2E_FISHERMAN_GONE_SAMPLES" ]; then
+                            fail "Deployer process died: fisherman ran and then vanished for $FISHERMAN_GONE_STREAK samples with no completion marker"
+                            info "  The deploy did not merely stall — the process is gone. Last serial output:"
+                            tail -c 4000 "$PTY" 2>/dev/null | tr -d '\000' | grep -aE 'wootc|WARN|error|fail' | tail -12 | sed 's/^/    /' || true
+                            capture_vm_diagnostics
+                            exit 1
+                        fi
+                    fi
+                fi
                 if echo "$GUEST_HEARTBEAT" | grep -q 'phase=fisherman'; then
+                    FISHERMAN_SEEN=true
+                    FISHERMAN_GONE_STREAK=0
                     if [ "$GUEST_HEARTBEAT" = "$LAST_GUEST_HEARTBEAT" ]; then
                         GUEST_HEARTBEAT_STALE_STREAK=$((GUEST_HEARTBEAT_STALE_STREAK + 1))
                     else

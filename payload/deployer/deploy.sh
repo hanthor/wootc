@@ -975,7 +975,16 @@ for _ in {1..20}; do
     sleep 1
 done
 if [[ ! -b "${VERIFY_LOOP}p3" ]]; then
-    err "  [WARN] ${VERIFY_LOOP} partition nodes did not appear for verification"
+    # Say WHICH nodes are missing. This loop only ever probed p3, but reported
+    # "partition nodes did not appear" — two very different situations wearing
+    # one message: (a) the partition scan produced nothing at all, or (b) it
+    # worked and this image simply does not put root on p3. A composefs-native
+    # install need not share the ostree layout. dakota (20260726T234428Z) died
+    # here after fisherman had written 34 GB, and the log could not tell which.
+    err "  [WARN] ${VERIFY_LOOP}p3 did not appear for verification"
+    err "  [WARN] partition nodes present: $(ls -1d "${VERIFY_LOOP}"p* 2>/dev/null | tr '\n' ' ' || true)"
+    err "  [WARN] partition table as the kernel sees it:"
+    sfdisk -l "$VERIFY_LOOP" 2>&1 | sed 's/^/    /' >&2 || true
 fi
 
 # Fisherman closes its mapper before returning. Re-open an encrypted root for
