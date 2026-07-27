@@ -701,10 +701,35 @@ echo "phase=fisherman pid=$pid workers=$workers cpu_ticks=$cpu_ticks read_bytes=
 qga_sync_oem() {
     step "Refreshing OEM payload in reused Windows guest..."
     qga_powershell 'New-Item -ItemType Directory -Force -Path C:\OEM\payload\grub | Out-Null'
+    # These writes are RETRIED, and their failure is REPORTED. Unguarded, a
+    # single failed transfer returned non-zero straight into `set -e` and killed
+    # the run with no message at all — which is the whole of the win10 axis in
+    # run 30230608430: eight cells died here, in "Refreshing OEM payload",
+    # ~40 seconds after QGA came up, and the logs said nothing until the ERR
+    # trap landed. The cause is documented immediately below for
+    # wootc-config.txt: on the RESTORE path the relaunched OEM task holds
+    # C:\OEM open and every write fails "Access is denied". That reasoning was
+    # applied to the config file and not to the payload loop that runs first.
+    local oem_file_rc=0
     while IFS= read -r -d '' source; do
         relative="${source#"$OEM_DIR"/}"
-        qga_call write "/oem/$relative" "C:\\OEM\\${relative//\//\\}"
+        local target="C:\\OEM\\${relative//\//\\}" try
+        for try in 1 2 3; do
+            qga_call write "/oem/$relative" "$target" && break
+            if [ "$try" -lt 3 ]; then
+                warn "OEM payload write failed for $relative (attempt $try/3) — clearing holders and retrying"
+                qga_powershell 'cmd.exe /d /c "schtasks.exe /Delete /TN \"wootc-e2e-setup\" /F >NUL 2>&1"; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and ($_.CommandLine -like "*run-wootc-e2e.ps1*" -or $_.CommandLine -like "*setup-wootc.ps1*") } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }' >/dev/null 2>&1 || true
+                sleep 5
+            else
+                fail "Could not transfer OEM payload file to the guest: $relative -> $target"
+                oem_file_rc=1
+            fi
+        done
     done < <(find "$OEM_DIR" -type f -print0)
+    if [ "$oem_file_rc" -ne 0 ]; then
+        fail "OEM payload is incomplete in the guest; the deployer would boot with missing files"
+        return 1
+    fi
 
     # wootc-config.txt is NOT just another payload file: it carries this run's
     # RunId, and the OEM barrier below only accepts e2e-setup-complete.txt when
@@ -1837,7 +1862,10 @@ step "Starting OEM setup through QGA..."
 # CONTAINER's view of the mount — because qga.py runs inside the container and
 # cannot see host paths). It was only being called for --skip-install, but a
 # stale C:\OEM is not exclusive to that flag.
-qga_sync_oem
+#
+# Explicitly handled: an incomplete OEM payload SHOULD end the run, but via a
+# stated verdict rather than a bare `set -e` abort with no message.
+qga_sync_oem || { fail "Cannot proceed: the guest's OEM payload could not be refreshed"; exit 1; }
 
 qga_powershell '@("C:\OEM\e2e-setup-complete.txt","C:\OEM\e2e-setup-failed.txt","C:\OEM\e2e-snapshot-complete.txt") | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Remove-Item -LiteralPath $_ -Force }' >/dev/null
 qga_powershell "Start-Process -FilePath 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' -ArgumentList @('-NoLogo','-NoProfile','-ExecutionPolicy','Bypass','-File','C:\\OEM\\run-wootc-e2e.ps1') -WindowStyle Hidden" >/dev/null

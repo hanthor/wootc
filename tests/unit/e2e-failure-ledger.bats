@@ -101,3 +101,15 @@ setup() {
     # And the harness must use exactly that pattern.
     grep -q 'Kernel panic - not syncing|kernel BUG at|ntfs3.\*refus' "$E2E"
 }
+
+@test "OEM payload transfers retry and report instead of aborting silently" {
+    # An unguarded qga_call in the payload loop returned non-zero straight into
+    # `set -e`, killing the run with NO message — the entire win10 axis in run
+    # 30230608430 (8 cells) died there, in "Refreshing OEM payload", seconds
+    # after QGA came up. The restore path holds C:\OEM open, so a first-attempt
+    # failure is expected, not exceptional.
+    grep -q 'OEM payload write failed for' "$E2E"
+    grep -q 'Could not transfer OEM payload file to the guest' "$E2E"
+    # And the caller states a verdict rather than relying on set -e.
+    grep -q 'qga_sync_oem || { fail "Cannot proceed' "$E2E"
+}
