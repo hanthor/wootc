@@ -22,7 +22,15 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 MATRIX="$HERE/matrix.tsv"
 RESULTS="$HERE/matrix-results.tsv"
 
-TIER="smoke"; HOSTS="himachal"; GREP=""; DRY=false; PER_CASE_TIMEOUT=4200
+# PER_CASE_TIMEOUT must exceed the WORST-CASE sum of run-e2e's own stage
+# budgets, or the matrix kills healthy runs and calls it a TIMEOUT. At 4200
+# (70 min) it was shorter than the deploy stage ALONE
+# (WOOTC_E2E_DEPLOY_TIMEOUT_DEFAULT=5400, 90 min), never mind the 45-minute
+# Windows install, OEM setup and Phase 2 ahead of it: bluefin-dakota-win11pro
+# was declared TIMEOUT at 70m while fisherman was demonstrably working (135%
+# guest CPU, 19 GB written, "Deploying... 23m of 90m").
+# 45 (install) + 90 (deploy) + ~45 (OEM, Phase 2, verification) ≈ 180 min.
+TIER="smoke"; HOSTS="himachal"; GREP=""; DRY=false; PER_CASE_TIMEOUT=11400
 JOBS="auto"
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -235,6 +243,20 @@ slot_worker() {
 }
 
 pids=()
+# Workers must not OUTLIVE this script. Killing the matrix parent used to leave
+# its slot_worker subshells polling and appending to the shared results file:
+# after one such orphan, bluefin-dakota-win11pro was recorded TIMEOUT twice a
+# second apart (once by the orphan, once by the new run) and the summary read
+# "0 / 2" for a one-case matrix. The stray workers also show up in `ps` as
+# extra `run-matrix.sh` entries, which reads exactly like a respawn loop.
+cleanup_workers() {
+    local p
+    for p in "${pids[@]:-}"; do
+        [ -n "$p" ] && kill "$p" 2>/dev/null || true
+    done
+}
+trap 'cleanup_workers' EXIT INT TERM
+
 for slot in "${SLOTS[@]}"; do
     [ -n "${ASSIGN[$slot]:-}" ] || continue
     IFS=$'\t' read -r shost sinst sram <<< "$slot"
