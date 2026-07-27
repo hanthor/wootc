@@ -102,7 +102,27 @@ NC='\033[0m'
 
 pass() { echo -e "${GREEN}[PASS]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-fail() { echo -e "${RED}[FAIL]${NC} $*" >&2; }
+# Every fail() is RECORDED, and the final banner is gated on the ledger being
+# empty. Until now fail() only echoed: a fail site that did not itself `exit 1`
+# was decorative, and the run sailed on to "ALL TESTS PASSED".
+#
+# That is not hypothetical. el10-gnome-win11pro-bitlocker (20260727T004500Z)
+# printed ALL TESTS PASSED with BOTH of these in its log:
+#     [FAIL] Passthrough: errors detected in boot output:
+#     [FAIL] User data NOT visible in Phase 2 $HOME (expected RUN_ID ...)
+# The second is the North Star itself — the whole product claim is that the
+# user's data survives — and the matrix recorded the case as PASS. Both sites
+# set PASSTHROUGH_OK=false, but nothing anywhere gated on that variable.
+#
+# The ledger is a FILE, not a variable: fail() is called from inside command
+# substitutions and pipelines, whose variable writes are lost with the subshell.
+WOOTC_FAILURE_LEDGER="${TMPDIR:-/tmp}/wootc-e2e-failures.$$"
+: > "$WOOTC_FAILURE_LEDGER" 2>/dev/null || WOOTC_FAILURE_LEDGER=/dev/null
+export WOOTC_FAILURE_LEDGER
+fail() {
+    echo -e "${RED}[FAIL]${NC} $*" >&2
+    printf '%s\n' "$*" >> "$WOOTC_FAILURE_LEDGER" 2>/dev/null || true
+}
 info() { echo -e "${YELLOW}[INFO]${NC} $*"; }
 step() { echo -e "${CYAN}[STEP]${NC} $*"; run_state "step: $*"; }
 
@@ -2542,6 +2562,21 @@ else
 fi
 
 # ── Done ─────────────────────────────────────────────────────────────────────
+# The banner is a CONCLUSION, not a destination. Reaching the end of the script
+# is not the same as having passed: see the ledger note at fail().
+if [ -s "$WOOTC_FAILURE_LEDGER" ]; then
+    _wootc_n=$(wc -l < "$WOOTC_FAILURE_LEDGER" | tr -d '[:space:]')
+    echo ""
+    echo -e "${RED}╔══════════════════════════════════════╗${NC}"
+    echo -e "${RED}║   wootc E2E test: TESTS FAILED       ║${NC}"
+    echo -e "${RED}╚══════════════════════════════════════╝${NC}"
+    echo ""
+    fail "$_wootc_n failure(s) were recorded during this run:"
+    sed 's/^/  - /' "$WOOTC_FAILURE_LEDGER" >&2
+    info "Image tested: $IMAGE_REF"
+    exit 1
+fi
+
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║   wootc E2E test: ALL TESTS PASSED   ║${NC}"
