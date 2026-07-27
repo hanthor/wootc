@@ -666,6 +666,30 @@ func systemdBootAsset() (systemdBootAssets, error) {
 
 // ── BCD configuration ─────────────────────────────────────────────────────────
 
+// backupBCD exports the store to C:\wootc\install\bcd-before.bak so a broken
+// boot configuration can be restored with `bcdedit /import`.
+//
+// Written exactly ONCE. Re-exporting on a reinstall would capture a store that
+// already contains wootc's own entries, which is not the state a user wants to
+// get back to.
+//
+// Fails closed: if the store cannot be snapshotted, something is already wrong
+// with BCD access — and that is not a condition under which to start editing
+// it. Refusing leaves Windows untouched, which is the safe outcome.
+func backupBCD() error {
+	dst := filepath.Join(wootcDir(), "install", "bcd-before.bak")
+	if _, err := os.Stat(dst); err == nil {
+		return nil // keep the pristine pre-wootc copy
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fmt.Errorf("could not create %s for the boot-configuration backup: %w", filepath.Dir(dst), err)
+	}
+	if out, err := runCmd("bcdedit", "/export", dst); err != nil {
+		return fmt.Errorf("could not back up the boot configuration before changing it: %w (output: %s)", err, out)
+	}
+	return nil
+}
+
 func configureBCD(bootloader string) error {
 	var efiRelPath string
 
@@ -684,6 +708,15 @@ func configureBCD(bootloader string) error {
 		// The signed-shim chain proven by E2E: BCD → shimx64.efi →
 		// grubx64.efi (embedded prefix \EFI\fedora) → deployer menu.
 		efiRelPath = `\EFI\fedora\shimx64.efi`
+	}
+
+	// Snapshot the boot configuration BEFORE touching it. Modifying BCD is the
+	// most dangerous thing wootc does to a working Windows install, and the
+	// product's whole promise is that the machine stays recoverable. tunic
+	// (mikeslattery/tunic), which solves the same install-from-Windows problem,
+	// exports BCD before it edits anything; we did not.
+	if err := backupBCD(); err != nil {
+		return err
 	}
 
 	// Idempotency: sweep any wootc entries from earlier runs first, or every
