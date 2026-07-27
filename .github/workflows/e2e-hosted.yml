@@ -14,6 +14,8 @@ on:
       win_edition: { type: string, default: '' }
       win_key:     { type: string, default: '' }
       bitlocker:   { type: string, default: 'off' }
+      # Names this cell's evidence artifact so parallel cells do not collide.
+      case_name:   { type: string, default: '' }
       # Force a full Windows install (skip the base-image restore). The restore
       # path (--skip-install on a snapshot) currently fails at the deployer-boot
       # handoff, so a full install is the reliable path to Phase 2 — and the only
@@ -158,7 +160,11 @@ jobs:
           FLAGS=""
           [ "${{ inputs.phase3 }}" = "true" ] && FLAGS="$FLAGS --phase3"
           [ "${{ inputs.gui_install }}" = "true" ] && FLAGS="$FLAGS --gui-install"
-          bash run-e2e.sh "${{ inputs.image }}" $FLAGS
+          # tee the run's own log. GitHub withholds workflow logs until the
+          # ENTIRE matrix finishes, so without this a failing cell cannot be
+          # diagnosed for hours — the evidence artifact is the only way in.
+          set -o pipefail
+          bash run-e2e.sh "${{ inputs.image }}" $FLAGS 2>&1 | tee /tmp/run-e2e-console.log
 
       - name: Collect evidence
         if: always()
@@ -166,6 +172,13 @@ jobs:
           mkdir -p /tmp/evidence
           cp -r tests/e2e/storage/artifacts/. /tmp/evidence/ 2>/dev/null || true
           cp tests/e2e/storage/run-e2e.current /tmp/evidence/ 2>/dev/null || true
+          cp /tmp/run-e2e-console.log /tmp/evidence/ 2>/dev/null || true
+          # The failure ledger names exactly which assertions failed. Without it
+          # a run that "exited 1" after a Phase-2 boot that LOOKED healthy gives
+          # no clue which check was the one that fired (el10-xfce-win11pro,
+          # 20260727T020541Z).
+          cat /tmp/wootc-e2e-failures.* /home/runner/.wootc-tmp/wootc-e2e-failures.* \
+              > /tmp/evidence/failure-ledger.txt 2>/dev/null || true
           # the raw serial is the single most useful post-mortem artifact
           cp tests/e2e/storage/qemu.pty /tmp/evidence/qemu-serial.log 2>/dev/null || true
           du -sh /tmp/evidence || true
@@ -223,7 +236,10 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: e2e-nightly-${{ github.run_id }}
+          # Per-CASE name. Every cell used to upload "e2e-nightly-<run_id>", so
+          # `gh run download` merged them and only ONE failure's evidence
+          # survived — with 3 cells red, 2 were unreadable.
+          name: e2e-${{ inputs.case_name || 'run' }}-${{ github.run_id }}
           path: /tmp/evidence
           retention-days: 14
           if-no-files-found: warn

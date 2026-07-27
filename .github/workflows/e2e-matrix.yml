@@ -88,4 +88,5 @@ jobs:
       win_edition: ${{ matrix.win_edition }}
       win_key: ${{ matrix.win_key }}
       bitlocker: ${{ matrix.bitlocker }}
+      case_name: ${{ matrix.name }}
       phase3: ${{ matrix.phase3 }}
