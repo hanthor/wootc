@@ -790,7 +790,25 @@ ensure_ntfs_support || log "NTFS injection unavailable; using the image's own NT
 # ship bootupctl + grubx64.efi (ostree). wootc.composefs / wootc.bootloader override.
 GENERIC_IMAGE=0   # set to 1 for ostree images with no bootupd (see below)
 if [[ "$COMPOSEFS" == auto || "$BOOTLOADER" == auto ]]; then
-    if ! DETECT="$(timeout 30 podman run --rm --network=host "$IMAGE" sh -c '
+    # ACQUIRE before INSPECTING. `podman run` on an image that is not local must
+    # PULL it first, and a multi-GB bootc image cannot land inside a 30s probe
+    # timeout — so the probe "failed", fell back to ostree/grub2, and
+    # composefs-native images (dakota, marlin) were silently deployed down the
+    # OSTREE path with none of the branch logic below ever running. That is why
+    # the composefs axis never moved: dilli's dakota run logged
+    # "podman run image inspection timed out/failed" at 12 minutes in.
+    #
+    # $IMAGE is local already when ntfs-3g injection succeeded (it becomes
+    # localhost/wootc-ntfs-injected), and remote when injection failed — which
+    # is precisely when the fallback fired. `podman image exists` covers both
+    # without trying to pull a localhost-only tag.
+    if ! podman image exists "$IMAGE" 2>/dev/null; then
+        log "  backend probe: pulling $IMAGE (not local yet)"
+        if ! timeout "${WOOTC_PROBE_PULL_TIMEOUT:-1800}" podman pull "$IMAGE" >/dev/null 2>&1; then
+            err "  [WARN] could not pull $IMAGE for backend detection (network/registry?)"
+        fi
+    fi
+    if ! DETECT="$(timeout 120 podman run --rm --network=host "$IMAGE" sh -c '
         if { ls /usr/lib/bootupd/updates/EFI/*/grubx64.efi >/dev/null 2>&1 ||
              { test -f /usr/lib/bootupd/updates/EFI.json &&
                find /usr/lib/efi/grub2 -type f -name grubx64.efi -print -quit 2>/dev/null | grep -q . &&
@@ -828,7 +846,9 @@ if [[ "$COMPOSEFS" == auto || "$BOOTLOADER" == auto ]]; then
         grep -A8 "^\[composefs\]" /usr/lib/ostree/prepare-root.conf 2>/dev/null \
           | grep -qiE "enabled[[:space:]]*=[[:space:]]*(yes|true|1|signed)" && echo SEALED=1 || echo SEALED=0
     ' 2>/dev/null)"; then
-        err "  [WARN] podman run image inspection timed out/failed; falling back to default backend (ostree/grub2, ext4 sealed)"
+        err "  [WARN] backend probe failed against $IMAGE; falling back to default backend (ostree/grub2, ext4 sealed)"
+        err "  [WARN] a composefs-native image WILL be mis-deployed as ostree when this fires — treat any resulting pass as untested for composefs"
+        err "  [WARN] image local? $(podman image exists "$IMAGE" 2>/dev/null && echo yes || echo NO)"
         DETECT="BACKEND=ostree
 SEALED=1"
     fi

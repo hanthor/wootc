@@ -32,10 +32,13 @@ setup() {
     # abort the deploy (that lost completed installs on flaky podman). It is
     # bounded by a timeout and falls back to ostree/grub2 + SEALED=1 with a
     # loud WARN; an unrecognized backend signal likewise defaults with a WARN.
-    run grep -F 'if ! DETECT="$(timeout 30 podman run' "$DEPLOY"
+    # The probe is still bounded by a timeout — but 30s was a timeout on a PULL,
+    # not on an inspection (see the acquire-before-inspect test below), so the
+    # contract is "bounded", not "bounded at 30".
+    run grep -E 'if ! DETECT="\$\(timeout [0-9]+ podman run' "$DEPLOY"
     [ "$status" -eq 0 ]
 
-    run grep -F 'podman run image inspection timed out/failed; falling back to default backend' "$DEPLOY"
+    run grep -F 'falling back to default backend (ostree/grub2, ext4 sealed)' "$DEPLOY"
     [ "$status" -eq 0 ]
 
     run grep -F 'BACKEND=unknown' "$DEPLOY"
@@ -122,4 +125,20 @@ setup() {
     local dep="$REPO_ROOT/payload/deployer/deploy.sh"
     grep -q 'dracut-regen.log' "$dep"
     grep -q 'err "  dracut: \$dline"' "$dep"
+}
+
+@test "the backend probe acquires the image before inspecting it" {
+    # `podman run` on a non-local image PULLS it first. A multi-GB bootc image
+    # cannot land inside the probe timeout, so the probe "failed" and fell back
+    # to ostree/grub2 — silently deploying composefs-native images (dakota,
+    # marlin) down the ostree path with none of the branch logic running. This
+    # is why the composefs axis never moved.
+    grep -q 'podman image exists "$IMAGE"' "$DEPLOY"
+    grep -q 'podman pull "$IMAGE"' "$DEPLOY"
+    # The pull must come BEFORE the probe.
+    pull_line=$(grep -n 'podman pull "\$IMAGE"' "$DEPLOY" | head -1 | cut -d: -f1)
+    probe_line=$(grep -n 'DETECT="\$(timeout' "$DEPLOY" | head -1 | cut -d: -f1)
+    [ "$pull_line" -lt "$probe_line" ]
+    # And the fallback must say loudly that composefs was not exercised.
+    grep -q 'treat any resulting pass as untested for composefs' "$DEPLOY"
 }
