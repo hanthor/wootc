@@ -18,7 +18,7 @@ SOCKET = "/run/shm/qga.sock"
 
 
 class GuestAgent:
-    def __init__(self, path=SOCKET, timeout=10.0):
+    def __init__(self, path=SOCKET, timeout=60.0):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(timeout)
         self.sock.connect(path)
