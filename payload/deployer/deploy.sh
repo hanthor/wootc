@@ -1995,6 +1995,11 @@ BLSEOF
                 # Secure Boot.  Chainload systemd-boot instead — it reads the
                 # BLS entry with loop=/wootc.host_uuid= and boots the signed
                 # UKI natively, the exact path the composefs vendor tested.
+                # systemd-bootx64.efi must be on the ESP for chainloader.
+                # The deployer ships it (Containerfile copies from systemd-boot-unsigned).
+                mkdir -p /mnt/esp/EFI/systemd
+                cp /usr/lib/systemd/boot/efi/systemd-bootx64.efi \
+                    /mnt/esp/EFI/systemd/systemd-bootx64.efi
                 for _gd in /mnt/esp/EFI/fedora /mnt/esp/EFI/redhat /mnt/esp/EFI/wootc; do
                     mkdir -p "$_gd"
                     cat > "$_gd/grub.cfg" <<'GRUBCFGEOF'
