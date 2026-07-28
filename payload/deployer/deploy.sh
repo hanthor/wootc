@@ -1987,6 +1987,27 @@ initrd /EFI/wootc/phase2-initramfs.img
 options ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} console=tty1 console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 ignore_loglevel ${PHASE2_KARGS}
 BLSEOF
                 rm -f /mnt/esp/loader/entries/wootc-deployer.conf
+
+                # The BCD one-shot entry still boots \EFI\fedora\shimx64.efi →
+                # GRUB → grub.cfg.  Write a Phase-2 grub.cfg alongside the
+                # systemd-boot entry so the BCD→GRUB path still reaches the
+                # installed system (the deployer kernel was deleted above, so
+                # the stale installer menu would fail with "file not found").
+                PHASE2_LINUX="/EFI/wootc/phase2-vmlinuz ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} console=tty1 console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 ignore_loglevel ${PHASE2_KARGS}"
+                for _gd in /mnt/esp/EFI/fedora /mnt/esp/EFI/redhat /mnt/esp/EFI/wootc; do
+                    mkdir -p "$_gd"
+                    cat > "$_gd/grub.cfg" <<GRUBCFGEOF
+# wootc Phase 2 (composefs) — boot installed system from root.disk
+set default=0
+set timeout=5
+
+menuentry "wootc Linux" {
+    linux ${PHASE2_LINUX}
+    initrd /EFI/wootc/phase2-initramfs.img
+}
+GRUBCFGEOF
+                done
+
                 ESP_UUID=$(blkid -s UUID -o value "$ESP_DEV" 2>/dev/null || true)
                 if [[ -n "$ESP_UUID" ]]; then
                     mkdir -p "$DEPLOY_ROOT/etc/wootc"
