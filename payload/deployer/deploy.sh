@@ -2288,8 +2288,16 @@ GRUBEOF
             exit 1
         fi
     elif [[ -f "$DEPLOY_ROOT/var/usrlocal/bin/wootc-go-native" ]]; then
-        err "  [FAIL] target has Phase-3 executable but no setfiles policy/tool — cannot make it executable under enforcing SELinux"
-        exit 1
+        # setfiles / policycoreutils is missing, but the deployer already
+        # set SELinux to permissive above (§SELINUX_RELAX).  Only fail when
+        # the target would actually enforce — composefs images (dakota)
+        # often ship libselinux-utils but not the policy tools, and that
+        # is fine because the permissive config means labels are advisory.
+        if grep -q '^SELINUX=enforcing' "$DEPLOY_ROOT/etc/selinux/config" 2>/dev/null; then
+            err "  [FAIL] target has Phase-3 executable but no setfiles policy/tool — cannot make it executable under enforcing SELinux"
+            exit 1
+        fi
+        log "  [PASS] Phase-3 executable present; SELinux is permissive/disabled — labels not required (setfiles absent)"
     fi
 
     vstage "verify-complete (all stages passed; Phase-2 ESP is staged)"
