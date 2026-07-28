@@ -35,7 +35,8 @@ sel_on() {
 bound=0
 matched=0
 shopt -s nullglob
-for winprofile in /run/wootc/host/Users/*/; do
+for winprofile in /run/wootc/host/Users/*/ /run/wootc/host/*/Users/*/; do
+    [[ -d "$winprofile" ]] || continue
     name=$(basename "$winprofile")
     case "$name" in
         Public|Default|"Default User"|"All Users") continue ;;

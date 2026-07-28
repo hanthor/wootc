@@ -2669,8 +2669,8 @@ elif printf '%s' "$USERDATA_HOME" | grep -q "$RUN_ID"; then
 else
     USERDATA_DIAG=$(qga_call exec /bin/sh -c \
         'echo "host-bind: $(mountpoint -q /run/wootc/host && echo mounted || echo ABSENT)"; \
-         echo "profile:   $(ls -d /run/wootc/host/Users/wootc 2>/dev/null || echo ABSENT)"; \
-         echo "seed@host: $(cat /run/wootc/host/Users/wootc/Documents/wootc-e2e-userdata.txt 2>/dev/null || echo ABSENT)"; \
+         echo "profile:   $(find /run/wootc/host -maxdepth 3 -type d -path "*/Users/wootc" 2>/dev/null | head -1 || echo ABSENT)"; \
+         echo "seed@host: $(find /run/wootc/host -maxdepth 4 -type f -name "wootc-e2e-userdata.txt" -exec cat {} + 2>/dev/null || echo ABSENT)"; \
          echo "user:      $(id wootc 2>&1 | head -1)"; \
          echo "home-bind: $(findmnt -n /home/wootc/Documents 2>/dev/null || echo ABSENT)"; \
          echo "unit:      enabled=$(systemctl is-enabled wootc-host-bind 2>&1) active=$(systemctl is-active wootc-host-bind 2>&1)"; \
