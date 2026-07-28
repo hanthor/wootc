@@ -25,12 +25,12 @@ concurrency:
 jobs:
   fast:
     name: fast tier (bats + go)
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with: { submodules: recursive }
+        with: {submodules: recursive}
       - uses: actions/setup-go@v7
-        with: { go-version: '1.26', cache: false }
+        with: {go-version: '1.26', cache: false}
       - name: Install bats
         run: sudo apt-get update -qq && sudo apt-get install -y -qq bats
       - name: Run fast tier
@@ -38,23 +38,23 @@ jobs:
 
   integration:
     name: migration integration (container)
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with: { submodules: recursive }
+        with: {submodules: recursive}
       - name: Run containerized bridge suite
         run: bash tests/migration/test-bridge.sh
 
   lint:
     name: lint (shellcheck + yamllint)
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - name: Install linters
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
-          pip install --quiet yamllint
+          pip install --break-system-packages --quiet yamllint
       - name: yamllint
         run: yamllint tests/e2e/compose.yml
       - name: shellcheck (payloads + harness)
@@ -69,7 +69,7 @@ jobs:
 
   gui-shots:
     name: GUI screenshots render
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - name: Render the Linux GUIs headlessly

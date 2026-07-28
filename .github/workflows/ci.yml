@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -31,12 +31,12 @@ jobs:
 
       - name: yamllint
         run: |
-          pip install yamllint
+          pip install --break-system-packages yamllint
           yamllint tests/e2e/compose.yml
 
       - name: Validate autounattend.xml
         run: |
-          pip install xmlschema
+          pip install --break-system-packages xmlschema
           python3 -c "
           import xml.etree.ElementTree as ET
           tree = ET.parse('tests/e2e/autounattend.xml')
@@ -47,7 +47,7 @@ jobs:
           "
 
   build-deployer:
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,9 +63,12 @@ jobs:
 
       - name: Extract artifacts
         run: |
-          podman run --rm --entrypoint /bin/cat localhost/wootc-deployer /out/deployer-initramfs.img > deployer-initramfs.img
-          podman run --rm --entrypoint /bin/cat localhost/wootc-deployer /out/deployer-vmlinuz > deployer-vmlinuz
-          podman run --rm --entrypoint /bin/cat localhost/wootc-deployer /out/systemd-bootx64.efi > systemd-bootx64.efi
+          podman run --rm --entrypoint /bin/cat localhost/wootc-deployer \
+            /out/deployer-initramfs.img > deployer-initramfs.img
+          podman run --rm --entrypoint /bin/cat localhost/wootc-deployer \
+            /out/deployer-vmlinuz > deployer-vmlinuz
+          podman run --rm --entrypoint /bin/cat localhost/wootc-deployer \
+            /out/systemd-bootx64.efi > systemd-bootx64.efi
           ls -lah deployer-initramfs.img deployer-vmlinuz systemd-bootx64.efi
 
       - name: Upload deployer artifacts
@@ -79,7 +82,7 @@ jobs:
           retention-days: 7
 
   build-app:
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
@@ -119,7 +122,7 @@ jobs:
           retention-days: 7
 
   validate-recipe:
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -146,7 +149,7 @@ jobs:
           /tmp/fisherman validate /tmp/test-recipe.json
 
   gui-tests:
-    runs-on: runs-on=${{ github.run_id }}/runner=build-amd64
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
