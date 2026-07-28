@@ -1988,24 +1988,27 @@ options ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} con
 BLSEOF
                 rm -f /mnt/esp/loader/entries/wootc-deployer.conf
 
-                # The BCD one-shot entry still boots \EFI\fedora\shimx64.efi →
-                # GRUB → grub.cfg.  The composefs UKI's extracted vmlinuz has
-                # no individual PE signature (only the complete .efi UKI is
-                # signed), so `linux` fails with "bad shim signature" under
-                # Secure Boot.  Chainload systemd-boot instead — it reads the
-                # BLS entry with loop=/wootc.host_uuid= and boots the signed
-                # UKI natively, the exact path the composefs vendor tested.
-                # systemd-bootx64.efi must be on the ESP for chainloader.
-                # The deployer's systemd-boot-unsigned is NOT shim-signed.
-                # Copy from the composefs TARGET image — it ships the signed
-                # variant enrolled in the ESP's shim MOK.
+                # The composefs vendor's systemd-boot and UKI are signed by
+                # the vendor's key, but the Fedora shim on the ESP (placed by
+                # setup-wootc.ps1) only trusts Fedora keys.  Replace the ESP
+                # shim with the composefs image's own shim so the chain
+                # shim → systemd-boot → UKI is all same-vendor-signed.
                 TARGET_SDBOOT=$(find "$TESP" -name systemd-bootx64.efi -print -quit 2>/dev/null || true)
-                mkdir -p /mnt/esp/EFI/systemd
+                TARGET_SHIM=$(find "$TESP" -name shimx64.efi -print -quit 2>/dev/null || true)
                 if [[ -n "$TARGET_SDBOOT" && -f "$TARGET_SDBOOT" ]]; then
+                    mkdir -p /mnt/esp/EFI/systemd
                     cp "$TARGET_SDBOOT" /mnt/esp/EFI/systemd/systemd-bootx64.efi
+                    if [[ -n "$TARGET_SHIM" && -f "$TARGET_SHIM" ]]; then
+                        cp "$TARGET_SHIM" /mnt/esp/EFI/fedora/shimx64.efi
+                        log "  Installed composefs-vendor shim + systemd-boot to ESP"
+                    else
+                        log "  [WARN] no composefs-vendor shim in target ESP — chainload may fail"
+                    fi
                 else
-                    log "  [WARN] no systemd-bootx64.efi in composefs target ESP ($TESP) — chainloader may fail"
+                    log "  [WARN] no systemd-bootx64.efi in composefs target ESP ($TESP)"
                 fi
+                # Still write the grub.cfg for the BCD→GRUB path, but now the
+                # composefs shim replaces the Fedora one, so chainloader verifies.
                 for _gd in /mnt/esp/EFI/fedora /mnt/esp/EFI/redhat /mnt/esp/EFI/wootc; do
                     mkdir -p "$_gd"
                     cat > "$_gd/grub.cfg" <<'GRUBCFGEOF'
