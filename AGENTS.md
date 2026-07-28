@@ -62,7 +62,7 @@ Custom GRUB core image (1.3MB) with embedded bootstrap config, ntfs +
 loopback modules. Built via `grub2-mkimage` inside the deployer container.
 Stock Fedora grubx64.efi drops to rescue shell — wubildr.efi fixes this.
 
-### Secure Boot chainload — shim + signed grub (not yet green)
+### Secure Boot chainload — shim + signed grub ✅ (commit 8a58274)
 
 `wubildr.efi` is **unsigned**, so Secure Boot rejects it with `Access Denied`
 on the serial console. The fix is a Microsoft-signed intermediate bootloader:
@@ -74,11 +74,13 @@ on the serial console. The fix is a Microsoft-signed intermediate bootloader:
 | `shimx64.efi` | Microsoft | Fedora `shim-x64` package |
 | `grubx64.efi` | Fedora (in-shim MOK) | Fedora `grub2-efi-x64` package |
 | `grub.cfg` | N/A (on ESP) | same logic as `wubildr.cfg` |
-| `ntfs.mod`, `loopback.mod` | N/A (loaded by grub from ESP) | Fedora `grub2-efi-x64-modules` |
 
-**Critical:** Fedora's signed `grubx64.efi` does NOT embed ntfs+loopback
-modules. Place them as separate `.mod` files on the ESP and `insmod ntfs`
-`insmod loopback` in `grub.cfg` BEFORE any search/loopback commands.
+Fedora's signed `grubx64.efi` does NOT embed ntfs+loopback modules, but the
+deployer and Phase 2 kernels + initramfs live on the FAT32 ESP — GRUB can
+natively read FAT32 and never needs NTFS modules. The kernel command line
+passes `loop=/wootc/disks/root.disk wootc.host_uuid=…` so the initramfs
+(not GRUB) mounts the NTFS volume and attaches the loop device. No `.mod`
+files are needed on the ESP.
 
 ### E2E boot chain progress
 Each row is a separate reboot from one step to the next:
@@ -89,11 +91,10 @@ Each row is a separate reboot from one step to the next:
 | Boot via wubildr.efi | ❌ | `Access Denied` — unsigned binary, Secure Boot blocks it |
 | Boot via shimx64.efi | ✅ | `BdsDxe: starting Boot0005...shimx64.efi` — no Access Denied |
 | GRUB loads grub.cfg | ✅ | `GRUB version 2.12` visible on serial console |
-| GRUB loads ntfs.mod | ❌ | `error: no such device:` — modules not on ESP |
-| GRUB finds root.disk | ❌ | Blocked by missing modules |
-| Deployer boots | ❌ | Not yet reached |
-| fisherman runs | ❌ | Not yet reached |
-| Linux installed + Windows returns | ❌ | Not yet reached |
+| Deployer boots | ✅ | Kernel + initramfs loaded from FAT32 ESP (no NTFS needed) |
+| fisherman runs | ✅ | deploy.sh completes, bootc installs the target OS |
+| Phase 2 boots (shim→grub→kernel) | ✅ | ESP grub.cfg loads phase2-vmlinuz from FAT32 |
+| Linux installed + Windows returns | ✅ | Full cycle green on el10-gnome-win11pro-bitlocker (himachal, 2026-07-28) |
 
 ### Serial logging
 
