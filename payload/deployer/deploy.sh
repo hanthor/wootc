@@ -779,12 +779,12 @@ ensure_ntfs_support() {
     for attempt in 1 2 3; do
         timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
         if timeout 300 podman run --name "$cname" --network=host "$IMAGE" sh -c \
-            'dnf install -y ntfs-3g || \
+            'dnf install -y ntfs-3g qemu-guest-agent || \
              { { dnf install -y epel-release || \
                  dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm; } && \
                { dnf config-manager --set-enabled crb 2>/dev/null || true; } && \
-               dnf install -y ntfs-3g; } || \
-             microdnf install -y ntfs-3g || rpm-ostree install ntfs-3g' 2>"$inj_err"; then
+               dnf install -y ntfs-3g qemu-guest-agent; } || \
+             microdnf install -y ntfs-3g qemu-guest-agent || rpm-ostree install ntfs-3g qemu-guest-agent' 2>"$inj_err"; then
             inj_ok=1
             break
         fi
@@ -811,11 +811,11 @@ ensure_ntfs_support() {
     IMAGE="$derived"
     log "  [PASS] injected ntfs-3g; deploying ${IMAGE}"
     # Prove it actually landed rather than trusting the commit.
-    if ! timeout 60 podman run --rm "$IMAGE" sh -c 'command -v ntfs-3g >/dev/null'; then
-        err "  [WARN] ntfs-3g still absent from ${IMAGE} after injection"
+    if ! timeout 60 podman run --rm "$IMAGE" sh -c 'command -v ntfs-3g >/dev/null && command -v qemu-ga >/dev/null'; then
+        err "  [WARN] ntfs-3g or qemu-guest-agent still absent from ${IMAGE} after injection"
         return 1
     fi
-    log "  [PASS] verified ntfs-3g present in the deployed image"
+    log "  [PASS] verified ntfs-3g + qemu-guest-agent present in the deployed image"
 }
 # "Using the image's own NTFS support" must be CHECKED, not hoped for. When
 # injection fails on an image whose kernel has no ntfs3 — every EL-family image,
@@ -1964,26 +1964,18 @@ QGAEOF
                     done
                 fi
 
-                # The deployer kernel needs its OWN ntfs3 module (the UKI
-                # initrd has modules for the composefs kernel, vermagic
-                # mismatch with the deployer kernel).  Stage the deployer's
-                # ntfs3.ko — it carries the Fedora module signature which the
-                # deployer kernel trusts.
-                NTFS3_MOD=$(find /lib/modules -name ntfs3.ko -print -quit 2>/dev/null || true)
-                if [[ -n "$NTFS3_MOD" && -f "$NTFS3_MOD" ]]; then
-                    NTFS3_REL="${NTFS3_MOD#/}"
-                    NTFS3_DIR="${NTFS3_REL%/*}"
-                    mkdir -p "$OVL/$NTFS3_DIR"
-                    cp "$NTFS3_MOD" "$OVL/$NTFS3_REL"
+                # The deployer kernel needs its OWN kernel modules — the UKI
+                # initrd has modules for the composefs kernel (vermagic
+                # mismatch).  Copy the deployer's complete module tree into
+                # the cpio overlay.  The UKI initrd modules will be skipped
+                # by modprobe (wrong vermagic); the deployer copies match
+                # and are signed with the Fedora key the deployer kernel trusts.
+                _dkver=$(ls /lib/modules | head -1)
+                if [[ -n "$_dkver" && -d "/lib/modules/$_dkver" ]]; then
+                    mkdir -p "$OVL/lib/modules"
+                    cp -a "/lib/modules/$_dkver" "$OVL/lib/modules/"
+                    log "  Staged deployer kernel modules ($_dkver) for Phase 2"
                 fi
-                # NOTE: Do NOT stage disk/storage kernel modules (virtio_scsi,
-                # sd_mod, etc.) into the early-cpio overlay. The UKI base
-                # initramfs already contains correctly-signed storage drivers;
-                # staging deployer-kernel copies causes vermagic/key mismatch
-                # that blocks discovery before the base versions are tried.
-                # ntfs3 is the exception — the UKI initrd doesn't need it
-                # because the composefs root is not on NTFS, but WE do because
-                # root.disk lives on the Windows NTFS partition.
 
                 CPIO_OK=0
                 if ( cd "$OVL" && find . | cpio -o -H newc --quiet ) > "$OVL.cpio" && \
