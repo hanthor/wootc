@@ -1886,8 +1886,14 @@ QGAEOF
             # ESP after deployment, and a 256M ESP cannot hold both them and
             # the Phase-2 pair (canonical copies remain in C:\wootc\install).
             # Also clear any partial Phase-2 files from earlier attempts.
-            rm -f /mnt/esp/EFI/wootc/deployer-vmlinuz \
-                  /mnt/esp/EFI/wootc/deployer-initramfs.img \
+            # The deployer kernel is Fedora-signed → shim-trusted. Composefs
+            # Phase 2 reuses it (the UKI vmlinuz has no individual PE sig).
+            # Keep it on the ESP for composefs; delete for ostree where the
+            # target kernel replaces it.
+            if [[ "$COMPOSEFS" != 1 || "$BOOTLOADER" != systemd ]]; then
+                rm -f /mnt/esp/EFI/wootc/deployer-vmlinuz
+            fi
+            rm -f /mnt/esp/EFI/wootc/deployer-initramfs.img \
                   /mnt/esp/EFI/wootc/phase2-vmlinuz \
                   /mnt/esp/EFI/wootc/phase2-initramfs.img
             # ── composefs-native + systemd-boot: stage Phase 2 from the target's
@@ -1988,36 +1994,22 @@ options ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} con
 BLSEOF
                 rm -f /mnt/esp/loader/entries/wootc-deployer.conf
 
-                # The composefs vendor's systemd-boot and UKI are signed by
-                # the vendor's key, but the Fedora shim on the ESP (placed by
-                # setup-wootc.ps1) only trusts Fedora keys.  Replace the ESP
-                # shim with the composefs image's own shim so the chain
-                # shim → systemd-boot → UKI is all same-vendor-signed.
-                TARGET_SDBOOT=$(find "$TESP" -name systemd-bootx64.efi -print -quit 2>/dev/null || true)
-                TARGET_SHIM=$(find "$TESP" -name shimx64.efi -print -quit 2>/dev/null || true)
-                if [[ -n "$TARGET_SDBOOT" && -f "$TARGET_SDBOOT" ]]; then
-                    mkdir -p /mnt/esp/EFI/systemd
-                    cp "$TARGET_SDBOOT" /mnt/esp/EFI/systemd/systemd-bootx64.efi
-                    if [[ -n "$TARGET_SHIM" && -f "$TARGET_SHIM" ]]; then
-                        cp "$TARGET_SHIM" /mnt/esp/EFI/fedora/shimx64.efi
-                        log "  Installed composefs-vendor shim + systemd-boot to ESP"
-                    else
-                        log "  [WARN] no composefs-vendor shim in target ESP — chainload may fail"
-                    fi
-                else
-                    log "  [WARN] no systemd-bootx64.efi in composefs target ESP ($TESP)"
-                fi
-                # Still write the grub.cfg for the BCD→GRUB path, but now the
-                # composefs shim replaces the Fedora one, so chainloader verifies.
+                # The composefs UKI vmlinuz has no individual PE signature
+                # (only the .efi wrapper is signed), so `linux` with it would
+                # fail shim verification.  Use the deployer kernel instead —
+                # it is Fedora-signed and trusted by the ESP's Fedora shim.
+                # The Phase-2 initrd is the patched UKI initrd (cpio prepend).
+                PHASE2_LINUX="/EFI/wootc/deployer-vmlinuz ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} console=tty1 console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 ignore_loglevel ${PHASE2_KARGS}"
                 for _gd in /mnt/esp/EFI/fedora /mnt/esp/EFI/redhat /mnt/esp/EFI/wootc; do
                     mkdir -p "$_gd"
-                    cat > "$_gd/grub.cfg" <<'GRUBCFGEOF'
-# wootc Phase 2 (composefs) — chainload systemd-boot
+                    cat > "$_gd/grub.cfg" <<GRUBCFGEOF
+# wootc Phase 2 (composefs) — deployer kernel + patched UKI initrd
 set default=0
 set timeout=3
 
 menuentry "wootc Linux" {
-    chainloader /EFI/systemd/systemd-bootx64.efi
+    linux ${PHASE2_LINUX}
+    initrd /EFI/wootc/phase2-initramfs.img
 }
 GRUBCFGEOF
                 done
