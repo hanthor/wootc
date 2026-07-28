@@ -1996,10 +1996,16 @@ BLSEOF
                 # BLS entry with loop=/wootc.host_uuid= and boots the signed
                 # UKI natively, the exact path the composefs vendor tested.
                 # systemd-bootx64.efi must be on the ESP for chainloader.
-                # The deployer ships it (Containerfile copies from systemd-boot-unsigned).
+                # The deployer's systemd-boot-unsigned is NOT shim-signed.
+                # Copy from the composefs TARGET image — it ships the signed
+                # variant enrolled in the ESP's shim MOK.
+                TARGET_SDBOOT=$(find "$TESP" -name systemd-bootx64.efi -print -quit 2>/dev/null || true)
                 mkdir -p /mnt/esp/EFI/systemd
-                cp /usr/lib/systemd/boot/efi/systemd-bootx64.efi \
-                    /mnt/esp/EFI/systemd/systemd-bootx64.efi
+                if [[ -n "$TARGET_SDBOOT" && -f "$TARGET_SDBOOT" ]]; then
+                    cp "$TARGET_SDBOOT" /mnt/esp/EFI/systemd/systemd-bootx64.efi
+                else
+                    log "  [WARN] no systemd-bootx64.efi in composefs target ESP ($TESP) — chainloader may fail"
+                fi
                 for _gd in /mnt/esp/EFI/fedora /mnt/esp/EFI/redhat /mnt/esp/EFI/wootc; do
                     mkdir -p "$_gd"
                     cat > "$_gd/grub.cfg" <<'GRUBCFGEOF'
