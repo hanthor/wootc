@@ -1989,21 +1989,21 @@ BLSEOF
                 rm -f /mnt/esp/loader/entries/wootc-deployer.conf
 
                 # The BCD one-shot entry still boots \EFI\fedora\shimx64.efi →
-                # GRUB → grub.cfg.  Write a Phase-2 grub.cfg alongside the
-                # systemd-boot entry so the BCD→GRUB path still reaches the
-                # installed system (the deployer kernel was deleted above, so
-                # the stale installer menu would fail with "file not found").
-                PHASE2_LINUX="/EFI/wootc/phase2-vmlinuz ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} console=tty1 console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 ignore_loglevel ${PHASE2_KARGS}"
+                # GRUB → grub.cfg.  The composefs UKI's extracted vmlinuz has
+                # no individual PE signature (only the complete .efi UKI is
+                # signed), so `linux` fails with "bad shim signature" under
+                # Secure Boot.  Chainload systemd-boot instead — it reads the
+                # BLS entry with loop=/wootc.host_uuid= and boots the signed
+                # UKI natively, the exact path the composefs vendor tested.
                 for _gd in /mnt/esp/EFI/fedora /mnt/esp/EFI/redhat /mnt/esp/EFI/wootc; do
                     mkdir -p "$_gd"
-                    cat > "$_gd/grub.cfg" <<GRUBCFGEOF
-# wootc Phase 2 (composefs) — boot installed system from root.disk
+                    cat > "$_gd/grub.cfg" <<'GRUBCFGEOF'
+# wootc Phase 2 (composefs) — chainload systemd-boot
 set default=0
-set timeout=5
+set timeout=3
 
 menuentry "wootc Linux" {
-    linux ${PHASE2_LINUX}
-    initrd /EFI/wootc/phase2-initramfs.img
+    chainloader /EFI/systemd/systemd-bootx64.efi
 }
 GRUBCFGEOF
                 done
