@@ -809,26 +809,33 @@ reset_oem_attempt() {
 # deployer reboot so it is part of the data the migration must carry.
 seed_user_data() {
     step "Seeding user data in the Windows profile (Documents)..."
-    # The guest's own words are CAPTURED, not discarded. The previous version
-    # sent PowerShell's error to /dev/null, so three unrelated causes — the
-    # profile not being at C:\Users\wootc, an ACL denial on Documents, and QGA
-    # returning nothing at all — produced one indistinguishable message, and a
-    # 40-minute dakota run (20260726T224500Z) ended with no way to tell which.
-    # Documents is created when missing: a restored snapshot can present a
-    # profile whose known folders have not been materialised yet.
-    local attempt out
+    # On BitLocker runs C: is encrypted and the deployer mounts the carved
+    # unencrypted volume (e.g. E:) instead.  Seeding on C: guarantees the
+    # deployer can never read the marker, so ask the guest where the wootc
+    # tree lives — that is exactly the volume the deployer will mount — and
+    # create Users\wootc\Documents there.  The User Data Bridge then finds the
+    # profile through the same path the deployer sees at /run/wootc/host.
+    # (run 20260728T002802Z: el10-gnome-win11pro-bitlocker failed twice because
+    # the seed landed on the encrypted C: while the deployer mounted the empty
+    # carved E:, so wootc-mount-user-dirs found no profile anywhere.)
+    local drive out attempt
+    drive=$(qga_powershell 'Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object { Test-Path ($_.Name + ":\wootc\install") } | Select-Object -First 1 -ExpandProperty Name' 2>/dev/null | tr -d '[:space:]')
+    case "$drive" in [A-Za-z]) drive="${drive}:" ;; *) drive="C:" ;; esac
+    local seed_dir="${drive}\\Users\\wootc\\Documents"
     for attempt in 1 2 3; do
-        out=$(qga_powershell "\$ErrorActionPreference='Stop'; \$d = 'C:\\Users\\wootc\\Documents'; if (-not (Test-Path \$d)) { New-Item -ItemType Directory -Path \$d -Force | Out-Null }; Set-Content -Path \"\$d\\wootc-e2e-userdata.txt\" -Value 'wootc-e2e-userdata $RUN_ID' -Encoding ASCII; Get-Content \"\$d\\wootc-e2e-userdata.txt\"" 2>&1)
+        # Use the drive letter as a PowerShell variable so the same command
+        # works for C: / D: / E: without string-concatenation bugs (§R2).
+        out=$(qga_powershell "\$ErrorActionPreference='Stop'; \$d = '${drive}\\Users\\wootc\\Documents'; if (-not (Test-Path \$d)) { New-Item -ItemType Directory -Path \$d -Force | Out-Null }; Set-Content -Path \"\$d\\wootc-e2e-userdata.txt\" -Value 'wootc-e2e-userdata $RUN_ID' -Encoding ASCII; Get-Content \"\$d\\wootc-e2e-userdata.txt\"" 2>&1)
         if printf '%s' "$out" | grep -q "$RUN_ID"; then
-            pass "User data seeded: C:\\Users\\wootc\\Documents\\wootc-e2e-userdata.txt ($RUN_ID)"
+            pass "User data seeded: ${drive}\\Users\\wootc\\Documents\\wootc-e2e-userdata.txt ($RUN_ID)"
             return 0
         fi
         warn "Seeding attempt $attempt/3 did not confirm the marker; guest said: ${out:-<no output>}"
         sleep 10
     done
     # Make the cause name itself rather than costing another run to find.
-    qga_powershell 'Get-ChildItem C:\Users -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name' 2>&1 \
-        | sed 's/^/    C:\\Users entry: /' || true
+    qga_powershell "Get-ChildItem ${drive}\\Users -Force -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name" 2>&1 \
+        | sed "s/^/    ${drive}\\Users entry: /" || true
     fail "Could not seed user data in the Windows profile — data-persistence checks will be meaningless"
     return 1
 }
@@ -2669,8 +2676,8 @@ elif printf '%s' "$USERDATA_HOME" | grep -q "$RUN_ID"; then
 else
     USERDATA_DIAG=$(qga_call exec /bin/sh -c \
         'echo "host-bind: $(mountpoint -q /run/wootc/host && echo mounted || echo ABSENT)"; \
-         echo "profile:   $(find /run/wootc/host -maxdepth 3 -type d -path "*/Users/wootc" 2>/dev/null | head -1 || echo ABSENT)"; \
-         echo "seed@host: $(find /run/wootc/host -maxdepth 4 -type f -name "wootc-e2e-userdata.txt" -exec cat {} + 2>/dev/null || echo ABSENT)"; \
+         echo "profile:   $(find /run/wootc/host -maxdepth 5 -type d -path "*/Users/wootc" 2>/dev/null | head -1 || echo ABSENT)"; \
+         echo "seed@host: $(find /run/wootc/host -maxdepth 7 -type f -name "wootc-e2e-userdata.txt" -exec cat {} + 2>/dev/null || echo ABSENT)"; \
          echo "user:      $(id wootc 2>&1 | head -1)"; \
          echo "home-bind: $(findmnt -n /home/wootc/Documents 2>/dev/null || echo ABSENT)"; \
          echo "unit:      enabled=$(systemctl is-enabled wootc-host-bind 2>&1) active=$(systemctl is-active wootc-host-bind 2>&1)"; \
