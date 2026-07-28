@@ -1964,12 +1964,26 @@ QGAEOF
                     done
                 fi
 
-                # NOTE: Do NOT stage kernel modules (virtio_scsi, sd_mod, ahci, nvme, etc.)
-                # into the early-cpio overlay. The OSTree-built base initramfs already
-                # contains dracut-bundled, correctly-signed storage drivers. Staging them
-                # in the early-cpio prepend causes Secure Boot lockdown to reject them
-                # (key/vermagic mismatch) before the base initramfs versions are tried,
-                # preventing disk discovery entirely.
+                # The deployer kernel needs its OWN ntfs3 module (the UKI
+                # initrd has modules for the composefs kernel, vermagic
+                # mismatch with the deployer kernel).  Stage the deployer's
+                # ntfs3.ko — it carries the Fedora module signature which the
+                # deployer kernel trusts.
+                NTFS3_MOD=$(find /lib/modules -name ntfs3.ko -print -quit 2>/dev/null || true)
+                if [[ -n "$NTFS3_MOD" && -f "$NTFS3_MOD" ]]; then
+                    NTFS3_REL="${NTFS3_MOD#/}"
+                    NTFS3_DIR="${NTFS3_REL%/*}"
+                    mkdir -p "$OVL/$NTFS3_DIR"
+                    cp "$NTFS3_MOD" "$OVL/$NTFS3_REL"
+                fi
+                # NOTE: Do NOT stage disk/storage kernel modules (virtio_scsi,
+                # sd_mod, etc.) into the early-cpio overlay. The UKI base
+                # initramfs already contains correctly-signed storage drivers;
+                # staging deployer-kernel copies causes vermagic/key mismatch
+                # that blocks discovery before the base versions are tried.
+                # ntfs3 is the exception — the UKI initrd doesn't need it
+                # because the composefs root is not on NTFS, but WE do because
+                # root.disk lives on the Windows NTFS partition.
 
                 CPIO_OK=0
                 if ( cd "$OVL" && find . | cpio -o -H newc --quiet ) > "$OVL.cpio" && \
