@@ -1974,6 +1974,22 @@ QGAEOF
                 if [[ -n "$_dkver" && -d "/lib/modules/$_dkver" ]]; then
                     mkdir -p "$OVL/lib/modules"
                     cp -a "/lib/modules/$_dkver" "$OVL/lib/modules/"
+                    # depmod so the initramfs can find these modules at boot
+                    depmod -b "$OVL" "$_dkver" 2>/dev/null || true
+                    # Pre-load essential modules via a dracut pre-udev hook
+                    # (the UKI initrd's modules have wrong vermagic).
+                    mkdir -p "$OVL/usr/lib/dracut/hooks/pre-udev"
+                    cat > "$OVL/usr/lib/dracut/hooks/pre-udev/99-wootc-modules.sh" <<'DHOOK'
+#!/bin/sh
+_kver=$(uname -r)
+for _mod in virtio_pci virtio_scsi sd_mod; do
+    _path=$(find "/lib/modules/$_kver" -name "${_mod}.ko" -print -quit 2>/dev/null)
+    if [[ -n "$_path" && -f "$_path" ]]; then
+        insmod "$_path" 2>/dev/null || modprobe "$_mod" 2>/dev/null || true
+    fi
+done
+DHOOK
+                    chmod +x "$OVL/usr/lib/dracut/hooks/pre-udev/99-wootc-modules.sh"
                     log "  Staged deployer kernel modules ($_dkver) for Phase 2"
                 fi
 

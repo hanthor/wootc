@@ -1,0 +1,2 @@
+name	host	result	seconds	image	win
+bluefin-dakota-win11pro	himachal/a	FAIL:[ 1931.359188] dracut-initqueue[7606]: [wootc]   2026-07-27T15:13:32Z [wootc] ER	2748	ghcr.io/projectbluefin/dakota:latest	11-pro
