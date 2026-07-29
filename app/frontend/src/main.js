@@ -287,6 +287,7 @@ function renderLaunchpad() {
       <div class="image-base">${img.base}</div>
       <div class="image-desc">${img.description}</div>
     `;
+    card.__imgRef = img.imageRef;  // drive-mode E2E uses this to match
     card.onclick = () => { state.selected = img; applyImageDefaults(img); render(); };
     grid.appendChild(card);
   });
@@ -1122,7 +1123,7 @@ async function e2eDriveLoop() {
     if (raw) {
       const d = JSON.parse(raw);
       if (d.action === 'install' && !window.__e2eInstallDriven && state.screen === 'launchpad') {
-        const img = e2eFieldByLabel('Custom supported OCI image');
+        const imgInput = e2eFieldByLabel('Custom supported OCI image');
         const user = e2eFieldByLabel('Linux Username');
         const host = e2eFieldByLabel('Hostname');
         const pws = document.querySelectorAll('input[type=password]');
@@ -1136,9 +1137,20 @@ async function e2eDriveLoop() {
           encRadio.checked = true;
           if (encRadio.onchange) encRadio.onchange();
         }
-        if (img && user && host && pws.length >= 2) {
-          [[img, d.image], [user, d.username], [host, d.hostname],
-           [pws[0], d.password], [pws[1], d.password]].forEach(([inp, v]) => {
+        // The custom image field only renders when the support policy allows
+        // it (customImageAllowed !== false).  When absent, try to select the
+        // matching image from the grid; if none match, the form's default
+        // selection is used.
+        if (!imgInput && d.image) {
+          for (const card of document.querySelectorAll('.image-card')) {
+            if (card.__imgRef === d.image) { card.click(); break; }
+          }
+        }
+        if (user && host && pws.length >= 2) {
+          const fills = [[user, d.username], [host, d.hostname],
+           [pws[0], d.password], [pws[1], d.password]];
+          if (imgInput) fills.unshift([imgInput, d.image]);
+          fills.forEach(([inp, v]) => {
             inp.value = v;
             if (inp.oninput) inp.oninput();
           });

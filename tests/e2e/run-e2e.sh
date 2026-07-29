@@ -1852,13 +1852,27 @@ start `"`" C:\wootc\wootc.exe
 "@ | Set-Content -Path C:\wootc\launch-gui.cmd -Encoding ascii
 Stop-Process -Name wootc -Force -ErrorAction SilentlyContinue
 schtasks /Delete /TN wootc-gui-e2e /F 2>$null
-schtasks /Create /TN wootc-gui-e2e /SC ONCE /ST 00:00 /TR "C:\wootc\launch-gui.cmd" /RU wootc /IT /RL HIGHEST /F | Out-Null
+$start = (Get-Date).AddMinutes(1).ToString('\''HH:mm'\'')
+schtasks /Create /TN wootc-gui-e2e /SC ONCE /ST $start /TR "C:\wootc\launch-gui.cmd" /RU wootc /IT /RL HIGHEST /F | Out-Null
 schtasks /Run /TN wootc-gui-e2e | Out-Null
-Write-Output "gui-launched"' | grep -q gui-launched || {
-        fail "could not launch wootc.exe in the interactive session"
+Write-Output "task-scheduled"' >/dev/null
+    # The QGA powershell completing only proves the task was scheduled, not
+    # that wootc.exe actually started.  Poll for the real readiness signal:
+    # e2e-drive-state.json (written by the drive loop every 2 s once the app
+    # renders the first screen).
+    local launch_deadline
+    launch_deadline=$(deadline_in 60)
+    while ! past_deadline "$launch_deadline"; do
+        if qga_read 'C:\wootc\e2e-drive-state.json' >/dev/null 2>&1; then
+            break
+        fi
+        sleep 5
+    done
+    if ! qga_read 'C:\wootc\e2e-drive-state.json' >/dev/null 2>&1; then
+        fail "wootc.exe did not start within 60 s — e2e-drive-state.json never appeared"
         capture_vm_diagnostics
         exit 1
-    }
+    fi
     pass "wootc.exe GUI launched in drive mode in the wootc session"
 
     step "Driving the REAL install through the live form (drive directive)..."
