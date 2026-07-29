@@ -1974,13 +1974,23 @@ QGAEOF
                 if [[ -n "$_dkver" && -d "/lib/modules/$_dkver" ]]; then
                     mkdir -p "$OVL/lib/modules"
                     cp -a "/lib/modules/$_dkver" "$OVL/lib/modules/"
-                    # depmod so the initramfs can find these modules at boot
                     depmod -b "$OVL" "$_dkver" 2>/dev/null || true
-                    # Pre-load essential modules via a dracut pre-udev hook
-                    # (the UKI initrd's modules have wrong vermagic).
-                    mkdir -p "$OVL/usr/lib/dracut/hooks/pre-udev"
-                    cat > "$OVL/usr/lib/dracut/hooks/pre-udev/99-wootc-modules.sh" <<'DHOOK'
-#!/bin/sh
+                    # Load essential modules before wootc-attach via a
+                    # systemd service (dracut pre-udev hooks may not fire
+                    # in the UKI initrd's minimal init).
+                    mkdir -p "$OVL/usr/lib/systemd/system" \
+                             "$OVL/usr/lib/systemd/system/sysinit.target.wants"
+                    cat > "$OVL/usr/lib/systemd/system/wootc-load-modules.service" <<'SMOD'
+[Unit]
+Description=Load wootc essential kernel modules
+DefaultDependencies=no
+Before=wootc-attach.service systemd-udev-trigger.service
+ConditionPathExists=/lib/modules
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c '
 _kver=$(uname -r)
 for _mod in virtio_pci virtio_scsi sd_mod; do
     _path=$(find "/lib/modules/$_kver" -name "${_mod}.ko" -print -quit 2>/dev/null)
@@ -1988,8 +1998,13 @@ for _mod in virtio_pci virtio_scsi sd_mod; do
         insmod "$_path" 2>/dev/null || modprobe "$_mod" 2>/dev/null || true
     fi
 done
-DHOOK
-                    chmod +x "$OVL/usr/lib/dracut/hooks/pre-udev/99-wootc-modules.sh"
+'
+
+[Install]
+WantedBy=sysinit.target
+SMOD
+                    ln -sf ../wootc-load-modules.service \
+                        "$OVL/usr/lib/systemd/system/sysinit.target.wants/wootc-load-modules.service"
                     log "  Staged deployer kernel modules ($_dkver) for Phase 2"
                 fi
 
