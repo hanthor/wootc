@@ -113,6 +113,15 @@ jobs:
       # ship Go + Node; the wails frontend is a plain vite build, and the
       # binary cross-compiles GOOS=windows. Drive mode needs no CDP/webview
       # loader tag, so this is a stock production build.
+      - name: Set up Node for GUI-driven run
+        if: ${{ inputs.gui_install }}
+        uses: actions/setup-node@v4
+        with:
+          # Disk reclaim removes the runner's preinstalled global Node modules.
+          # GUI runs build the real Wails frontend, so explicitly restore a
+          # supported Node toolchain before invoking npm.
+          node-version: '22'
+
       - name: Build wootc.exe (GUI-driven run only)
         if: ${{ inputs.gui_install }}
         run: |
