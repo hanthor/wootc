@@ -1979,12 +1979,12 @@ QGAEOF
                     # systemd service (dracut pre-udev hooks may not fire
                     # in the UKI initrd's minimal init).
                     mkdir -p "$OVL/usr/lib/systemd/system" \
-                             "$OVL/usr/lib/systemd/system/sysinit.target.wants"
+                             "$OVL/usr/lib/systemd/system/initrd-root-device.target.wants"
                     cat > "$OVL/usr/lib/systemd/system/wootc-load-modules.service" <<'SMOD'
 [Unit]
 Description=Load wootc essential kernel modules
 DefaultDependencies=no
-Before=wootc-attach.service systemd-udev-trigger.service
+Before=wootc-attach.service
 
 [Service]
 Type=oneshot
@@ -1992,7 +1992,7 @@ RemainAfterExit=yes
 ExecStart=/usr/lib/wootc/load-modules.sh
 
 [Install]
-WantedBy=sysinit.target
+WantedBy=initrd-root-device.target
 SMOD
                     mkdir -p "$OVL/usr/lib/wootc"
                     cat > "$OVL/usr/lib/wootc/load-modules.sh" <<'SMODSH'
@@ -2012,7 +2012,7 @@ echo "wootc: load-modules done" > /dev/console
 SMODSH
                     chmod +x "$OVL/usr/lib/wootc/load-modules.sh"
                     ln -sf ../wootc-load-modules.service \
-                        "$OVL/usr/lib/systemd/system/sysinit.target.wants/wootc-load-modules.service"
+                        "$OVL/usr/lib/systemd/system/initrd-root-device.target.wants/wootc-load-modules.service"
                     log "  Staged deployer kernel modules ($_dkver) for Phase 2"
                 fi
 
