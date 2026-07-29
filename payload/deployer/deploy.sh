@@ -1963,6 +1963,21 @@ QGAEOF
                         install -D -m0755 "$lib" "$OVL/$relpath"
                     done
                 fi
+                # Composefs images (dakota) lack qemu-guest-agent which the E2E
+                # harness needs.  Copy the deployer's own qemu-ga into the cpio
+                # overlay (the deployed chroot won't have a package manager).
+                if command -v qemu-ga >/dev/null 2>&1; then
+                    install -D -m0755 "$(command -v qemu-ga)" "$OVL/usr/bin/qemu-ga"
+                    for _svc in qemu-guest-agent.service qemu-ga@.service; do
+                        for _d in /usr/lib/systemd/system /lib/systemd/system; do
+                            [[ -f "$_d/$_svc" ]] && { install -D -m0644 "$_d/$_svc" "$OVL/usr/lib/systemd/system/$_svc"; break; }
+                        done
+                    done
+                    # Enable it
+                    mkdir -p "$OVL/usr/lib/systemd/system/multi-user.target.wants"
+                    ln -sf ../qemu-guest-agent.service \
+                        "$OVL/usr/lib/systemd/system/multi-user.target.wants/qemu-guest-agent.service"
+                fi
 
                 # The deployer kernel needs its OWN kernel modules — the UKI
                 # initrd has modules for the composefs kernel (vermagic
