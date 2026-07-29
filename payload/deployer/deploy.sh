@@ -1998,7 +1998,7 @@ SMOD
                     cat > "$OVL/usr/lib/wootc/load-modules.sh" <<'SMODSH'
 #!/bin/sh
 _kver=$(uname -r)
-for _mod in virtio_pci virtio_scsi sd_mod; do
+for _mod in virtio_pci virtio_scsi ahci sd_mod; do
     _path=$(find "/lib/modules/$_kver" -name "${_mod}.ko" -print -quit 2>/dev/null)
     if [ -n "$_path" ] && [ -f "$_path" ]; then
         insmod "$_path" 2>/dev/null || modprobe "$_mod" 2>/dev/null || true
