@@ -15,6 +15,20 @@ setup() {
     awk -F'\t' '!/^#/ && $4=="10" && $5=="home"' "$MATRIX" | grep -q .
 }
 
+@test "Home generic keys match their Windows major version" {
+    # Win11's YTMG3 key is not accepted by the Win10 consumer ISO. Setup then
+    # presents "No images are available" and waits forever for input (hosted
+    # run 30427966283). Keep the edition axis grounded in the ISO it selects.
+    awk -F'\t' '
+        !/^#/ && $4=="11" && $5=="home" { found=1; if ($6!="YTMG3-N6DKC-DKB77-7M9GH-8HVX7") exit 1 }
+        END { if (!found) exit 1 }
+    ' "$MATRIX"
+    awk -F'\t' '
+        !/^#/ && $4=="10" && $5=="home" { found=1; if ($6!="TX9XD-98N7V-6WMQ6-BX7FG-H8Q99") exit 1 }
+        END { if (!found) exit 1 }
+    ' "$MATRIX"
+}
+
 @test "matrix covers the BitLocker axis including Home device-encryption" {
     grep -v '^#' "$MATRIX" | grep 'bitlocker=on' | grep -q $'\thome\t'
     grep -v '^#' "$MATRIX" | grep 'bitlocker=on' | grep -q $'\tpro\t'
