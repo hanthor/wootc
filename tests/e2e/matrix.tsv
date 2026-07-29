@@ -6,8 +6,8 @@
 #                11l/10l (LTSC). Selects the ISO.
 #   win_key      Generic product key that picks the edition from the ISO.
 #                Pro:  W269N-WFGWX-YVC9B-4J6C9-T83GX
-#                Win11 Home: YTMG3-N6DKC-DKB77-7M9GH-8HVX7
-#                Win10 Home: TX9XD-98N7V-6WMQ6-BX7FG-H8Q99
+#                Home entries are temporarily disabled: Dockur's Win10 media
+#                does not contain a matching Home WIM image for unattended setup.
 #                Ent:  NPPR9-FWDCX-D2C8J-H872K-2YT43   (also used by eval/LTSC)
 #   opts         Optional 7th column, comma-safe knobs:
 #                bitlocker=on  — WOOTC_E2E_BITLOCKER=on (SPEC 3.5 FDE axis)
@@ -45,16 +45,16 @@ full	fedora-niri-win11pro	ghcr.io/tuna-os/bonito:niri	11	pro	W269N-WFGWX-YVC9B-4
 full	arch-gnome-win11pro	ghcr.io/tuna-os/marlin:gnome	11	pro	W269N-WFGWX-YVC9B-4J6C9-T83GX
 full	debian-gnome-win11pro	ghcr.io/tuna-os/flounder:gnome	11	pro	W269N-WFGWX-YVC9B-4J6C9-T83GX
 # ── Windows axis (baseline EL10 GNOME image) — editions & versions ──
-full	el10-gnome-win11home	ghcr.io/tuna-os/yellowfin:gnome	11	home	YTMG3-N6DKC-DKB77-7M9GH-8HVX7
+# disabled(home-media): el10-gnome-win11home	ghcr.io/tuna-os/yellowfin:gnome	11	home	YTMG3-N6DKC-DKB77-7M9GH-8HVX7
 full	el10-gnome-win11ent	ghcr.io/tuna-os/yellowfin:gnome	11e	enterprise	NPPR9-FWDCX-D2C8J-H872K-2YT43
 full	el10-gnome-win11ltsc	ghcr.io/tuna-os/yellowfin:gnome	11l	iot	NPPR9-FWDCX-D2C8J-H872K-2YT43
-full	el10-gnome-win10home	ghcr.io/tuna-os/yellowfin:gnome	10	home	TX9XD-98N7V-6WMQ6-BX7FG-H8Q99
+# disabled(home-media): el10-gnome-win10home	ghcr.io/tuna-os/yellowfin:gnome	10	home	TX9XD-98N7V-6WMQ6-BX7FG-H8Q99
 full	el10-gnome-win10ent	ghcr.io/tuna-os/yellowfin:gnome	10e	enterprise	NPPR9-FWDCX-D2C8J-H872K-2YT43
 full	el10-gnome-win10ltsc	ghcr.io/tuna-os/yellowfin:gnome	10l	ltsc	NPPR9-FWDCX-D2C8J-H872K-2YT43
 # -- BitLocker / FDE axis (SPEC 3.5) --
 smoke	el10-gnome-win11pro-bitlocker	ghcr.io/tuna-os/yellowfin:gnome	11	pro	W269N-WFGWX-YVC9B-4J6C9-T83GX	bitlocker=on
 full	fedora-gnome-win11pro-bitlocker	ghcr.io/tuna-os/bonito:gnome	11	pro	W269N-WFGWX-YVC9B-4J6C9-T83GX	bitlocker=on
-# Home + Device Encryption: the nervous-user default on new consumer machines —
-# BitLocker's Home-edition flavor, auto-enabled, no recovery-key literacy.
-full	el10-gnome-win11home-bitlocker	ghcr.io/tuna-os/yellowfin:gnome	11	home	YTMG3-N6DKC-DKB77-7M9GH-8HVX7	bitlocker=on
-full	el10-gnome-win10home-bitlocker	ghcr.io/tuna-os/yellowfin:gnome	10	home	TX9XD-98N7V-6WMQ6-BX7FG-H8Q99	bitlocker=on
+# Disabled pending a Home-capable unattended ISO fixture. The BitLocker axis
+# remains covered by the Windows 11 Pro BitLocker smoke cell.
+# disabled(home-media): el10-gnome-win11home-bitlocker	ghcr.io/tuna-os/yellowfin:gnome	11	home	YTMG3-N6DKC-DKB77-7M9GH-8HVX7	bitlocker=on
+# disabled(home-media): el10-gnome-win10home-bitlocker	ghcr.io/tuna-os/yellowfin:gnome	10	home	TX9XD-98N7V-6WMQ6-BX7FG-H8Q99	bitlocker=on
