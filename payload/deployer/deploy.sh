@@ -1985,24 +1985,27 @@ QGAEOF
 Description=Load wootc essential kernel modules
 DefaultDependencies=no
 Before=wootc-attach.service systemd-udev-trigger.service
-ConditionPathExists=/lib/modules
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/bin/sh -c '
-_kver=$(uname -r)
-for _mod in virtio_pci virtio_scsi sd_mod; do
-    _path=$(find "/lib/modules/$_kver" -name "${_mod}.ko" -print -quit 2>/dev/null)
-    if [[ -n "$_path" && -f "$_path" ]]; then
-        insmod "$_path" 2>/dev/null || modprobe "$_mod" 2>/dev/null || true
-    fi
-done
-'
+ExecStart=/usr/lib/wootc/load-modules.sh
 
 [Install]
 WantedBy=sysinit.target
 SMOD
+                    mkdir -p "$OVL/usr/lib/wootc"
+                    cat > "$OVL/usr/lib/wootc/load-modules.sh" <<'SMODSH'
+#!/bin/sh
+_kver=$(uname -r)
+for _mod in virtio_pci virtio_scsi sd_mod; do
+    _path=$(find "/lib/modules/$_kver" -name "${_mod}.ko" -print -quit 2>/dev/null)
+    if [ -n "$_path" ] && [ -f "$_path" ]; then
+        insmod "$_path" 2>/dev/null || modprobe "$_mod" 2>/dev/null || true
+    fi
+done
+SMODSH
+                    chmod +x "$OVL/usr/lib/wootc/load-modules.sh"
                     ln -sf ../wootc-load-modules.service \
                         "$OVL/usr/lib/systemd/system/sysinit.target.wants/wootc-load-modules.service"
                     log "  Staged deployer kernel modules ($_dkver) for Phase 2"
