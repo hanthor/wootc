@@ -1705,6 +1705,22 @@ block-rpcs=
 QGAEOF
     cp "$DEPLOY_ROOT/etc/qemu/qemu-ga.conf" "$DEPLOY_ROOT/etc/qemu-ga.conf" 2>/dev/null || true
 
+    # If the target image lacks qemu-guest-agent (common in composefs images),
+    # install the deployer's own binary + service so the E2E harness can reach
+    # Phase 2.  The dnf-based injection path fails on non-RPM images.
+    if ! chroot "$DEPLOY_ROOT" command -v qemu-ga >/dev/null 2>&1 && command -v qemu-ga >/dev/null 2>&1; then
+        install -D -m0755 "$(command -v qemu-ga)" "$DEPLOY_ROOT/usr/bin/qemu-ga"
+        for _svc in qemu-guest-agent.service qemu-ga@.service; do
+            for _d in /usr/lib/systemd/system /lib/systemd/system; do
+                [[ -f "$_d/$_svc" ]] && { install -D -m0644 "$_d/$_svc" "$DEPLOY_ROOT/usr/lib/systemd/system/$_svc"; break; }
+            done
+        done
+        mkdir -p "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants"
+        ln -sf /usr/lib/systemd/system/qemu-guest-agent.service \
+            "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/qemu-guest-agent.service"
+        log "  [PASS] qemu-guest-agent installed from deployer into target"
+    fi
+
     # Set SELinux to permissive mode so Phase 3 QGA & User Data Bridge are not blocked by virt_qemu_ga_t
     if [[ -f "$DEPLOY_ROOT/etc/selinux/config" ]]; then
         sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' "$DEPLOY_ROOT/etc/selinux/config" 2>/dev/null || true
