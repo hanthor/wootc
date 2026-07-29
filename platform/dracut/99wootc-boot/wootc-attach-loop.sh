@@ -64,6 +64,19 @@ fi
 # before wootc-attach.service runs. Calling modprobe here triggers Secure Boot
 # lockdown rejection (wrong signing key) and blocks the correctly-signed modules
 # from loading.
+#
+# The composefs Phase-2 path loads the deployer kernel whose modules were
+# staged in the early-cpio overlay.  Load them with insmod (full path — no
+# modprobe needed) so block devices appear before the NTFS wait.
+_kver=$(uname -r)
+if [[ -d "/lib/modules/$_kver" ]] && [[ ! -f "/lib/modules/$_kver/modules.alias" ]]; then
+    # This is the deployer module tree (the UKI initrd modules have a
+    # different kernel version and won't match uname -r).
+    for _mod in virtio_pci virtio_scsi ahci sd_mod; do
+        _kopath=$(find "/lib/modules/$_kver" -name "${_mod}.ko" -print -quit 2>/dev/null)
+        [[ -n "$_kopath" && -f "$_kopath" ]] && insmod "$_kopath" 2>/dev/null || true
+    done
+fi
 
 HOST_DEV="/dev/disk/by-uuid/${HOST_UUID,,}"
 # WAIT for the host NTFS to appear — do NOT assume a retry. This runs as a
