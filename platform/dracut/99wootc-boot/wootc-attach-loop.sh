@@ -95,9 +95,9 @@ if [ ! -b "$HOST_DEV" ]; then
     # spin burned the whole "60s" budget in ~2 real seconds — before the
     # virtio-scsi bus had even been scanned — and Phase 2 fell to the
     # emergency shell (run 20260722, kmsg entered 1.07s / gave up 3.37s).
-    _started=$(cut -d. -f1 /proc/uptime)
+    _started=$(cut -d. -f1 /proc/uptime 2>/dev/null || { read -r _u _ < /proc/uptime; echo "${_u%.*}"; })
     _deadline=$((_started + 60))
-    while [ ! -b "$HOST_DEV" ] && [ "$(cut -d. -f1 /proc/uptime)" -lt "$_deadline" ]; do
+    while [ ! -b "$HOST_DEV" ] && [ "$(cut -d. -f1 /proc/uptime 2>/dev/null || { read -r _u _ < /proc/uptime; echo "${_u%.*}"; })" -lt "$_deadline" ]; do
         udevadm trigger --action=add --type=devices >/dev/null 2>&1 || true
         udevadm settle --timeout=3 >/dev/null 2>&1 || true
         # Unconditional: without it a fast/failing settle busy-spins the loop.
@@ -115,7 +115,7 @@ if [ ! -b "$HOST_DEV" ]; then
             shopt -u nullglob
         fi
     done
-    _waited=$(( $(cut -d. -f1 /proc/uptime) - _started ))
+    _waited=$(( $(cut -d. -f1 /proc/uptime 2>/dev/null || { read -r _u _ < /proc/uptime; echo "${_u%.*}"; }) - _started ))
 fi
 if [ ! -b "$HOST_DEV" ]; then
     # `set --` + "$*", NOT ls: under nullglob with zero matches, `ls` gets no
