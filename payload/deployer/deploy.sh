@@ -1997,13 +1997,18 @@ SMOD
                     mkdir -p "$OVL/usr/lib/wootc"
                     cat > "$OVL/usr/lib/wootc/load-modules.sh" <<'SMODSH'
 #!/bin/sh
+echo "wootc: load-modules starting (kver=$(uname -r))" > /dev/console
 _kver=$(uname -r)
 for _mod in virtio_pci virtio_scsi ahci sd_mod; do
     _path=$(find "/lib/modules/$_kver" -name "${_mod}.ko" -print -quit 2>/dev/null)
     if [ -n "$_path" ] && [ -f "$_path" ]; then
+        echo "wootc: insmod $_mod ($_path)" > /dev/console
         insmod "$_path" 2>/dev/null || modprobe "$_mod" 2>/dev/null || true
+    else
+        echo "wootc: module $_mod NOT FOUND in /lib/modules/$_kver" > /dev/console
     fi
 done
+echo "wootc: load-modules done" > /dev/console
 SMODSH
                     chmod +x "$OVL/usr/lib/wootc/load-modules.sh"
                     ln -sf ../wootc-load-modules.service \
