@@ -1901,9 +1901,11 @@ start `"`" C:\wootc\wootc.exe
 Stop-Process -Name wootc -Force -ErrorAction SilentlyContinue
 schtasks /Delete /TN wootc-gui-e2e /F 2>$null
 $start = (Get-Date).AddMinutes(1).ToString('\''HH:mm'\'')
-schtasks /Create /TN wootc-gui-e2e /SC ONCE /ST $start /TR "C:\wootc\launch-gui.cmd" /RU wootc /IT /RL HIGHEST /F | Out-Null
-schtasks /Run /TN wootc-gui-e2e | Out-Null
-Write-Output "task-scheduled"' >/dev/null
+$mk = schtasks /Create /TN wootc-gui-e2e /SC ONCE /ST $start /TR "C:\wootc\launch-gui.cmd" /RU wootc /IT /RL HIGHEST /F 2>&1
+Write-Output ("schtasks /Create rc=" + $LASTEXITCODE + " :: " + ($mk -join " "))
+$rn = schtasks /Run /TN wootc-gui-e2e 2>&1
+Write-Output ("schtasks /Run rc=" + $LASTEXITCODE + " :: " + ($rn -join " "))
+Write-Output "task-scheduled"' 2>&1 | sed 's/^/    stage: /' || warn "    (GUI staging call failed)"
     # The QGA powershell completing only proves the task was scheduled, not
     # that wootc.exe actually started.  Poll for the real readiness signal:
     # e2e-drive-state.json (written by the drive loop every 2 s once the app
