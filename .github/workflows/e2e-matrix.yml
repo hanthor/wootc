@@ -17,6 +17,10 @@ on:
         description: 'only run cases whose name contains this substring'
         type: string
         default: ''
+      gui_install:
+        description: 'drive Phase 1 through the real wootc.exe GUI in every cell'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -90,3 +94,9 @@ jobs:
       bitlocker: ${{ matrix.bitlocker }}
       case_name: ${{ matrix.name }}
       phase3: ${{ matrix.phase3 }}
+      # GUI mode has only ever been exercised on one cell (bluefin:lts via
+      # e2e-gui.yml). Driving Phase 1 through the real wootc.exe across the whole
+      # matrix is what proves the INSTALLER — not just the harness — works on
+      # every image and Windows edition. Off by default: the breadth matrix
+      # stays script-driven unless a run explicitly asks for GUI.
+      gui_install: ${{ inputs.gui_install }}
