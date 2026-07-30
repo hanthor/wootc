@@ -305,3 +305,74 @@ INNER
 podman run --rm --privileged \
     -v "$REPO_ROOT/payload/migration:/scripts:ro,Z" \
     "$IMG" bash -c "$INNER73"
+
+# ── #64: OneDrive known-folder redirection ───────────────────────────────────
+# The E2E seeds its canary straight into C:\Users\<u>\Documents on an image
+# with no OneDrive account, so the redirected path is NEVER exercised there:
+# every green we have proves the bridge works only where redirection does not
+# apply. This is the one place that case can be tested at all.
+INNER64=$(cat <<'INNER'
+set -Eeuo pipefail
+PASS=0; FAIL=0
+ok()  { echo "[PASS] $*"; PASS=$((PASS+1)); }
+bad() { echo "[FAIL] $*"; FAIL=$((FAIL+1)); }
+check(){ if eval "$1"; then ok "$2"; else bad "$2"; fi; }
+
+dnf install -y -q util-linux python3 >/dev/null 2>&1 || true
+cp /scripts/wootc-* /usr/local/bin/ && chmod +x /usr/local/bin/wootc-*
+
+useradd -m -u 1000 alice
+# OneDrive Backup redirects Documents; the literal folder is left behind as an
+# empty stub, which is exactly what makes the old behaviour so damaging.
+mkdir -p /run/wootc/host/Users/alice/Documents
+mkdir -p /run/wootc/host/Users/alice/OneDrive/Documents
+mkdir -p /run/wootc/host/Users/alice/Pictures
+echo "the real tax return" > /run/wootc/host/Users/alice/OneDrive/Documents/taxes.txt
+echo "holiday"             > /run/wootc/host/Users/alice/Pictures/holiday.jpg
+mkdir -p /run/wootc/host/wootc
+cat > /run/wootc/host/wootc/known-folders.json <<'JSON'
+{
+  "user": "alice",
+  "folders": {
+    "Documents": "C:\\Users\\alice\\OneDrive\\Documents",
+    "Pictures": "C:\\Users\\alice\\Pictures"
+  },
+  "redirected": ["Documents"]
+}
+JSON
+mount --bind /run/wootc/host /run/wootc/host
+
+out=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
+echo "$out" | sed 's/^/    /'
+
+check '[ "$(cat /home/alice/Documents/taxes.txt 2>/dev/null)" = "the real tax return" ]' \
+    "#64: a OneDrive-redirected Documents bridges the REAL files, not the empty stub"
+check '[ -f /home/alice/Pictures/holiday.jpg ]' \
+    "#64: a non-redirected folder still bridges from the literal profile path"
+check 'echo "$out" | grep -q "redirected: Documents"' \
+    "#64: the redirect is stated in the log, not applied silently"
+
+# A manifest belonging to a DIFFERENT user must never redirect this one, or
+# account A's OneDrive lands in account B's home.
+umount /home/alice/Documents 2>/dev/null || true
+umount /home/alice/Pictures 2>/dev/null || true
+python3 - <<'PYFIX'
+import json
+p = "/run/wootc/host/wootc/known-folders.json"
+d = json.load(open(p)); d["user"] = "someone-else"
+json.dump(d, open(p, "w"))
+PYFIX
+out2=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
+check 'echo "$out2" | grep -q "summary:"' \
+    "#64: the cross-user run actually executed"
+check '[ ! -f /home/alice/Documents/taxes.txt ]' \
+    "#64: a manifest for another user does not redirect this user's folders"
+
+echo "RESULT: $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ]
+INNER
+)
+
+podman run --rm --privileged \
+    -v "$REPO_ROOT/payload/migration:/scripts:ro,Z" \
+    "$IMG" bash -c "$INNER64"

@@ -582,6 +582,11 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 		{"Checking system", 2, func() error { return checkSystem() }},
 		{"Disabling Fast Startup", 5, func() error { return disableFastStartup() }},
 		{"Creating directories", 8, func() error { return createDirectories() }},
+		// Resolve where the user's files ACTUALLY live while Windows is still
+		// running and can read its own registry (#64). Best-effort: on a machine
+		// with no redirection nothing is lost if this fails, and the Phase-2
+		// bridge falls back to the literal profile layout.
+		{"Finding your files", 9, func() error { recordKnownFolders(); return nil }},
 		{"Creating root.disk", 15, func() error { return createRootDisk(cfg.DiskSizeGB) }},
 		{"Downloading deployer", 50, func() error {
 			return downloadDeployer(ctx, func(p float64) {

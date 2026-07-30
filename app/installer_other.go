@@ -35,6 +35,7 @@ func checkSystem() error                         { return nil }
 func validatePlatformConfig(InstallConfig) error { return nil }
 func defragDrive() error                         { return fmt.Errorf("defragmentation is only available on Windows") }
 func disableFastStartup() error                  { return nil }
+func recordKnownFolders()                        {}
 func createDirectories() error                   { return os.MkdirAll("/tmp/wootc/install", 0o755) }
 func createRootDisk(sizeGB int) error {
 	// Create a small placeholder file for dev testing

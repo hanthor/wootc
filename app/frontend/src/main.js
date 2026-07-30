@@ -38,6 +38,7 @@ const INSTALL_STEPS = [
   'Checking system',
   'Disabling Fast Startup',
   'Creating directories',
+  'Finding your files',
   'Creating root.vhdx',
   'Downloading deployer',
   'Writing GRUB config',
