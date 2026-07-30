@@ -42,6 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with: {submodules: recursive}
+      - uses: ./.github/actions/podman-runtime
       - name: Run containerized bridge suite
         run: bash tests/migration/test-bridge.sh
 

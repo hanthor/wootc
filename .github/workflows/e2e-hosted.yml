@@ -81,6 +81,10 @@ jobs:
           ln -s /mnt/wootc-iso     tests/e2e/iso-cache
           df -h /mnt
 
+      # Ahead of every podman call: the runner's podman is newer than its crun,
+      # which makes container CREATE fail (see the action for the full story).
+      - uses: ./.github/actions/podman-runtime
+
       # Best-effort: pull a pre-installed Windows base image (primed by
       # e2e-snapshot.yml) so run-e2e.sh restores it instead of reinstalling
       # Windows. A miss (no such tag / stale key) is fine — run-e2e.sh falls

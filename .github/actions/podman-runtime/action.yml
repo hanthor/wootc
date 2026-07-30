@@ -1,0 +1,77 @@
+name: Repair podman's OCI runtime
+description: >
+  Make rootless podman usable on GitHub-hosted runners by installing a crun new
+  enough for the runner's podman. No-op on self-hosted runners.
+
+# Why this exists
+# ---------------
+# Runner image ubuntu24/20260726.254 bumped podman 4.9.3 -> 5.8.4 but left
+# Ubuntu 24.04's crun at 1.14.x. Podman 5 writes a newer OCI spec version than
+# crun 1.14 recognises, so EVERY container create died with:
+#
+#   Error: OCI runtime error: crun: unknown version specified
+#
+# In `podman build` that surfaces even less usefully — the create error is
+# swallowed and reported as the Containerfile's RUN step failing, which reads
+# like a broken package list rather than a broken runtime.
+#
+# Our self-hosted runners (himachal, dilli) have a matched podman/crun pair, so
+# this is deliberately hosted-only: it must never rewrite /usr/bin on a box we
+# do not own.
+
+inputs:
+  crun-version:
+    description: crun release to install (containers/crun tag)
+    required: false
+    default: '1.28'
+
+runs:
+  using: composite
+  steps:
+    - name: Install a podman-compatible crun (hosted runners only)
+      if: runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        echo "::group::Runtime before"
+        podman version || true
+        crun --version || true
+        echo "::endgroup::"
+
+        ver='${{ inputs.crun-version }}'
+        url="https://github.com/containers/crun/releases/download/${ver}/crun-${ver}-linux-amd64"
+        tmp=$(mktemp -d)
+        curl -fsSL --retry 3 --retry-delay 2 -o "$tmp/crun" "$url"
+        chmod +x "$tmp/crun"
+
+        # Sanity-check the download before it replaces a working binary: a
+        # captive-portal HTML page or a truncated asset would otherwise leave
+        # the runner with no usable runtime at all.
+        "$tmp/crun" --version
+
+        # Overwrite /usr/bin/crun rather than dropping into /usr/local/bin:
+        # podman's default runtime search order puts /usr/bin/crun FIRST, so a
+        # /usr/local/bin copy would be found by $PATH but ignored by podman.
+        sudo install -m 0755 "$tmp/crun" /usr/bin/crun
+        rm -rf "$tmp"
+
+        echo "::group::Runtime after"
+        podman version
+        crun --version
+        echo "::endgroup::"
+
+    - name: Prove a container can actually be created
+      if: runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # The version strings above do not prove podman and crun agree on the
+        # spec — only a real create does. Failing here is far cheaper than
+        # failing 6 minutes into an E2E with the error buried in a build log.
+        if ! out=$(podman run --rm quay.io/podman/hello 2>&1); then
+          echo "::error::rootless podman still cannot create containers after the crun repair"
+          printf '%s\n' "$out" >&2
+          exit 1
+        fi
+        echo "rootless podman container create/run: OK"
