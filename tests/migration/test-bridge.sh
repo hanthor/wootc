@@ -267,6 +267,10 @@ useradd -m -u 1000 wootc
 mkdir -p /run/wootc/host/Users/Docker/{Documents,Pictures}
 mkdir -p /run/wootc/host/Users/Public/Documents      # system profile, ignored
 echo "tax-return" > /run/wootc/host/Users/Docker/Documents/taxes.txt
+# The script refuses to run unless /run/wootc/host is a real mountpoint
+# (wootc-host-bind.service does this for real). Without it the guard exits
+# first and every assertion below passes or fails for the wrong reason.
+mount --bind /run/wootc/host /run/wootc/host
 
 out=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
 echo "$out" | sed 's/^/    /'
@@ -286,6 +290,10 @@ mkdir -p /run/wootc/host/Users/Someone/Documents
 out2=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
 check '[ ! -f /home/wootc/Documents/taxes.txt ]' \
     "#73: two candidate profiles and no name match bridges nothing rather than guessing"
+# Must prove the script RAN — "nothing was bridged" is also what a script that
+# aborted at its first guard produces, and that is a false pass.
+check 'echo "$out2" | grep -q "summary:"' \
+    "#73: the ambiguous run actually executed (not an early guard exit)"
 check 'echo "$out2" | grep -q "cannot decide\|summary: 0"' \
     "#73: the ambiguous case says so instead of failing silently"
 
