@@ -34,9 +34,17 @@ runs:
       run: |
         set -euo pipefail
 
+        # Report the runtime podman ACTUALLY resolves, by absolute path. A bare
+        # `crun --version` lies here: hosted runners carry more than one crun
+        # and $PATH prefers /usr/local/bin while podman prefers /usr/bin, so the
+        # version you print is not the version that runs your containers.
         echo "::group::Runtime before"
         podman version || true
-        crun --version || true
+        podman info --format '{{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Path}} {{.Host.OCIRuntime.Version}}' || true
+        command -v -a crun || true
+        for c in /usr/bin/crun /usr/local/bin/crun /usr/sbin/crun; do
+          [ -x "$c" ] && printf '%s -> %s\n' "$c" "$("$c" --version | head -1)"
+        done
         echo "::endgroup::"
 
         ver='${{ inputs.crun-version }}'
@@ -57,8 +65,8 @@ runs:
         rm -rf "$tmp"
 
         echo "::group::Runtime after"
-        podman version
-        crun --version
+        podman info --format '{{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Path}} {{.Host.OCIRuntime.Version}}'
+        /usr/bin/crun --version | head -1
         echo "::endgroup::"
 
     - name: Prove a container can actually be created
