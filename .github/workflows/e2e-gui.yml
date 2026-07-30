@@ -47,7 +47,10 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          name: e2e-nightly-${{ github.run_id }}
+          # Must track e2e-hosted.yml's per-case upload name. This job passes no
+          # case_name, so the reusable workflow uploads "e2e-run-<run_id>";
+          # asking for the stale "e2e-nightly-" name failed a GREEN run's publish.
+          name: e2e-run-${{ github.run_id }}
           path: /tmp/evidence
 
       - name: Publish the GUI-driven timelapse (green runs only)
@@ -57,8 +60,13 @@ jobs:
           # PASSED. No marker → nothing to publish (fail-safe, not fail-loud).
           vd=$(find /tmp/evidence -type f -name .passed -printf '%h\n' 2>/dev/null | head -1)
           if [ -z "$vd" ] || [ ! -f "$vd/preview.webp" ]; then
-            echo "No green GUI-driven run with a walkthrough to publish — leaving the current timelapse untouched."
-            exit 0
+            # We only get here when the e2e job SUCCEEDED, i.e. run-e2e.sh printed
+            # ALL TESTS PASSED and therefore stamped .passed. A missing marker or
+            # preview is a broken evidence path, not a benign "nothing to do" —
+            # exiting 0 here would report green while the hero silently went stale.
+            echo "::error::e2e passed but no .passed + preview.webp found under /tmp/evidence — evidence path is broken." >&2
+            find /tmp/evidence -maxdepth 3 -type d >&2 || true
+            exit 1
           fi
           echo "Publishing GUI-driven timelapse from $vd"
           mkdir -p pages/e2e/latest
