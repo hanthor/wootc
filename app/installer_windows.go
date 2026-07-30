@@ -933,7 +933,11 @@ Write-Output $esp.DriveLetter
 `
 	out, err := runPowerShellOutput(script)
 	if err != nil {
-		return "", fmt.Errorf("ESP discovery: %w", err)
+		// runCmd returns CombinedOutput, so the PowerShell error text is right
+		// here — dropping it left the GUI reporting only "ESP discovery: exit
+		// status 1" (nightly run 30530497117), which names nothing. Include it,
+		// as the resize path a few lines up already does.
+		return "", fmt.Errorf("ESP discovery: %w (powershell said: %s)", err, strings.TrimSpace(out))
 	}
 	// A partition with no letter reports DriveLetter as NUL, not "" — trim it or
 	// the length check below sees a 1-character "letter" that is really nothing.
