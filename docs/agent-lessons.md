@@ -473,3 +473,42 @@ Two habits fall out of this:
 - `info "Could not read X (size='0'), continuing"` is a bug report wearing a
   progress message. A read that returns nothing where something must exist is
   never a continue-quietly condition.
+
+## 26. `podman build` blames your Containerfile for the runtime's crash
+
+A GUI E2E died at 6 minutes with what read as a broken package list:
+
+```
+Error: building at STEP "RUN dnf install -y  systemd systemd-udev ...": while running runtime: exit status 1
+[FAIL] Deployer build failed
+```
+
+Nothing was wrong with the packages. Two lines up, unhighlighted, was the real
+event: `error running container: from /usr/bin/crun creating container` /
+`did not get container create message from subprocess: EOF`. The container was
+never created, so `dnf` never ran — but the error names the RUN step, so the
+instinct is to go read the package list.
+
+The cause was a hosted runner-image bump: podman 4.9.3 → 5.8.4 with
+`/usr/bin/crun` left at 1.14.1. Podman 5 emits an OCI spec version crun 1.14
+rejects (`crun: unknown version specified`). Note the *good* error text exists —
+it appears verbatim in `podman run`, and it was `podman build` that buried it.
+
+Three habits:
+- **Check the blast radius before diagnosing.** The same push turned the
+  container test suite red, and *that* log printed the unswallowed
+  `crun: unknown version specified`. A failure appearing in two unrelated
+  workflows is environmental; one that appears in only one is yours. This is
+  what turned a wrong guess (AppArmor userns restrictions — the other cause of
+  `EOF` at create) into the actual answer in one step.
+- **`crun --version` does not tell you what podman runs.** Hosted runners carry
+  more than one crun; `$PATH` prefers `/usr/local/bin` while podman prefers
+  `/usr/bin`. A bare `crun --version` reported 1.28 before *and* after
+  installing 1.28, which nearly credited the fix to an unrelated image patch.
+  Ask the engine: `podman info --format '{{.Host.OCIRuntime.Path}} {{.Host.OCIRuntime.Version}}'`.
+  For the same reason `.github/actions/podman-runtime` installs over
+  `/usr/bin/crun` — a `/usr/local/bin` copy is on `$PATH` but invisible to podman.
+- **The hosted pool is mixed.** Jobs in the same run landed on podman 4.9.3 and
+  5.8.4, so an environment repair must be unconditional and then *verified by a
+  real `podman run`*, not gated on a version comparison. Version strings are a
+  proxy; a container that starts is the fact.
