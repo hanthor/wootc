@@ -1930,6 +1930,13 @@ Write-Output "task-scheduled"' 2>&1 | sed 's/^/    stage: /' || warn "    (GUI s
         qga_powershell '
 $p = Get-Process wootc -ErrorAction SilentlyContinue
 Write-Output ("wootc.exe running: " + [bool]$p)
+# schtasks /Run fails with "The system cannot find the file specified" for TWO
+# very different reasons: the task program is missing, or /IT has no interactive
+# session to run in. el10-gnome-win11ent hit this and the message alone cannot
+# tell them apart — so check both. (Enterprise/LTSC media may not autologon.)
+Write-Output ("launch-gui.cmd present: " + (Test-Path C:\wootc\launch-gui.cmd))
+Write-Output ("wootc.exe present: " + (Test-Path C:\wootc\wootc.exe))
+Write-Output ("interactive sessions: " + ((query user 2>&1) -join " | "))
 $q = (schtasks /Query /TN wootc-gui-e2e /FO LIST /V 2>&1 | Select-String "Result|Status") -join "; "
 Write-Output ("task: " + $q)
 $wv = @(
