@@ -99,4 +99,10 @@ jobs:
       # matrix is what proves the INSTALLER — not just the harness — works on
       # every image and Windows edition. Off by default: the breadth matrix
       # stays script-driven unless a run explicitly asks for GUI.
-      gui_install: ${{ inputs.gui_install }}
+      #
+      # NEVER on the BitLocker axis: the alpha GUI deliberately disables Install
+      # when the disk is encrypted ("BitLocker encryption isn't supported in the
+      # alpha yet"), so a GUI-driven BitLocker cell asks the product to do
+      # something it refuses by design and can only ever fail. The script path
+      # still covers that axis. Revisit when the GUI supports BitLocker.
+      gui_install: ${{ inputs.gui_install && matrix.bitlocker != 'on' }}

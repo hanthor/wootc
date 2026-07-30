@@ -1870,6 +1870,25 @@ Write-Output "task-scheduled"' >/dev/null
     done
     if ! qga_read 'C:\wootc\e2e-drive-state.json' >/dev/null 2>&1; then
         fail "wootc.exe did not start within 60 s — e2e-drive-state.json never appeared"
+        # "It didn't start" is not a diagnosis: the task may never have run, the
+        # process may have started and died, or the app may be unable to render
+        # at all. wootc is a wails app, so it CANNOT start without the WebView2
+        # runtime — which Windows 11 ships and older Windows 10 media may not.
+        # el10-gnome-win10pro died here in the first GUI matrix (run
+        # 30557321436) with nothing but this line to go on. Ask the guest.
+        info "  launch post-mortem (process / task result / WebView2 runtime):"
+        qga_powershell '
+$p = Get-Process wootc -ErrorAction SilentlyContinue
+Write-Output ("wootc.exe running: " + [bool]$p)
+$q = (schtasks /Query /TN wootc-gui-e2e /FO LIST /V 2>&1 | Select-String "Result|Status") -join "; "
+Write-Output ("task: " + $q)
+$wv = @(
+  "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+  "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+) | Where-Object { Test-Path $_ } | ForEach-Object { (Get-ItemProperty $_).pv } | Select-Object -First 1
+Write-Output ("WebView2 runtime: " + $(if ($wv) { $wv } else { "NOT INSTALLED — a wails app cannot render without it" }))
+Write-Output ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption)
+' 2>&1 | sed 's/^/    /' || warn "    (post-mortem query failed)"
         capture_vm_diagnostics
         exit 1
     fi
@@ -1893,7 +1912,7 @@ Write-Output "task-scheduled"' >/dev/null
     # So: keep the last state we actually saw, log every screen transition, and
     # when reads come back empty, probe QGA liveness and say which one broke.
     local drive_deadline drive_state="" driven=false
-    local last_good="" last_screen="" empty_reads=0 total_empty=0
+    local last_good="" last_screen="" empty_reads=0 total_empty=0 blocked_reads=0
     drive_deadline=$(deadline_in 1800)
     while ! past_deadline "$drive_deadline"; do
         drive_state=$(qga_read 'C:\wootc\e2e-drive-state.json' 2>/dev/null || true)
@@ -1934,6 +1953,27 @@ Write-Output "task-scheduled"' >/dev/null
         if [ "$driven" = false ] && printf '%s' "$drive_state" | grep -q '"installDriven":true'; then
             driven=true
             pass "GUI form filled and Install clicked through the live bridge"
+        fi
+
+        # A DISABLED Install button is a decision, not a hang. The BitLocker
+        # cell of the first GUI matrix (run 30557321436) sat here for the full
+        # 30 minutes while the app had already said, from the first second, that
+        # it refuses to install: "BitLocker encryption isn't supported in the
+        # alpha yet". Waiting out a deadline to rediscover a refusal the app
+        # states up front is pure waste — surface the app's own words and stop.
+        if [ "$driven" = false ] && printf '%s' "$drive_state" | grep -q '"installBtnDisabled":true'; then
+            blocked_reads=$((blocked_reads + 1))
+            if [ "$blocked_reads" -ge 6 ]; then
+                local hint
+                hint=$(printf '%s' "$drive_state" | sed -n 's/.*"hint":"\([^"]*\)".*/\1/p' | head -1)
+                fail "the GUI REFUSES this configuration — Install is disabled, so no install can be driven"
+                fail "  the app says: ${hint:-<no hint given>}"
+                fail "  this is the product declining, not a harness failure: fix the case or the product, not the timeout"
+                capture_vm_diagnostics
+                exit 1
+            fi
+        else
+            blocked_reads=0
         fi
         if printf '%s' "$drive_state" | grep -q '"screen":"done"'; then
             pass "GUI-driven install completed — real pipeline reached the done screen"
