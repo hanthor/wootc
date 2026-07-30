@@ -1905,11 +1905,15 @@ Write-Output "task-scheduled"' >/dev/null
             # Ask whether the guest agent is answering at all — that single
             # answer is the difference between a wedged installer and a dead
             # channel, and it is free.
+            # qga_probe is the right instrument here: a 5-second agent `ping`
+            # that tests the CHANNEL and nothing else. A PowerShell round-trip
+            # would conflate "agent is gone" with "exec failed for some guest-side
+            # reason" — the same proxy mistake this diagnostic exists to avoid.
             if [ "$empty_reads" -eq 3 ]; then
-                if qga_powershell 'Write-Output ok' >/dev/null 2>&1; then
-                    warn "  drive state unreadable but QGA is alive — the app may have stopped writing e2e-drive-state.json"
+                if qga_probe; then
+                    warn "  drive state unreadable but QGA answers ping — the app stopped writing e2e-drive-state.json"
                 else
-                    warn "  drive state unreadable AND QGA is not answering — lost the channel to the guest"
+                    warn "  drive state unreadable AND QGA does not answer ping — lost the channel to the guest"
                 fi
             fi
             sleep 10
@@ -1948,10 +1952,10 @@ Write-Output "task-scheduled"' >/dev/null
         fail "  last screen reached: ${last_screen:-<none>} (install clicked: $driven)"
         fail "  last readable state: ${last_good:-<never read one>}"
         fail "  unreadable reads: $total_empty of ~180"
-        if qga_powershell 'Write-Output ok' >/dev/null 2>&1; then
-            fail "  QGA is answering NOW — so this is the installer, not the channel"
+        if qga_probe; then
+            fail "  QGA answers ping NOW — so this is the installer, not the channel"
         else
-            fail "  QGA is NOT answering — the verdict above may be a lost channel, not a stalled install"
+            fail "  QGA does NOT answer ping — the verdict above may be a lost channel, not a stalled install"
         fi
         capture_vm_diagnostics
         exit 1
