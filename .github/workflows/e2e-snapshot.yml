@@ -95,6 +95,8 @@ jobs:
           ln -s /mnt/wootc-storage tests/e2e/storage
           ln -s /mnt/wootc-iso     tests/e2e/iso-cache
 
+      - uses: ./.github/actions/podman-runtime
+
       - name: Prime the pristine Windows base image
         env:
           WOOTC_E2E_RAM_SIZE: 6G

@@ -73,6 +73,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: ./.github/actions/podman-runtime
       - name: Render the Linux GUIs headlessly
         run: bash tests/gui/capture-linux-guis.sh
       - name: Fail if any screenshot came out blank
