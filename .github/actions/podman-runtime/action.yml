@@ -6,14 +6,19 @@ description: >
 # Why this exists
 # ---------------
 # Runner image ubuntu24/20260726.254 bumped podman 4.9.3 -> 5.8.4 but left
-# Ubuntu 24.04's crun at 1.14.x. Podman 5 writes a newer OCI spec version than
-# crun 1.14 recognises, so EVERY container create died with:
+# /usr/bin/crun at 1.14.1. Podman 5 writes a newer OCI spec version than crun
+# 1.14 recognises, so EVERY container create died with:
 #
 #   Error: OCI runtime error: crun: unknown version specified
 #
 # In `podman build` that surfaces even less usefully — the create error is
 # swallowed and reported as the Containerfile's RUN step failing, which reads
 # like a broken package list rather than a broken runtime.
+#
+# The hosted pool is MIXED — observed live: one job on podman 4.9.3 with crun
+# 1.14.1, another on podman 5.8.4 — so this cannot be conditional on the image
+# version. crun 1.28 is verified working against both podman generations, so we
+# install it unconditionally and let the probe below be the judge.
 #
 # Our self-hosted runners (himachal, dilli) have a matched podman/crun pair, so
 # this is deliberately hosted-only: it must never rewrite /usr/bin on a box we
@@ -41,7 +46,7 @@ runs:
         echo "::group::Runtime before"
         podman version || true
         podman info --format '{{.Host.OCIRuntime.Name}} {{.Host.OCIRuntime.Path}} {{.Host.OCIRuntime.Version}}' || true
-        command -v -a crun || true
+        type -a crun || true
         for c in /usr/bin/crun /usr/local/bin/crun /usr/sbin/crun; do
           [ -x "$c" ] && printf '%s -> %s\n' "$c" "$("$c" --version | head -1)"
         done
