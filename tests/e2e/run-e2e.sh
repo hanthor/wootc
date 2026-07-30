@@ -807,6 +807,31 @@ reset_oem_attempt() {
 # rung's check greps for the RUN_ID content, so a stale file from a previous
 # run can never produce a false pass (lessons §1). Written just before the
 # deployer reboot so it is part of the data the migration must carry.
+# Which Windows account is actually logged on. NOT always "wootc".
+#
+# The Pro media autologs a "wootc" user, but the Enterprise/LTSC images log on
+# as "docker" (Dockur's own account). Hardcoding "wootc" broke two different
+# things on el10-gnome-win11ent, and only one of them was visible:
+#   - schtasks /Create /RU wootc → "No mapping between account names and
+#     security IDs was done", so the GUI never launched;
+#   - seeding wrote to C:\Users\wootc\Documents and CREATED it, i.e. a profile
+#     directory no real user owns — which would have let the cell go green
+#     while the "user data survived" assertion proved nothing at all.
+# Same lesson as §25: when the guest picks a name, ASK for it, never re-derive.
+WOOTC_GUEST_USER=""
+guest_windows_user() {
+    if [ -z "$WOOTC_GUEST_USER" ]; then
+        local found
+        found=$(qga_powershell '$u = (Get-CimInstance Win32_ComputerSystem).UserName
+if (-not $u) { $u = ((query user 2>$null) | Select-Object -Skip 1 | ForEach-Object { ($_ -replace "^\s*>?","").Split(" ")[0] } | Select-Object -First 1) }
+if ($u) { Write-Output ($u -replace "^.*\\","") }' 2>/dev/null | tr -d '[:space:]')
+        # Cache only a positive answer: an early call before autologon settles
+        # must not pin the wrong name for the rest of the run.
+        [ -n "$found" ] && WOOTC_GUEST_USER="$found"
+    fi
+    printf '%s' "${WOOTC_GUEST_USER:-wootc}"
+}
+
 seed_user_data() {
     step "Seeding user data in the Windows profile (Documents)..."
     # On BitLocker runs C: is encrypted and the deployer mounts the carved
@@ -821,13 +846,14 @@ seed_user_data() {
     local drive out attempt
     drive=$(qga_powershell 'Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object { Test-Path ($_.Name + ":\wootc\install") } | Select-Object -First 1 -ExpandProperty Name' 2>/dev/null | tr -d '[:space:]')
     case "$drive" in [A-Za-z]) drive="${drive}:" ;; *) drive="C:" ;; esac
-    local seed_dir="${drive}\\Users\\wootc\\Documents"
+    local guser; guser=$(guest_windows_user)
+    local seed_dir="${drive}\\Users\\${guser}\\Documents"
     for attempt in 1 2 3; do
         # Use the drive letter as a PowerShell variable so the same command
         # works for C: / D: / E: without string-concatenation bugs (§R2).
-        out=$(qga_powershell "\$ErrorActionPreference='Stop'; \$d = '${drive}\\Users\\wootc\\Documents'; if (-not (Test-Path \$d)) { New-Item -ItemType Directory -Path \$d -Force | Out-Null }; Set-Content -Path \"\$d\\wootc-e2e-userdata.txt\" -Value 'wootc-e2e-userdata $RUN_ID' -Encoding ASCII; Get-Content \"\$d\\wootc-e2e-userdata.txt\"" 2>&1)
+        out=$(qga_powershell "\$ErrorActionPreference='Stop'; \$d = '${drive}\\Users\\${guser}\\Documents'; if (-not (Test-Path \$d)) { New-Item -ItemType Directory -Path \$d -Force | Out-Null }; Set-Content -Path \"\$d\\wootc-e2e-userdata.txt\" -Value 'wootc-e2e-userdata $RUN_ID' -Encoding ASCII; Get-Content \"\$d\\wootc-e2e-userdata.txt\"" 2>&1)
         if printf '%s' "$out" | grep -q "$RUN_ID"; then
-            pass "User data seeded: ${drive}\\Users\\wootc\\Documents\\wootc-e2e-userdata.txt ($RUN_ID)"
+            pass "User data seeded: ${drive}\\Users\\${guser}\\Documents\\wootc-e2e-userdata.txt ($RUN_ID)"
             return 0
         fi
         warn "Seeding attempt $attempt/3 did not confirm the marker; guest said: ${out:-<no output>}"
@@ -1901,7 +1927,14 @@ start `"`" C:\wootc\wootc.exe
 Stop-Process -Name wootc -Force -ErrorAction SilentlyContinue
 schtasks /Delete /TN wootc-gui-e2e /F 2>$null
 $start = (Get-Date).AddMinutes(1).ToString('\''HH:mm'\'')
-$mk = schtasks /Create /TN wootc-gui-e2e /SC ONCE /ST $start /TR "C:\wootc\launch-gui.cmd" /RU wootc /IT /RL HIGHEST /F 2>&1
+# /RU must name the account that is actually autologged on: Pro media use
+# "wootc", Enterprise/LTSC use "docker". A wrong name fails /Create outright
+# with "No mapping between account names and security IDs was done" (see
+# el10-gnome-win11ent). Let the GUEST answer rather than hardcoding it.
+$who = (Get-CimInstance Win32_ComputerSystem).UserName -replace "^.*\\",""
+if (-not $who) { $who = "wootc" }
+Write-Output ("launching as: " + $who)
+$mk = schtasks /Create /TN wootc-gui-e2e /SC ONCE /ST $start /TR "C:\wootc\launch-gui.cmd" /RU $who /IT /RL HIGHEST /F 2>&1
 Write-Output ("schtasks /Create rc=" + $LASTEXITCODE + " :: " + ($mk -join " "))
 $rn = schtasks /Run /TN wootc-gui-e2e 2>&1
 Write-Output ("schtasks /Run rc=" + $LASTEXITCODE + " :: " + ($rn -join " "))
