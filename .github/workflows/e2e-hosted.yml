@@ -264,6 +264,11 @@ jobs:
           path: /tmp/evidence
           retention-days: 14
           if-no-files-found: warn
+          # The green-run gate is a DOTFILE (video/.passed), and this action
+          # excludes hidden files by default — so run 30506080617 passed all
+          # three phases, uploaded 1410 files, and still could not publish its
+          # timelapse: the one file proving it was green had been stripped.
+          include-hidden-files: true
 
       - name: Tear down
         if: always()
