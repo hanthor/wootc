@@ -96,6 +96,29 @@ type SystemInfo struct {
 	// DefragRecommended is advisory only. Fragmentation affects VHDX
 	// performance on rotating media, not correctness (SPEC §3.6).
 	DefragRecommended bool `json:"defragRecommended"`
+
+	// ── Preflight safety gates (#63) ──────────────────────────────────────
+	// Conditions under which starting a migration risks the user's data or
+	// leaves the machine half-converted. Each is reported separately so the
+	// GUI can name the ONE thing standing in the way rather than a generic
+	// "cannot install".
+	//
+	// OnBattery: a migration interrupted by a flat battery mid-shrink is the
+	// worst possible moment to lose power.
+	OnBattery bool `json:"onBattery"`
+	// BatteryKnown is false on desktops and where the query failed; only an
+	// affirmative "running on battery" should ever block.
+	BatteryKnown bool `json:"batteryKnown"`
+	// PendingReboot: a servicing operation can rewrite boot configuration
+	// underneath us, or resume in the middle of the migration.
+	PendingReboot bool `json:"pendingReboot"`
+	// Hibernated: hiberfil.sys present means the NTFS in-memory state is
+	// newer than the disk. Mounting that read-write from Linux is exactly
+	// how NTFS gets corrupted — the data loss wootc exists to prevent.
+	Hibernated bool `json:"hibernated"`
+	// RAMGB and Is64Bit gate hardware that cannot run the result.
+	RAMGB   float64 `json:"ramGB"`
+	Is64Bit bool    `json:"is64Bit"`
 	// DataPartitions lists unencrypted fixed volumes (other than C:) that
 	// could hold root.disk when C: is BitLocker-protected.
 	DataPartitions []DataPartition `json:"dataPartitions"`

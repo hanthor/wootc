@@ -23,6 +23,11 @@ func getSystemInfo() SystemInfo {
 		BitLockerState: "off",
 		IsUEFI:         true,
 		SecureBootOn:   false,
+		// Dev builds are always "safe to start": these gates exist to describe
+		// a real Windows machine, and a Linux/macOS dev box has no opinion.
+		BatteryKnown: false,
+		RAMGB:        16,
+		Is64Bit:      true,
 	}
 }
 

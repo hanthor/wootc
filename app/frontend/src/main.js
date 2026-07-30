@@ -945,8 +945,23 @@ function refreshInstallValidity() {
   if (!btn) return;
   const c = state.config;
   let reason = '';
+  // Preflight safety gates (#63) come FIRST: these are conditions under which
+  // starting at all risks the user's data or leaves the machine half-converted.
+  // After the shrink there is no cheap undo, so they gate the button rather
+  // than warning mid-run. Each names the single thing to fix.
+  const si = state.sysinfo;
+  if (si?.hibernated)
+    reason = 'Windows is hibernated, so the drive holds unsaved changes. Shut down fully (Start ▸ Power ▸ Shut down while holding Shift) and start wootc again — migrating now could damage your files.';
+  else if (si?.pendingReboot)
+    reason = 'Windows has an update waiting to finish. Restart the PC, let it complete, then run wootc again — an update finishing mid-migration can break startup.';
+  else if (si?.onBattery && si?.batteryKnown)
+    reason = 'Plug in the power adapter first. Losing power partway through would leave the PC in a half-converted state.';
+  else if (si && si.is64Bit === false)
+    reason = 'This PC has a 32-bit version of Windows. wootc installs 64-bit Linux, which this PC cannot start.';
+  else if (si && si.ramGB > 0 && si.ramGB < 3.5)
+    reason = `This PC has ${si.ramGB.toFixed(1)} GB of memory. wootc needs at least 3.5 GB for the installed system to run properly.`;
   // Green-gate: block scenarios this channel has not proven (docs/RELEASING.md).
-  if (state.sysinfo?.bitLockerOn && state.policy && state.policy.bitlockerSupported === false)
+  else if (state.sysinfo?.bitLockerOn && state.policy && state.policy.bitlockerSupported === false)
     reason = `BitLocker encryption isn't supported in the ${state.policy.channel} yet — it's coming soon. For now, wootc needs drive encryption turned off.`;
   else if (!state.selected) reason = 'Choose a variant above.';
   else if (!c.username.trim()) reason = 'Enter a Linux username.';

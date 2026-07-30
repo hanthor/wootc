@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -54,6 +55,15 @@ func getSystemInfo() SystemInfo {
 	// Advisory NTFS fragmentation analysis (SPEC §3.6). Failure to analyze
 	// must not block installation.
 	info.DefragRecommended = defragRecommended(`C:`)
+
+	// Preflight safety gates (#63). Every one of these is "is it safe to
+	// START", not "did something break" — they are checked before the first
+	// byte is written, because after the shrink there is no cheap undo.
+	info.OnBattery, info.BatteryKnown = onBattery()
+	info.PendingReboot = pendingReboot()
+	info.Hibernated = hibernated()
+	info.RAMGB = totalRAMGB()
+	info.Is64Bit = runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
 
 	return info
 }
@@ -227,9 +237,85 @@ func fastStartupEnabled() bool {
 	return err == nil && val != 0
 }
 
+// ── Preflight safety gates (#63) ─────────────────────────────────────────────
+
+// onBattery reports (running-on-battery, known). Win32_Battery exists only on
+// machines that HAVE a battery, so "no instance" means desktop, not danger —
+// hence the separate `known` result. Only an affirmative answer may block.
+func onBattery() (bool, bool) {
+	out, err := runPowerShellOutput(
+		`$b = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $b) { Write-Output "nobattery" } elseif ($b.BatteryStatus -eq 1) { Write-Output "onbattery" } else { Write-Output "ac" }`)
+	if err != nil {
+		return false, false
+	}
+	switch strings.TrimSpace(out) {
+	case "onbattery":
+		return true, true
+	case "ac":
+		return false, true
+	default: // "nobattery" — a desktop; nothing to warn about
+		return false, false
+	}
+}
+
+// pendingReboot reports whether Windows is mid-servicing. A pending operation
+// can rewrite the boot configuration underneath us or resume partway through
+// the migration. Any single positive signal is enough; failing to answer is
+// NOT treated as pending (we must not block on our own query breaking).
+func pendingReboot() bool {
+	out, err := runPowerShellOutput(`$p = $false
+if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") { $p = $true }
+if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") { $p = $true }
+if (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations -ErrorAction SilentlyContinue) { $p = $true }
+Write-Output $p`)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(out), "True")
+}
+
+// hibernated reports whether a hibernation image is sitting on disk. This is
+// the one that actually destroys data: a hibernated Windows has in-memory NTFS
+// state newer than the disk, and mounting it read-write from Linux corrupts the
+// filesystem. Distinct from Fast Startup, which is a registry flag.
+func hibernated() bool {
+	out, err := runPowerShellOutput(`Write-Output (Test-Path "C:\hiberfil.sys")`)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(out), "True")
+}
+
+func totalRAMGB() float64 {
+	out, err := runPowerShellOutput(
+		`Write-Output ((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory)`)
+	if err != nil {
+		return 0
+	}
+	b, err := strconv.ParseFloat(strings.TrimSpace(out), 64)
+	if err != nil {
+		return 0
+	}
+	return b / (1024 * 1024 * 1024)
+}
+
 // ── Fast Startup ──────────────────────────────────────────────────────────────
 
 func disableFastStartup() error {
+	// `powercfg /h off` is the part that matters and the part we were missing
+	// (#63): clearing HiberbootEnabled disables FAST STARTUP, but a genuinely
+	// hibernated machine still has hiberfil.sys and a stale on-disk NTFS
+	// state. Turning hibernation off removes the file as well, so Linux can
+	// mount the volume read-write safely.
+	//
+	// Best-effort on the powercfg half: on some systems it is policy-disabled,
+	// and the registry change is still worth making. The Hibernated gate in
+	// getSystemInfo is what actually refuses to proceed.
+	if err := runPowerShell(`powercfg.exe /h off`); err != nil {
+		// Not fatal — report through the gate, not by aborting here.
+		_ = err
+	}
 	return runPowerShell(`Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" ` +
 		`-Name "HiberbootEnabled" -Value 0 -Type DWord -Force`)
 }
