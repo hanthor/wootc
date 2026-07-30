@@ -1852,20 +1852,43 @@ gui_install_arm() {
     # Install it first so the cell tests WOOTC, not Microsoft's bootstrapper.
     # This is environment provisioning, not a workaround: it restores the
     # baseline a real Win10 machine with Edge already has.
+    # KICK OFF and POLL — never block a QGA call on this. A synchronous
+    # download+install blew through the 60 s qga_call timeout, `timeout` killed
+    # the CLIENT while the agent was still running the command, and every
+    # subsequent connect then failed with
+    #     BlockingIOError: [Errno 11] Resource temporarily unavailable
+    # taking the whole run down with it (run 30562927435). The socket is
+    # single-connection: a long guest job must be launched detached and observed
+    # through short reads, which is the same pattern the rest of this harness
+    # already uses for anything slow.
     info "  ensuring the WebView2 runtime is present (wails cannot render without it)..."
-    qga_powershell '
-$k = @(
-  "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
-  "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
-) | Where-Object { Test-Path $_ } | Select-Object -First 1
-if ($k) {
-    Write-Output ("WebView2 already present: " + (Get-ItemProperty $k).pv)
-} else {
-    $exe = "$env:TEMP\MicrosoftEdgeWebview2Setup.exe"
-    Invoke-WebRequest -UseBasicParsing -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $exe
-    Start-Process -FilePath $exe -ArgumentList "/silent","/install" -Wait
-    Write-Output "WebView2 bootstrapper finished"
-}' 2>&1 | sed 's/^/    /' || warn "    (WebView2 provisioning failed — the GUI may not render)"
+    local wv2_key='HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+    if qga_powershell "if (Test-Path '$wv2_key') { exit 0 } else { exit 1 }" >/dev/null 2>&1; then
+        info "    WebView2 already present"
+    else
+        # A BATCH file, deliberately: it uses %TEMP% rather than $env:TEMP, so
+        # nothing in the payload can be interpolated by the PowerShell
+        # here-string that writes it — the same trick launch-gui.cmd uses below.
+        qga_powershell '
+@"
+curl.exe -L -o %TEMP%\wv2.exe https://go.microsoft.com/fwlink/p/?LinkId=2124703
+%TEMP%\wv2.exe /silent /install
+"@ | Set-Content -Path C:\wootc-wv2.cmd -Encoding ascii
+Start-Process cmd.exe -WindowStyle Hidden -ArgumentList "/c","C:\wootc-wv2.cmd"
+Write-Output "webview2-install-started"' >/dev/null 2>&1 || warn "    (could not start the WebView2 install)"
+
+        local wv2_deadline
+        wv2_deadline=$(deadline_in 420)
+        while ! past_deadline "$wv2_deadline"; do
+            if qga_powershell "if (Test-Path '$wv2_key') { exit 0 } else { exit 1 }" >/dev/null 2>&1; then
+                pass "WebView2 runtime installed in the guest"
+                break
+            fi
+            sleep 10
+        done
+        qga_powershell "if (Test-Path '$wv2_key') { exit 0 } else { exit 1 }" >/dev/null 2>&1 \
+            || warn "    WebView2 still absent after 7m — the GUI will stall on its install prompt"
+    fi
 
     qga_powershell 'New-Item -ItemType Directory -Force -Path C:\wootc\install | Out-Null
 Copy-Item \\host.lan\Data\wootc.exe C:\wootc\wootc.exe -Force
