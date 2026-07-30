@@ -912,6 +912,22 @@ func findESP() (string, error) {
 	// them by dereferencing a possibly-nil $esp.
 	script := `
 $ErrorActionPreference = 'Stop'
+
+# AccessPaths is the source of truth, NOT DriveLetter. On an ESP, Get-Partition
+# reports DriveLetter as NUL even when a letter IS assigned — the assignment
+# shows up only as an "X:\" entry in AccessPaths. Keying off DriveLetter made
+# findESP conclude "no letter", ask for one, and get:
+#     Add-PartitionAccessPath : Cannot assign multiple drive letters to a partition.
+# i.e. the install failed precisely BECAUSE the ESP was already mounted.
+function Get-EspLetter($p) {
+    $p = Get-Partition -DiskNumber $p.DiskNumber -PartitionNumber $p.PartitionNumber
+    foreach ($ap in @($p.AccessPaths)) {
+        if ($ap -match '^([A-Za-z]):\\$') { return $Matches[1] }
+    }
+    if ($p.DriveLetter -and $p.DriveLetter -ne [char]0) { return [string]$p.DriveLetter }
+    return ''
+}
+
 $esp = Get-Partition | Where-Object { $_.GptType -eq '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' } | Select-Object -First 1
 if (-not $esp) {
     $esp = Get-Volume | Where-Object { $_.FileSystemType -eq 'FAT32' -and $_.Size -lt 1GB } | Select-Object -First 1 | Get-Partition
@@ -920,16 +936,20 @@ if (-not $esp) {
     Write-Output 'WOOTC_NO_ESP'
     exit 0
 }
-if (-not $esp.DriveLetter) {
-    $esp | Add-PartitionAccessPath -AssignDriveLetter
+
+$letter = Get-EspLetter $esp
+if (-not $letter) {
+    # Tolerate a losing race: if something assigned a letter between the check
+    # and here, "already assigned" is success, not failure. Re-read either way.
+    try { $esp | Add-PartitionAccessPath -AssignDriveLetter } catch { }
     # The mount manager publishes the letter asynchronously — poll, do not assume.
     for ($i = 0; $i -lt 30; $i++) {
         Start-Sleep -Milliseconds 500
-        $esp = Get-Partition -DiskNumber $esp.DiskNumber -PartitionNumber $esp.PartitionNumber
-        if ($esp.DriveLetter) { break }
+        $letter = Get-EspLetter $esp
+        if ($letter) { break }
     }
 }
-Write-Output $esp.DriveLetter
+Write-Output $letter
 `
 	out, err := runPowerShellOutput(script)
 	if err != nil {
