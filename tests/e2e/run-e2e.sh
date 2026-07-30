@@ -1842,6 +1842,31 @@ gui_install_arm() {
     # WOOTC_E2E_DRIVE=1 the app polls C:\wootc\e2e-drive.json over its own
     # Go<->JS bridge, executes the directive against the live form (same DOM,
     # same handlers, same validation), and reports to e2e-drive-state.json.
+    # wootc is a wails app, so it cannot render without the WebView2 runtime.
+    # Windows 11 ships it and current Windows 10 gets it with Edge, but the
+    # Dockur Win10 media does not carry it — so on el10-gnome-win10pro the app
+    # started, hit wails' default "download" strategy, and sat on a MODAL
+    # "WebView2 installation required" dialog forever. The process was alive and
+    # the harness saw only "did not start" (run 30557321436).
+    #
+    # Install it first so the cell tests WOOTC, not Microsoft's bootstrapper.
+    # This is environment provisioning, not a workaround: it restores the
+    # baseline a real Win10 machine with Edge already has.
+    info "  ensuring the WebView2 runtime is present (wails cannot render without it)..."
+    qga_powershell '
+$k = @(
+  "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+  "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if ($k) {
+    Write-Output ("WebView2 already present: " + (Get-ItemProperty $k).pv)
+} else {
+    $exe = "$env:TEMP\MicrosoftEdgeWebview2Setup.exe"
+    Invoke-WebRequest -UseBasicParsing -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" -OutFile $exe
+    Start-Process -FilePath $exe -ArgumentList "/silent","/install" -Wait
+    Write-Output "WebView2 bootstrapper finished"
+}' 2>&1 | sed 's/^/    /' || warn "    (WebView2 provisioning failed — the GUI may not render)"
+
     qga_powershell 'New-Item -ItemType Directory -Force -Path C:\wootc\install | Out-Null
 Copy-Item \\host.lan\Data\wootc.exe C:\wootc\wootc.exe -Force
 foreach ($f in "deployer-vmlinuz","deployer-initramfs.img","shimx64.efi","grubx64.efi","wubildr.efi","mirror.txt") { if (Test-Path "\\host.lan\Data\$f") { Copy-Item "\\host.lan\Data\$f" "C:\wootc\install\$f" -Force } }
