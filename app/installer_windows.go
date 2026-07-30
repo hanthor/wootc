@@ -897,16 +897,37 @@ func rebootWindows() error {
 // ── ESP discovery ─────────────────────────────────────────────────────────────
 
 func findESP() (string, error) {
-	// Use mountvol to enumerate volumes and find the FAT32 EFI System Partition.
-	// Fallback: assign a letter via diskpart if none is assigned.
+	// Find the FAT32 EFI System Partition and make sure it has a drive letter.
+	//
+	// Add-PartitionAccessPath -AssignDriveLetter is NOT synchronous: the letter
+	// is published by the mount manager, so an immediate Get-Partition re-read
+	// usually still shows none. The old code did exactly that single re-read and
+	// then failed with "ESP drive letter not found" — which made the whole
+	// install intermittently fail depending on how fast the box happened to be
+	// (GUI E2E run 30512204223 died here while an identical run minutes earlier
+	// passed). Poll for the letter instead of assuming it appeared.
+	//
+	// Also report "no ESP at all" separately: an unassigned letter and a missing
+	// partition need completely different fixes, and the old message conflated
+	// them by dereferencing a possibly-nil $esp.
 	script := `
+$ErrorActionPreference = 'Stop'
 $esp = Get-Partition | Where-Object { $_.GptType -eq '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' } | Select-Object -First 1
 if (-not $esp) {
     $esp = Get-Volume | Where-Object { $_.FileSystemType -eq 'FAT32' -and $_.Size -lt 1GB } | Select-Object -First 1 | Get-Partition
 }
+if (-not $esp) {
+    Write-Output 'WOOTC_NO_ESP'
+    exit 0
+}
 if (-not $esp.DriveLetter) {
     $esp | Add-PartitionAccessPath -AssignDriveLetter
-    $esp = Get-Partition -DiskNumber $esp.DiskNumber -PartitionNumber $esp.PartitionNumber
+    # The mount manager publishes the letter asynchronously — poll, do not assume.
+    for ($i = 0; $i -lt 30; $i++) {
+        Start-Sleep -Milliseconds 500
+        $esp = Get-Partition -DiskNumber $esp.DiskNumber -PartitionNumber $esp.PartitionNumber
+        if ($esp.DriveLetter) { break }
+    }
 }
 Write-Output $esp.DriveLetter
 `
@@ -914,9 +935,14 @@ Write-Output $esp.DriveLetter
 	if err != nil {
 		return "", fmt.Errorf("ESP discovery: %w", err)
 	}
-	letter := strings.TrimSpace(out)
-	if letter == "" || len(letter) != 1 {
-		return "", fmt.Errorf("ESP drive letter not found (output: %q)", out)
+	// A partition with no letter reports DriveLetter as NUL, not "" — trim it or
+	// the length check below sees a 1-character "letter" that is really nothing.
+	letter := strings.Trim(out, " \t\r\n\x00")
+	if letter == "WOOTC_NO_ESP" {
+		return "", fmt.Errorf("no EFI System Partition found (no GPT ESP, and no FAT32 volume under 1 GB)")
+	}
+	if len(letter) != 1 {
+		return "", fmt.Errorf("ESP found but Windows never assigned it a drive letter within 15s (output: %q)", out)
 	}
 	return letter + `:\`, nil
 }
