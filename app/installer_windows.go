@@ -553,6 +553,21 @@ func setupSignedChain(espPath string, cfg InstallConfig) error {
 		}
 	}
 
+	// D1b: grub.cfg is not the only file we overwrite (#52). We also drop
+	// shimx64.efi and grubx64.efi into EFI\fedora, and a real Fedora/RHEL
+	// install owns those binaries even when its grub.cfg lives elsewhere —
+	// so the marker check above can pass while we are about to clobber
+	// another OS's signed bootloader. Check EVERY destination against a
+	// manifest of what wootc itself wrote, and refuse on anything foreign.
+	if err := guardESPDestinations(espPath, []string{
+		filepath.Join("EFI", "fedora", "shimx64.efi"),
+		filepath.Join("EFI", "fedora", "grubx64.efi"),
+		filepath.Join("EFI", "wootc", "deployer-vmlinuz"),
+		filepath.Join("EFI", "wootc", "deployer-initramfs.img"),
+	}); err != nil {
+		return err
+	}
+
 	// D2 gate: the deployer pair must fit on the ESP. Measure before
 	// copying so the failure is a clear sentence, not a mid-copy ENOSPC.
 	var need int64
@@ -590,6 +605,17 @@ func setupSignedChain(espPath string, cfg InstallConfig) error {
 		if err := copyFile(src, dst); err != nil {
 			return fmt.Errorf("copy %s: %w", filepath.Base(src), err)
 		}
+	}
+
+	// Claim what we just wrote, so a REINSTALL recognises its own files while
+	// a foreign bootloader in the same place still stops us.
+	if err := recordESPOwnership(espPath, []string{
+		filepath.Join("EFI", "fedora", "shimx64.efi"),
+		filepath.Join("EFI", "fedora", "grubx64.efi"),
+		filepath.Join("EFI", "wootc", "deployer-vmlinuz"),
+		filepath.Join("EFI", "wootc", "deployer-initramfs.img"),
+	}); err != nil {
+		return fmt.Errorf("recording which ESP files belong to wootc: %w", err)
 	}
 
 	// LUKS type on the cmdline (never the passphrase — that travels in the
@@ -1014,9 +1040,28 @@ function Get-EspLetter($p) {
     return ''
 }
 
-$esp = Get-Partition | Where-Object { $_.GptType -eq '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' } | Select-Object -First 1
+# The ESP MUST be the one that backs Windows Boot Manager (#51). The BCD entry
+# we create is a copy of {bootmgr} and inherits ITS device, so staging files on
+# a different disk's ESP produces an install that looks complete and boots to a
+# path that does not exist — while possibly overwriting another OS's ESP.
+# Windows' own system disk is the unambiguous derivation: take C:'s disk.
+$sysDisk = (Get-Partition -DriveLetter C -ErrorAction SilentlyContinue).DiskNumber
+if ($null -eq $sysDisk) {
+    Write-Output 'WOOTC_NO_SYSTEM_DISK'
+    exit 0
+}
+$esp = Get-Partition -DiskNumber $sysDisk -ErrorAction SilentlyContinue |
+       Where-Object { $_.GptType -eq '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' } |
+       Select-Object -First 1
 if (-not $esp) {
-    $esp = Get-Volume | Where-Object { $_.FileSystemType -eq 'FAT32' -and $_.Size -lt 1GB } | Select-Object -First 1 | Get-Partition
+    # Same disk, FAT32, small: still constrained to the Windows disk. We do NOT
+    # fall back to an arbitrary/first ESP anywhere on the machine — refusing is
+    # safer than writing to someone else's boot partition.
+    $esp = Get-Volume -ErrorAction SilentlyContinue |
+           Where-Object { $_.FileSystemType -eq 'FAT32' -and $_.Size -lt 1GB } |
+           Get-Partition -ErrorAction SilentlyContinue |
+           Where-Object { $_.DiskNumber -eq $sysDisk } |
+           Select-Object -First 1
 }
 if (-not $esp) {
     Write-Output 'WOOTC_NO_ESP'
@@ -1048,8 +1093,14 @@ Write-Output $letter
 	// A partition with no letter reports DriveLetter as NUL, not "" — trim it or
 	// the length check below sees a 1-character "letter" that is really nothing.
 	letter := strings.Trim(out, " \t\r\n\x00")
+	if letter == "WOOTC_NO_SYSTEM_DISK" {
+		return "", fmt.Errorf("could not determine which disk Windows starts from, so wootc cannot " +
+			"safely choose an EFI system partition. Refusing to guess")
+	}
 	if letter == "WOOTC_NO_ESP" {
-		return "", fmt.Errorf("no EFI System Partition found (no GPT ESP, and no FAT32 volume under 1 GB)")
+		return "", fmt.Errorf("no EFI System Partition was found on the disk Windows starts from. " +
+			"wootc will not write to another disk's boot partition, because the boot entry it " +
+			"creates always points at Windows' own disk")
 	}
 	if len(letter) != 1 {
 		return "", fmt.Errorf("ESP found but Windows never assigned it a drive letter within 15s (output: %q)", out)
