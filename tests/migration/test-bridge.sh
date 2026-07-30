@@ -244,3 +244,56 @@ INNER
 podman run --rm --privileged \
     -v "$REPO_ROOT/payload/migration:/scripts:ro,Z" \
     "$IMG" bash -c "$INNER"
+
+# ── #73: the single-user fallback, in its own container ──────────────────────
+# The suite above uses a Windows profile whose name MATCHES the Linux user, so
+# it can never exercise the mismatch. Enterprise/LTSC Windows media log on as
+# "Docker" while the installer creates "wootc", and exact-name matching bridged
+# NOTHING while still reporting success — a successful migration that carried
+# none of the user's files. Fresh fixtures, because the case is defined by there
+# being exactly one profile and exactly one account.
+INNER73=$(cat <<'INNER'
+set -Eeuo pipefail
+PASS=0; FAIL=0
+ok()  { echo "[PASS] $*"; PASS=$((PASS+1)); }
+bad() { echo "[FAIL] $*"; FAIL=$((FAIL+1)); }
+check(){ if eval "$1"; then ok "$2"; else bad "$2"; fi; }
+
+dnf install -y -q util-linux >/dev/null 2>&1 || true
+cp /scripts/wootc-* /usr/local/bin/ && chmod +x /usr/local/bin/wootc-*
+
+# One Windows profile ("Docker"), one Linux user ("wootc") — names differ.
+useradd -m -u 1000 wootc
+mkdir -p /run/wootc/host/Users/Docker/{Documents,Pictures}
+mkdir -p /run/wootc/host/Users/Public/Documents      # system profile, ignored
+echo "tax-return" > /run/wootc/host/Users/Docker/Documents/taxes.txt
+
+out=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
+echo "$out" | sed 's/^/    /'
+
+check '[ -f /home/wootc/Documents/taxes.txt ]' \
+    "#73: sole Windows profile bridges to the sole Linux user despite the name mismatch"
+check 'echo "$out" | grep -q "exactly one Windows profile"' \
+    "#73: the fallback says why it bridged"
+check 'echo "$out" | grep -q "summary: [1-9]"' \
+    "#73: the summary reports a non-zero bind count"
+
+# Ambiguity must NOT be guessed at: two profiles, no name match -> bridge nothing.
+umount /home/wootc/Documents 2>/dev/null || true
+umount /home/wootc/Pictures  2>/dev/null || true
+rm -rf /home/wootc/Documents /home/wootc/Pictures
+mkdir -p /run/wootc/host/Users/Someone/Documents
+out2=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
+check '[ ! -f /home/wootc/Documents/taxes.txt ]' \
+    "#73: two candidate profiles and no name match bridges nothing rather than guessing"
+check 'echo "$out2" | grep -q "cannot decide\|summary: 0"' \
+    "#73: the ambiguous case says so instead of failing silently"
+
+echo "RESULT: $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ]
+INNER
+)
+
+podman run --rm --privileged \
+    -v "$REPO_ROOT/payload/migration:/scripts:ro,Z" \
+    "$IMG" bash -c "$INNER73"

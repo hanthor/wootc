@@ -9,6 +9,15 @@
 # vault.json is expected to share its name with the Windows profile under
 # /run/wootc/host/Users/<name>/. A user with no matching Windows profile is skipped
 # (not an error — native installs with no prior Windows account are normal).
+#
+# EXCEPT for the single-user case. Exact matching alone meant that a user who
+# typed ANY new Linux username — a different capitalisation, a shorter handle, a
+# fresh name for their fresh OS — got a successful migration that carried none of
+# their files (#73; found on Enterprise media, whose Windows profile is "Docker"
+# while the installer created "wootc"). When there is exactly ONE real Windows
+# profile and exactly ONE real Linux account, and no name matched, there is no
+# ambiguity about whose data this is: bridge it. With several profiles the names
+# are the only signal available, so exact matching still governs.
 
 set -Eeuo pipefail
 
@@ -34,13 +43,39 @@ sel_on() {
 
 bound=0
 matched=0
+
+# Bind one Windows profile into one Linux home. Shared by the exact-name path
+# and the single-user fallback so the two can never diverge.
+bind_profile() {
+    local winprofile="$1" luser="$2" home="$3" folder src dst
+    if ! sel_on "$luser" files; then
+        log "files: skipped for $luser (turned off in the migration chooser)"
+        return 0
+    fi
+    for folder in "${FOLDERS[@]}"; do
+        src="${winprofile}${folder}"
+        dst="$home/$folder"
+        [[ -d "$src" ]] || continue
+        # Converted to native storage (wootc-convert-dir) — stop bridging.
+        [[ -e "$home/.config/wootc/converted-$folder" ]] && continue
+        mkdir -p "$dst"
+        if ! mountpoint -q "$dst"; then
+            mount --bind "$src" "$dst"
+            log "bound $src -> $dst"
+            bound=$((bound + 1))
+        fi
+    done
+}
+
 shopt -s nullglob
+real_profiles=()
 for winprofile in /run/wootc/host/Users/*/ /run/wootc/host/*/Users/*/; do
     [[ -d "$winprofile" ]] || continue
     name=$(basename "$winprofile")
     case "$name" in
         Public|Default|"Default User"|"All Users") continue ;;
     esac
+    real_profiles+=("$winprofile")
 
     # Only bind for a Linux account that actually exists (skip unrelated
     # Windows profiles) and has UID >= 1000 (a real user, not a system account).
@@ -58,25 +93,27 @@ for winprofile in /run/wootc/host/Users/*/ /run/wootc/host/*/Users/*/; do
         continue
     fi
 
-    if ! sel_on "$name" files; then
-        log "files: skipped for $name (turned off in the migration chooser)"
-        continue
-    fi
-
-    for folder in "${FOLDERS[@]}"; do
-        src="${winprofile}${folder}"
-        dst="$home/$folder"
-        [[ -d "$src" ]] || continue
-        # Converted to native storage (wootc-convert-dir) — stop bridging.
-        [[ -e "$home/.config/wootc/converted-$folder" ]] && continue
-        mkdir -p "$dst"
-        if ! mountpoint -q "$dst"; then
-            mount --bind "$src" "$dst"
-            log "bound $src -> $dst"
-            bound=$((bound + 1))
-        fi
-    done
+    bind_profile "$winprofile" "$name" "$home"
 done
+
+# Single-user fallback: one profile, one account, nothing matched by name.
+if [[ "$matched" -eq 0 && "${#real_profiles[@]}" -eq 1 ]]; then
+    mapfile -t linux_users < <(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 { print $1 }')
+    if [[ "${#linux_users[@]}" -eq 1 ]]; then
+        fallback_user="${linux_users[0]}"
+        fallback_home=$(getent passwd "$fallback_user" | cut -d: -f6)
+        fallback_profile="${real_profiles[0]}"
+        if [[ -d "$fallback_home" ]]; then
+            log "no name match, but exactly one Windows profile ($(basename "$fallback_profile")) and one Linux user ($fallback_user) — bridging them (#73)"
+            matched=1
+            bind_profile "$fallback_profile" "$fallback_user" "$fallback_home"
+        else
+            log "ERROR: sole user $fallback_user has no home directory ($fallback_home) — cannot bridge"
+        fi
+    else
+        log "no name match and ${#linux_users[@]} Linux users — cannot decide whose data this is; leaving unbridged"
+    fi
+fi
 shopt -u nullglob
 # Always leave a verdict in the journal: "Finished" alone cannot distinguish
 # a bridged home from a run where every profile was silently skipped.
