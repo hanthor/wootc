@@ -12,6 +12,10 @@ on:
         description: 'bootc image to install'
         type: string
         default: 'ghcr.io/projectbluefin/bluefin:lts'
+      require_podman_major:
+        description: '#71 triage: only run if the runner drew this podman major (e.g. 5). Empty = any.'
+        type: string
+        default: ''
   schedule:
     # Nightly, offset from the headless canary so they do not contend for
     # the hosted runner pool.
@@ -33,6 +37,7 @@ jobs:
       gui_install: true
       phase3: true
       use_base_image: true
+      require_podman_major: ${{ inputs.require_podman_major || '' }}
     secrets: inherit
 
   publish:

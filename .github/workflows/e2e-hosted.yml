@@ -16,6 +16,10 @@ on:
       bitlocker:   { type: string, default: 'off' }
       # Names this cell's evidence artifact so parallel cells do not collide.
       case_name:   { type: string, default: '' }
+      # #71 triage only: stop in seconds unless the runner drew this podman
+      # major. Empty (the default) means take whatever arm we land on, so the
+      # nightly is never gated by it.
+      require_podman_major: { type: string, default: '' }
       # Force a full Windows install (skip the base-image restore). The restore
       # path (--skip-install on a snapshot) currently fails at the deployer-boot
       # handoff, so a full install is the reliable path to Phase 2 — and the only
@@ -84,6 +88,8 @@ jobs:
       # Ahead of every podman call: the runner's podman is newer than its crun,
       # which makes container CREATE fail (see the action for the full story).
       - uses: ./.github/actions/podman-runtime
+        with:
+          require-podman-major: ${{ inputs.require_podman_major }}
 
       # Best-effort: pull a pre-installed Windows base image (primed by
       # e2e-snapshot.yml) so run-e2e.sh restores it instead of reinstalling

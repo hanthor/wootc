@@ -29,10 +29,34 @@ inputs:
     description: crun release to install (containers/crun tag)
     required: false
     default: '1.28'
+  require-podman-major:
+    description: >
+      Triage aid for #71. When set (e.g. '5'), abort in seconds unless the
+      runner's podman major version matches. The hosted pool is mixed and the
+      arm is not knowable until a job produces logs, so reproducing an
+      arm-specific bug otherwise means gambling a full 45-minute E2E per
+      attempt. With this set, a wrong arm costs about a minute.
+      Leave empty in scheduled runs — it must never gate the nightly.
+    required: false
+    default: ''
 
 runs:
   using: composite
   steps:
+    - name: Select the podman arm (#71 triage; no-op unless requested)
+      if: ${{ inputs.require-podman-major != '' && runner.environment == 'github-hosted' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        want='${{ inputs.require-podman-major }}'
+        got=$(podman version --format '{{.Client.Version}}' 2>/dev/null | cut -d. -f1)
+        echo "podman major: got=${got:-unknown} want=$want"
+        if [ "$got" != "$want" ]; then
+          echo "::notice::Wrong podman arm (got ${got:-unknown}, wanted $want) — stopping early. Re-dispatch to draw again."
+          exit 1
+        fi
+        echo "Got the requested podman $want arm — continuing."
+
     - name: Install a podman-compatible crun (hosted runners only)
       if: runner.environment == 'github-hosted'
       shell: bash
