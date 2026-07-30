@@ -1882,10 +1882,51 @@ Write-Output "task-scheduled"' >/dev/null
 
     # The app reports every 2s. Wait first for the form to be driven (proves
     # the bridge + validation), then for the real pipeline to reach done.
+    #
+    # This loop used to report only the LAST read, and swallowed read errors.
+    # Run 30503493688 timed out with the verdict "did not reach the done screen
+    # in 30m (state: )" — an EMPTY state, which says nothing at all: it cannot
+    # distinguish "the installer stalled" from "the installer finished but QGA
+    # stopped answering", and those have opposite causes. An empty read is a
+    # fact about the CHANNEL, not about the install.
+    #
+    # So: keep the last state we actually saw, log every screen transition, and
+    # when reads come back empty, probe QGA liveness and say which one broke.
     local drive_deadline drive_state="" driven=false
+    local last_good="" last_screen="" empty_reads=0 total_empty=0
     drive_deadline=$(deadline_in 1800)
     while ! past_deadline "$drive_deadline"; do
         drive_state=$(qga_read 'C:\wootc\e2e-drive-state.json' 2>/dev/null || true)
+
+        if [ -z "$drive_state" ]; then
+            empty_reads=$((empty_reads + 1))
+            total_empty=$((total_empty + 1))
+            # Three empty reads (~30 s) is no longer a write-in-progress race.
+            # Ask whether the guest agent is answering at all — that single
+            # answer is the difference between a wedged installer and a dead
+            # channel, and it is free.
+            if [ "$empty_reads" -eq 3 ]; then
+                if qga_powershell 'Write-Output ok' >/dev/null 2>&1; then
+                    warn "  drive state unreadable but QGA is alive — the app may have stopped writing e2e-drive-state.json"
+                else
+                    warn "  drive state unreadable AND QGA is not answering — lost the channel to the guest"
+                fi
+            fi
+            sleep 10
+            continue
+        fi
+        empty_reads=0
+        last_good="$drive_state"
+
+        # Narrate progress: a 30-minute silent wait that ends in one verdict is
+        # undiagnosable, whereas the screen sequence shows where it stopped.
+        local screen
+        screen=$(printf '%s' "$drive_state" | sed -n 's/.*"screen":"\([^"]*\)".*/\1/p' | head -1)
+        if [ -n "$screen" ] && [ "$screen" != "$last_screen" ]; then
+            info "  GUI screen: ${last_screen:-<start>} -> $screen"
+            last_screen="$screen"
+        fi
+
         if [ "$driven" = false ] && printf '%s' "$drive_state" | grep -q '"installDriven":true'; then
             driven=true
             pass "GUI form filled and Install clicked through the live bridge"
@@ -1903,7 +1944,15 @@ Write-Output "task-scheduled"' >/dev/null
         sleep 10
     done
     printf '%s' "$drive_state" | grep -q '"screen":"done"' || {
-        fail "GUI-driven install did not reach the done screen in 30m (state: $(printf '%s' "$drive_state" | head -c 200))"
+        fail "GUI-driven install did not reach the done screen in 30m"
+        fail "  last screen reached: ${last_screen:-<none>} (install clicked: $driven)"
+        fail "  last readable state: ${last_good:-<never read one>}"
+        fail "  unreadable reads: $total_empty of ~180"
+        if qga_powershell 'Write-Output ok' >/dev/null 2>&1; then
+            fail "  QGA is answering NOW — so this is the installer, not the channel"
+        else
+            fail "  QGA is NOT answering — the verdict above may be a lost channel, not a stalled install"
+        fi
         capture_vm_diagnostics
         exit 1
     }
