@@ -357,6 +357,27 @@ ISO_CACHE_DIR="$SCRIPT_DIR/iso-cache"
 # Cache each Windows version/edition separately so a matrix run never clobbers
 # another case's installer (windows-11.iso, windows-10.iso, windows-11e.iso, …).
 WINDOWS_ISO_CACHE="${WOOTC_WINDOWS_ISO:-$ISO_CACHE_DIR/windows-${WIN_VERSION}.iso}"
+# Keep whatever Dockur downloaded, so the NEXT run on this host can read the
+# ISO's image names BEFORE Setup starts and fill /IMAGE/NAME correctly (#58).
+# On a fresh runner the first run cannot do that — the media does not exist yet
+# when the answer file is written — so caching it is what makes the second run
+# able to. Cheap, and it also spares a multi-GB re-download.
+cache_downloaded_iso() {
+    [ -n "${ISO_CACHE_DIR:-}" ] || return 0
+    [ -f "$WINDOWS_ISO_CACHE" ] && return 0
+    local src
+    src=$(ls -1 "$STORAGE_DIR"/windows.*.iso 2>/dev/null | head -1 || true)
+    [ -n "$src" ] || return 0
+    mkdir -p "$ISO_CACHE_DIR" || return 0
+    if cp --reflink=auto --sparse=auto "$src" "$WINDOWS_ISO_CACHE.part" 2>/dev/null; then
+        mv -f "$WINDOWS_ISO_CACHE.part" "$WINDOWS_ISO_CACHE"
+        info "Cached the downloaded Windows ISO for future runs: $WINDOWS_ISO_CACHE"
+    else
+        rm -f "$WINDOWS_ISO_CACHE.part"
+    fi
+    return 0
+}
+
 QGA_CACHE_DIR="$SCRIPT_DIR/qga-cache"
 QGA_MSI="${WOOTC_QGA_MSI:-$QGA_CACHE_DIR/qemu-ga-x86_64.msi}"
 QGA_MSI_URL="${WOOTC_QGA_MSI_URL:-https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-qemu-ga/qemu-ga-x86_64.msi}"
@@ -367,6 +388,10 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 cleanup() {
     local result=$?
     run_state "exited (status $result) during: ${WOOTC_LAST_STEP:-startup}"
+    # Whatever happened, keep the installer media: the next run on this host can
+    # then read its image names before Setup starts (#58) and skips a multi-GB
+    # re-download. Never let this affect the run's outcome.
+    cache_downloaded_iso 2>/dev/null || true
     if [ "$VIDEO_STARTED" = true ]; then
         WOOTC_CONTAINER_RUNTIME="$DOCKER" "$SCRIPT_DIR/record-video.sh" stop "$VIDEO_DIR" || true
     fi
@@ -611,6 +636,24 @@ qga_wait_windows() {
                 if [ "$idle_hits" -ge 3 ]; then
                     fail "Windows Setup appears WEDGED on a prompt: guest idle (<10% CPU) for ~15 min, not installing"
                     fail "  A real install pegs the CPU. Check the screenshot in the artifacts (see #58)."
+                    # The overwhelmingly common cause is the EDITION PICKER: the
+                    # answer file's key matched several images in this ISO, or
+                    # none. By now Dockur has downloaded the media, so we can
+                    # finally READ what it actually contains and say so —
+                    # turning a 45-minute mystery into a named, actionable fix.
+                    local wedged_iso names
+                    wedged_iso=$(ls -1 "$STORAGE_DIR"/windows.*.iso "$STORAGE_DIR"/custom.iso 2>/dev/null | head -1 || true)
+                    if [ -n "$wedged_iso" ]; then
+                        names=$(list_win_image_names "$wedged_iso" | paste -sd'|' - 2>/dev/null || true)
+                        if [ -n "$names" ]; then
+                            fail "  this ISO contains: $names"
+                            fail "  if Setup is on the edition picker, re-run with"
+                            fail "  WOOTC_E2E_WIN_IMAGE_NAME set to the one you want (#58)."
+                        else
+                            fail "  (could not read the ISO's image list — install wimlib-utils + p7zip to have it named here)"
+                        fi
+                    fi
+                    cache_downloaded_iso
                     capture_vm_diagnostics
                     return 1
                 fi

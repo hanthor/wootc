@@ -59,7 +59,11 @@ jobs:
         run: |
           ls -l /dev/kvm || { echo "::error::no /dev/kvm on this runner"; exit 1; }
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-kvm podman podman-compose python3-pip
+          # wimlib-imagex + 7z let the harness READ the installer ISO's image
+          # names and fill /IMAGE/NAME correctly instead of guessing (#58).
+          # Both are small; without them the harness simply sends no name, which
+          # is the pre-#58 behaviour.
+          sudo apt-get install -y -qq qemu-kvm podman podman-compose python3-pip wimtools p7zip-full
           pip install --quiet podman-compose || true
           # let the unprivileged runner user open /dev/kvm
           sudo usermod -aG kvm "$USER" || true
