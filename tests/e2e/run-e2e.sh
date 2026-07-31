@@ -1235,7 +1235,74 @@ sed "s#<Key>[^<]*</Key>#<Key>${WIN_KEY}</Key>#" autounattend.xml > "$RENDERED_AN
 # So it stays off until the real WIM names are read out of each ISO
 # (`wiminfo sources/install.wim`) and pinned per case. Set
 # WOOTC_E2E_WIN_IMAGE_NAME to try one.
+# pick_win_image_name <edition> — choose the ISO's own WIM image name for an
+# edition, reading candidate names on stdin (one per line, as `wiminfo` prints
+# them). ASKING the media is the only safe way to fill /IMAGE/NAME: a guessed
+# name Setup cannot resolve stalls on the very picker it was meant to skip
+# (#58, run 20260727T101713Z), which is strictly worse than sending no name.
+#
+# Selection is deliberately conservative: exactly ONE candidate must match, or
+# we return nothing and let Setup decide. "Windows 11 Pro" must never match
+# "Windows 11 Pro N" or "Windows 11 Pro Education".
+pick_win_image_name() {
+    local edition="$1" want="" line matches=0 chosen=""
+    case "$(printf '%s' "$edition" | tr '[:upper:]' '[:lower:]')" in
+        pro)        want="pro" ;;
+        home)       want="home" ;;
+        enterprise|ent) want="enterprise" ;;
+        ltsc|iot)   want="ltsc" ;;
+        *)          return 0 ;;
+    esac
+    while IFS= read -r line; do
+        line="${line#"${line%%[![:space:]]*}"}"   # ltrim
+        line="${line%"${line##*[![:space:]]}"}"   # rtrim
+        [ -n "$line" ] || continue
+        local lower; lower=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')
+        case "$want" in
+            ltsc)
+                # LTSC images name themselves "... Enterprise LTSC <year>".
+                case "$lower" in *ltsc*) ;; *) continue ;; esac ;;
+            enterprise)
+                # Plain Enterprise, NOT the LTSC or N variants.
+                case "$lower" in *ltsc*|*" n"|*" n "*|*evaluation*) continue ;; esac
+                case "$lower" in *enterprise*) ;; *) continue ;; esac ;;
+            pro)
+                case "$lower" in *" n"|*" n "*|*education*|*workstation*) continue ;; esac
+                case "$lower" in *pro*) ;; *) continue ;; esac ;;
+            home)
+                case "$lower" in *" n"|*" n "*|*single*) continue ;; esac
+                case "$lower" in *home*) ;; *) continue ;; esac ;;
+        esac
+        matches=$((matches + 1))
+        chosen="$line"
+    done
+    # Ambiguity is the failure mode this exists to avoid: a name matching two
+    # images is no better than a wrong one.
+    [ "$matches" -eq 1 ] && printf '%s' "$chosen"
+    return 0
+}
+
+# list_win_image_names <iso> — the WIM image names inside an installer ISO, or
+# nothing when the media is not reachable (the common case on a fresh hosted
+# runner, where dockur downloads the ISO during the run and it does not exist
+# yet at answer-file time). Requires wiminfo + 7z; absence is not an error.
+list_win_image_names() {
+    local iso="$1"
+    [ -f "$iso" ] || return 0
+    command -v wiminfo >/dev/null 2>&1 || return 0
+    command -v 7z >/dev/null 2>&1 || return 0
+    local tmpwim="${TMPDIR:-/tmp}/wootc-install.wim"
+    7z e -so "$iso" sources/install.wim > "$tmpwim" 2>/dev/null || { rm -f "$tmpwim"; return 0; }
+    wiminfo "$tmpwim" 2>/dev/null | sed -n 's/^Name:[[:space:]]*//p'
+    rm -f "$tmpwim"
+}
+
 WIN_IMAGE_NAME="${WOOTC_E2E_WIN_IMAGE_NAME:-}"
+# Derive from the media when we can actually read it. Never from a table.
+if [ -z "$WIN_IMAGE_NAME" ]; then
+    WIN_IMAGE_NAME=$(list_win_image_names "$WINDOWS_ISO_CACHE" | pick_win_image_name "${WOOTC_E2E_WIN_EDITION:-pro}")
+    [ -n "$WIN_IMAGE_NAME" ] && info "Windows image name read from the ISO: $WIN_IMAGE_NAME"
+fi
 if [ -z "$WIN_IMAGE_NAME" ] && [ "${WOOTC_E2E_WIN_NAME_IMAGE:-0}" = 1 ]; then
     case "${WOOTC_E2E_WIN_VERSION:-11}-${WOOTC_E2E_WIN_EDITION:-pro}" in
         10-pro)   WIN_IMAGE_NAME="Windows 10 Pro" ;;
