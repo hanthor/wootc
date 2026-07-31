@@ -84,7 +84,12 @@ except Exception:
 if str(d.get("user","")).lower() != os.environ["WOOTC_USER"].lower():
     sys.exit(0)
 print(d.get("folders", {}).get(os.environ["WOOTC_FOLDER"], ""))' 2>/dev/null || true)
+    # MUST end 0: this runs under `set -Eeuo pipefail` inside a command
+    # substitution, so returning non-zero for "no redirect" aborts the whole
+    # bridge partway through the folder list — silently, because the folders
+    # already bound look like a working migration.
     [[ -n "$raw" ]] && win_to_host "$raw"
+    return 0
 }
 
 # Bind one Windows profile into one Linux home. Shared by the exact-name path

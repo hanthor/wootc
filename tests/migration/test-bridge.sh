@@ -351,6 +351,11 @@ check '[ -f /home/alice/Pictures/holiday.jpg ]' \
     "#64: a non-redirected folder still bridges from the literal profile path"
 check 'echo "$out" | grep -q "redirected: Documents"' \
     "#64: the redirect is stated in the log, not applied silently"
+# The bridge must survive folders the manifest does not mention. Without this,
+# a helper returning non-zero for "no redirect" aborts the run under set -e
+# after the first few binds — and a partial migration looks like a working one.
+check 'echo "$out" | grep -q "summary:"' \
+    "#64: folders absent from the manifest do not abort the run"
 
 # A manifest belonging to a DIFFERENT user must never redirect this one, or
 # account A's OneDrive lands in account B's home.
