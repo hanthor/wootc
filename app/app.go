@@ -110,8 +110,13 @@ type SystemInfo struct {
 	// affirmative "running on battery" should ever block.
 	BatteryKnown bool `json:"batteryKnown"`
 	// PendingReboot: a servicing operation can rewrite boot configuration
-	// underneath us, or resume in the middle of the migration.
+	// underneath us, or resume in the middle of the migration. Narrow by
+	// design — see pendingReboot() for why PendingFileRenameOperations is
+	// deliberately NOT one of the signals.
 	PendingReboot bool `json:"pendingReboot"`
+	// PendingRebootReason names the signal that fired ("servicing",
+	// "windows-update"), so a refusal can be argued with rather than guessed at.
+	PendingRebootReason string `json:"pendingRebootReason"`
 	// Hibernated: hiberfil.sys present means the NTFS in-memory state is
 	// newer than the disk. Mounting that read-write from Linux is exactly
 	// how NTFS gets corrupted — the data loss wootc exists to prevent.

@@ -954,7 +954,7 @@ function refreshInstallValidity() {
   if (si?.hibernated)
     reason = 'Windows is hibernated, so the drive holds unsaved changes. Shut down fully (Start ▸ Power ▸ Shut down while holding Shift) and start wootc again — migrating now could damage your files.';
   else if (si?.pendingReboot)
-    reason = 'Windows has an update waiting to finish. Restart the PC, let it complete, then run wootc again — an update finishing mid-migration can break startup.';
+    reason = `Windows has an update waiting to finish (${si.pendingRebootReason || 'servicing'}). Restart the PC, let it complete, then run wootc again — an update finishing mid-migration can break startup.`;
   else if (si?.onBattery && si?.batteryKnown)
     reason = 'Plug in the power adapter first. Losing power partway through would leave the PC in a half-converted state.';
   else if (si && si.is64Bit === false)

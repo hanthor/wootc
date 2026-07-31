@@ -61,7 +61,7 @@ func getSystemInfo() SystemInfo {
 	// START", not "did something break" — they are checked before the first
 	// byte is written, because after the shrink there is no cheap undo.
 	info.OnBattery, info.BatteryKnown = onBattery()
-	info.PendingReboot = pendingReboot()
+	info.PendingReboot, info.PendingRebootReason = pendingReboot()
 	info.Hibernated = hibernated()
 	info.RAMGB = totalRAMGB()
 	info.Is64Bit = runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
@@ -260,20 +260,31 @@ if (-not $b) { Write-Output "nobattery" } elseif ($b.BatteryStatus -eq 1) { Writ
 	}
 }
 
-// pendingReboot reports whether Windows is mid-servicing. A pending operation
-// can rewrite the boot configuration underneath us or resume partway through
-// the migration. Any single positive signal is enough; failing to answer is
-// NOT treated as pending (we must not block on our own query breaking).
-func pendingReboot() bool {
-	out, err := runPowerShellOutput(`$p = $false
-if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") { $p = $true }
-if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") { $p = $true }
-if (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations -ErrorAction SilentlyContinue) { $p = $true }
-Write-Output $p`)
+// pendingReboot reports whether Windows is genuinely mid-servicing, and which
+// signal said so. A pending servicing operation can rewrite the boot
+// configuration underneath us or resume partway through the migration.
+//
+// DELIBERATELY NARROW. The first version also gated on
+// PendingFileRenameOperations, which turns out to be set by ordinary installers
+// and to linger on a large share of perfectly healthy machines — it refused a
+// freshly-installed Windows in our own E2E (el10-gnome-win11ent, 2026-07-31),
+// and would have refused plenty of real users' PCs for no reason. A gate that
+// fires on a healthy machine trains people to ignore it, and over-correcting
+// manufactures false refusals exactly as it manufactures false test failures.
+//
+// So: only Component Based Servicing and Windows Update, which mean a servicing
+// operation is genuinely staged. Failing to answer is NOT treated as pending —
+// our own query breaking must never block a fine machine.
+func pendingReboot() (bool, string) {
+	out, err := runPowerShellOutput(`$r = @()
+if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") { $r += "servicing" }
+if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") { $r += "windows-update" }
+Write-Output ($r -join ",")`)
 	if err != nil {
-		return false
+		return false, ""
 	}
-	return strings.EqualFold(strings.TrimSpace(out), "True")
+	reason := strings.TrimSpace(out)
+	return reason != "", reason
 }
 
 // hibernated reports whether a hibernation image is sitting on disk. This is

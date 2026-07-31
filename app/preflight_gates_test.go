@@ -34,6 +34,18 @@ func TestHibernationIsSeparateFromFastStartup(t *testing.T) {
 	}
 }
 
+// A refusal the user cannot argue with is a refusal they learn to ignore. When
+// the gate fires it must name the signal, because the first version of this
+// check fired on a HEALTHY freshly-installed Windows (PendingFileRenameOperations
+// is set by ordinary installers) and the message gave no way to tell that from a
+// real pending update.
+func TestPendingRebootNamesItsSignal(t *testing.T) {
+	info := SystemInfo{PendingReboot: true, PendingRebootReason: "windows-update"}
+	if info.PendingReboot && info.PendingRebootReason == "" {
+		t.Fatal("a pending-reboot refusal must name which signal fired")
+	}
+}
+
 func TestDevStubIsNeverBlocking(t *testing.T) {
 	// `wails dev` on Linux/macOS must not be gated by checks that describe a
 	// real Windows machine.
@@ -43,6 +55,9 @@ func TestDevStubIsNeverBlocking(t *testing.T) {
 	}
 	if info.PendingReboot {
 		t.Error("dev stub must not report a pending reboot")
+	}
+	if info.PendingRebootReason != "" {
+		t.Errorf("dev stub must not name a pending-reboot reason, got %q", info.PendingRebootReason)
 	}
 	if info.Hibernated {
 		t.Error("dev stub must not report hibernation")
