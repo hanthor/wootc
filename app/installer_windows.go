@@ -526,10 +526,6 @@ menuentry "Install wootc (debug)" {
 
 // ── ESP setup ─────────────────────────────────────────────────────────────────
 
-// wootcGrubMarker identifies a grub.cfg written by wootc, so reinstalls
-// can overwrite it while a real Linux distro's config is protected.
-const wootcGrubMarker = "# wootc deployer"
-
 func setupESP(cfg InstallConfig) error {
 	espPath, err := findESP()
 	if err != nil {

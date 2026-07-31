@@ -26,6 +26,12 @@ import (
 // readable by a human staring at a broken ESP with a rescue disk.
 const espOwnershipManifest = `EFI\wootc\wootc-owned.txt`
 
+// wootcGrubMarker identifies a grub.cfg written by wootc, so reinstalls can
+// overwrite it while a real Linux distro's config is protected. Declared here
+// rather than in the Windows-only installer because the ownership logic (and
+// its tests) must build everywhere.
+const wootcGrubMarker = "# wootc deployer"
+
 func espManifestPath(espPath string) string {
 	return filepath.Join(espPath, "EFI", "wootc", "wootc-owned.txt")
 }
@@ -60,6 +66,27 @@ func normalizeESPPath(p string) string {
 	return strings.ToLower(strings.Trim(p, "/"))
 }
 
+// isOwnNamespace reports whether a path lives in a directory only wootc ever
+// writes. EFI\wootc is ours by definition — nothing else puts files there — so
+// guarding it refuses our OWN reinstalls. The first version of this guard did
+// exactly that and blocked el10-gnome-win11ent on
+// "EFI\wootc\deployer-initramfs.img ... belongs to another operating system",
+// which would equally have blocked any real user reinstalling wootc.
+//
+// Only SHARED vendor directories (EFI\fedora) need ownership proof.
+func isOwnNamespace(rel string) bool {
+	return strings.HasPrefix(normalizeESPPath(rel), "efi/wootc/")
+}
+
+// ownsFedoraNamespace reports whether the EFI\fedora tree was staged by wootc.
+// An older wootc predating the manifest still left its marker in grub.cfg, so
+// this keeps upgrades working without weakening the guard against a real
+// Fedora/RHEL install (whose grub.cfg has no such marker).
+func ownsFedoraNamespace(espPath string) bool {
+	data, err := os.ReadFile(filepath.Join(espPath, "EFI", "fedora", "grub.cfg"))
+	return err == nil && strings.Contains(string(data), wootcGrubMarker)
+}
+
 // guardESPDestinations refuses to continue if any destination already exists
 // and was not written by wootc. Called BEFORE the first write.
 func guardESPDestinations(espPath string, relPaths []string) error {
@@ -71,13 +98,20 @@ func guardESPDestinations(espPath string, relPaths []string) error {
 		return fmt.Errorf("cannot read the record of which EFI files belong to wootc (%w) — "+
 			"refusing to overwrite boot files we cannot prove are ours", err)
 	}
+	fedoraIsOurs := ownsFedoraNamespace(espPath)
 	for _, rel := range relPaths {
 		full := filepath.Join(espPath, rel)
 		if _, err := os.Stat(full); err != nil {
 			continue // absent: nothing to clobber
 		}
+		if isOwnNamespace(rel) {
+			continue // our own directory; nothing else writes there
+		}
 		if owned[normalizeESPPath(rel)] {
 			continue // ours from a previous install: a reinstall may replace it
+		}
+		if fedoraIsOurs {
+			continue // an older wootc staged this tree (marker in grub.cfg)
 		}
 		return fmt.Errorf("this PC's EFI boot partition already contains %s, which wootc did not "+
 			"put there — it belongs to another operating system. Installing would make that "+

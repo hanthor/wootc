@@ -109,3 +109,40 @@ func contains(haystack, needle string) bool {
 		return false
 	})()
 }
+
+// wootc's OWN directory must never be treated as foreign. The first version of
+// the guard refused el10-gnome-win11ent on
+// "EFI\wootc\deployer-initramfs.img ... belongs to another operating system" —
+// a file only wootc ever writes. That would have blocked every real user
+// reinstalling over an existing wootc ESP.
+func TestOwnNamespaceIsNeverForeign(t *testing.T) {
+	esp := t.TempDir()
+	rel := filepath.Join("EFI", "wootc", "deployer-initramfs.img")
+	writeFile(t, filepath.Join(esp, rel), "from a previous wootc install")
+	// Deliberately no manifest: this is the upgrade case, where the files
+	// predate ownership tracking entirely.
+	if err := guardESPDestinations(esp, []string{rel}); err != nil {
+		t.Fatalf("EFI/wootc is wootc's own namespace and must not be guarded, got: %v", err)
+	}
+}
+
+// An older wootc left its marker in grub.cfg but no manifest. That tree is
+// ours, and a reinstall must not be refused.
+func TestOlderWootcInstallIsRecognisedByItsMarker(t *testing.T) {
+	esp := t.TempDir()
+	writeFile(t, filepath.Join(esp, "EFI", "fedora", "grub.cfg"), wootcGrubMarker+"\nmenuentry ...")
+	writeFile(t, filepath.Join(esp, "EFI", "fedora", "shimx64.efi"), "staged by an older wootc")
+	if err := guardESPDestinations(esp, []string{filepath.Join("EFI", "fedora", "shimx64.efi")}); err != nil {
+		t.Fatalf("an older wootc install must be recognised by its grub.cfg marker, got: %v", err)
+	}
+}
+
+// ...but a REAL Fedora, whose grub.cfg carries no marker, still stops us.
+func TestRealFedoraStillBlocksAfterTheNamespaceFix(t *testing.T) {
+	esp := t.TempDir()
+	writeFile(t, filepath.Join(esp, "EFI", "fedora", "grub.cfg"), "### BEGIN /etc/grub.d/10_linux ###")
+	writeFile(t, filepath.Join(esp, "EFI", "fedora", "shimx64.efi"), "real fedora shim")
+	if err := guardESPDestinations(esp, []string{filepath.Join("EFI", "fedora", "shimx64.efi")}); err == nil {
+		t.Fatal("a real Fedora ESP must still block the install")
+	}
+}
