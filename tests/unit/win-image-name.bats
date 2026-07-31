@@ -59,3 +59,29 @@ setup() {
     run bash -c 'printf "%s\n" "  Windows 11 Pro  " | pick_win_image_name pro'
     [ "$output" = "Windows 11 Pro" ]
 }
+
+@test "the in-run heal only fires when it can add information" {
+    # It must never touch a case that already works: no-op when the image name
+    # was resolved before boot, and no-op on the snapshot restore path (which
+    # never runs Windows Setup at all). Both guards live at the top of the
+    # function, so assert them at the source rather than booting a VM.
+    local f="$REPO_ROOT/tests/e2e/run-e2e.sh"
+    run bash -c "sed -n '/^heal_image_name_from_downloaded_iso() {/,/^}/p' '$f'"
+    [ -n "$output" ]
+    echo "$output" | grep -q '\[ -z "\$WIN_IMAGE_NAME" \] || return 0'
+    echo "$output" | grep -q '\[ "\$SKIP_INSTALL" = true \] && return 0'
+}
+
+@test "the in-run heal waits for the download to settle before reading" {
+    # Reading a still-downloading ISO would derive a name from a truncated
+    # file — a wrong name is worse than none (#58), so it must compare sizes.
+    local f="$REPO_ROOT/tests/e2e/run-e2e.sh"
+    run bash -c "sed -n '/^heal_image_name_from_downloaded_iso() {/,/^}/p' '$f'"
+    echo "$output" | grep -q 'eq "\$prev"'
+}
+
+@test "the in-run heal never proceeds on an ambiguous list" {
+    local f="$REPO_ROOT/tests/e2e/run-e2e.sh"
+    run bash -c "sed -n '/^heal_image_name_from_downloaded_iso() {/,/^}/p' '$f'"
+    echo "$output" | grep -q 'if \[ -z "\$derived" \]'
+}

@@ -1358,8 +1358,10 @@ if [ -z "$WIN_IMAGE_NAME" ] && [ "${WOOTC_E2E_WIN_NAME_IMAGE:-0}" = 1 ]; then
         11-ltsc)  WIN_IMAGE_NAME="Windows 11 Enterprise LTSC 2024" ;;
     esac
 fi
-if [ -n "$WIN_IMAGE_NAME" ]; then
-    python3 - "$RENDERED_ANSWER" "$WIN_IMAGE_NAME" <<'PYEOF'
+inject_image_name() {
+    local answer="$1" name="$2"
+    [ -n "$name" ] || return 0
+    python3 - "$answer" "$name" <<'PYEOF'
 import sys
 p, name = sys.argv[1], sys.argv[2]
 s = open(p, encoding="utf-8-sig").read()
@@ -1379,8 +1381,57 @@ if "<InstallTo>" not in s:
 s = s.replace("<InstallTo>", block + "<InstallTo>", 1)
 open(p, "w", encoding="utf-8").write(s)
 PYEOF
-    info "Answer file targets image: $WIN_IMAGE_NAME"
-fi
+    info "Answer file targets image: $name"
+}
+
+inject_image_name "$RENDERED_ANSWER" "$WIN_IMAGE_NAME"
+
+# In-run recovery for a fresh runner (#58). On a machine with no cached ISO we
+# cannot name the edition before boot — the media does not exist yet. But Dockur
+# downloads it into /storage within minutes, and its answer file is a MOUNTED
+# file (/custom.xml) re-read on every container start. So: wait for the media,
+# read the editions it really contains, re-render, and restart ONCE. No ISO has
+# to be persisted between runs, and nothing has to be redistributed.
+#
+# Only ever runs when we could NOT name the image up front and CAN name it now,
+# so a case that already works is untouched.
+heal_image_name_from_downloaded_iso() {
+    [ -z "$WIN_IMAGE_NAME" ] || return 0
+    [ "$SKIP_INSTALL" = true ] && return 0
+
+    local deadline iso="" prev=0 size=0
+    deadline=$(deadline_in 900)
+    while ! past_deadline "$deadline"; do
+        iso=$(ls -1 "$STORAGE_DIR"/windows.*.iso 2>/dev/null | head -1 || true)
+        if [ -n "$iso" ]; then
+            size=$(stat -c %s "$iso" 2>/dev/null || echo 0)
+            # Only read it once the download has stopped growing, or wiminfo
+            # sees a truncated file and we would "derive" a wrong answer.
+            [ "$size" -gt 0 ] && [ "$size" -eq "$prev" ] && break
+            prev="$size"
+        fi
+        sleep 20
+    done
+    [ -n "$iso" ] && [ "$size" -gt 0 ] || return 0
+
+    local derived
+    derived=$(list_win_image_names "$iso" | pick_win_image_name "${WOOTC_E2E_WIN_EDITION:-pro}")
+    if [ -z "$derived" ]; then
+        info "Downloaded ISO gave no unambiguous image name — leaving Setup to choose (#58)"
+        return 0
+    fi
+
+    step "Naming the Windows edition from the downloaded media and restarting Setup (#58)..."
+    info "  image: $derived"
+    WIN_IMAGE_NAME="$derived"
+    inject_image_name "$RENDERED_ANSWER" "$WIN_IMAGE_NAME"
+    cache_downloaded_iso
+    # Dockur re-reads /custom.xml at start; the downloaded ISO stays in
+    # /storage, so this costs a restart and not another multi-GB download.
+    $DOCKER restart "$CONTAINER_NAME" >/dev/null 2>&1 || \
+        warn "  could not restart the VM to apply the edition name"
+    return 0
+}
 
 # ── BitLocker axis (SPEC §3.5) ──────────────────────────────────────────────
 # off (default): the answer file sets PreventDeviceEncryption=1, so C: stays
@@ -1879,6 +1930,12 @@ fi
 # pre-deploy Windows install (el10-xfce, el10-gnome-win10home 20260724) — an
 # image-independent stage, so pure runner contention, not a bug. Make it
 # tunable and let the hosted matrix widen it.
+# Before the long wait: if we could not name the Windows edition up front (no
+# cached ISO — the normal case on a fresh runner), read it off the media Dockur
+# has just downloaded and restart Setup with it. Otherwise Setup parks on the
+# edition picker and this wait burns its entire budget for nothing (#58).
+heal_image_name_from_downloaded_iso
+
 qga_wait_windows "${WOOTC_E2E_WINDOWS_QGA_TIMEOUT:-2700}"
 qga_call info || true
 
