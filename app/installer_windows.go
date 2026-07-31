@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -839,9 +840,35 @@ func configureBCD(bootloader string) error {
 	// bcdedit /copy {bootmgr} /d "wootc" — clones the Windows Boot Manager entry,
 	// inheriting the ESP device/partition settings, so no drive letter is needed.
 	// This is the proven approach from WubiUEFI (millions of users).
-	out, err := runCmd("bcdedit", "/copy", "{bootmgr}", "/d", "wootc")
+	//
+	// Retry, and say what the firmware list looked like when it fails (#74).
+	// This step failed on 2 of 3 runs of one cell with two different messages,
+	// both about the DISPLAY ORDER:
+	//     "Illegal operation attempted on a registry key marked for deletion"
+	//     "The data area passed to a system call is too small"
+	// The first reads as a transient BCD-store state; the second is what
+	// bcdedit reports when the firmware boot entry list has grown large. A
+	// bounded retry addresses the first, re-sweeping stale entries between
+	// attempts addresses the second, and the enum dump tells us which one we
+	// actually hit instead of leaving it a guess.
+	var out string
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		out, err = runCmd("bcdedit", "/copy", "{bootmgr}", "/d", "wootc")
+		if err == nil {
+			break
+		}
+		if attempt < 3 {
+			// A partially-created entry from the failed attempt would itself
+			// lengthen the list, so sweep before trying again.
+			deleteWootcBCDEntries()
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+		}
+	}
 	if err != nil {
-		return fmt.Errorf("bcdedit /create: %w (output: %s)", err, out)
+		enum, _ := runCmd("bcdedit", "/enum", "firmware")
+		return fmt.Errorf("bcdedit /create: %w (output: %s) — firmware entries at failure: %d\n%s",
+			err, out, strings.Count(enum, "identifier"), tail(enum, 2000))
 	}
 
 	// Parse the new GUID
@@ -874,6 +901,15 @@ func configureBCD(bootloader string) error {
 		}
 	}
 	return nil
+}
+
+// tail returns the last n bytes of s, for embedding a bounded slice of a
+// command dump in an error without flooding the GUI.
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return "..." + s[len(s)-n:]
 }
 
 // deleteWootcBCDEntries removes every firmware entry named exactly
