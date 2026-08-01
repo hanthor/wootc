@@ -38,7 +38,13 @@ install() {
         tee which basename date chown cp ln ls mkdir head wc tail
 
     # restorecon (policycoreutils) may not be installed in the build container.
-    inst_multiple -o restorecon
+    # ldd is a glibc-common shell script, not a binary pulled in by any
+    # library dependency — without naming it here the initramfs has no ldd at
+    # all, which is how the qemu-ga closure builder aborted with exit 127
+    # (bluefin-dakota-win11pro, run 30707067821). deploy.sh's dso_closure()
+    # no longer needs it (it drives the loader directly), so this is the
+    # belt-and-braces second path, hence -o.
+    inst_multiple -o restorecon ldd
     inst /usr/lib/systemd/systemd-cryptsetup
 
     # The 99wootc-boot dracut module payload, injected into the installed
@@ -55,6 +61,15 @@ install() {
     # the booted ESP initramfs out of data.qcow2: the .wants symlink was present
     # but usr/lib/systemd/system/wootc-attach.service was absent.
     inst /usr/lib/wootc/99wootc-boot/wootc-attach.service
+    # The Phase-2 shutdown pair. deploy.sh stages these BY HAND into the
+    # early-cpio overlay on the branches that cannot regenerate the target's
+    # initramfs, so they have to survive into the deployer initramfs as files,
+    # exactly like wootc-attach-loop.sh and the unit above. Omitting them here
+    # is the same class of bug as the dangling-wants one described above: the
+    # overlay builder would find nothing to copy, Phase 2 would boot fine, and
+    # the breakage would only show up as a corrupt Windows on the way back.
+    inst /usr/lib/wootc/99wootc-boot/wootc-stage-shutdown.sh
+    inst /usr/lib/wootc/99wootc-boot/wootc-umount-host.sh
 
     # User Data Bridge (native passthrough) unit files, injected into the
     # installed system during verification the same way as 99wootc-boot.

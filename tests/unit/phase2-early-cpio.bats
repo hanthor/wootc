@@ -91,7 +91,12 @@ run_helpers() { # <bash-snippet> — with the extracted helpers + stubs loaded
         set -e
         log() { echo \"LOG: \$*\"; }
         err() { echo \"ERR: \$*\" >&2; }
+        $(extract_fn find_ldso)
+        $(extract_fn dso_closure)
         $(extract_fn stage_ntfs3g_closure)
+        $(extract_fn _initrd_segment_end)
+        $(extract_fn _initrd_skip_padding)
+        $(extract_fn list_initrd_members)
         $(extract_fn build_phase2_initrd)
         $1
     "
@@ -115,12 +120,21 @@ run_helpers() { # <bash-snippet> — with the extracted helpers + stubs loaded
 
 make_overlay() { # <dir> — a complete wootc overlay tree
     mkdir -p "$1/usr/lib/systemd/system/initrd-root-device.target.wants" \
-             "$1/usr/lib/wootc"
+             "$1/usr/lib/wootc" \
+             "$1/usr/lib/dracut/hooks/pre-pivot" \
+             "$1/usr/lib/dracut/hooks/shutdown"
     echo unit > "$1/usr/lib/systemd/system/wootc-attach.service"
     ln -sf ../wootc-attach.service \
         "$1/usr/lib/systemd/system/initrd-root-device.target.wants/wootc-attach.service"
     printf '#!/bin/bash\n' > "$1/usr/lib/wootc/wootc-attach-loop.sh"
     chmod +x "$1/usr/lib/wootc/wootc-attach-loop.sh"
+    # The Phase-2 shutdown pair, without which build_phase2_initrd refuses to
+    # pack — a Phase 2 that boots but hands Windows back a mounted rw NTFS.
+    # See tests/unit/phase2-clean-ntfs-umount.bats.
+    printf '#!/bin/bash\n' > "$1/usr/lib/dracut/hooks/pre-pivot/99-wootc-stage-shutdown.sh"
+    printf '#!/bin/sh\n' > "$1/usr/lib/dracut/hooks/shutdown/50-wootc-umount-host.sh"
+    chmod +x "$1/usr/lib/dracut/hooks/pre-pivot/99-wootc-stage-shutdown.sh" \
+             "$1/usr/lib/dracut/hooks/shutdown/50-wootc-umount-host.sh"
 }
 
 make_base_initrd() { # <out> [tools...] — a gzip cpio shipping the named tools
@@ -159,6 +173,69 @@ make_base_initrd() { # <out> [tools...] — a gzip cpio shipping the named tools
     run run_helpers "build_phase2_initrd '$ovl' '$BATS_TEST_TMPDIR/base3.img' '$BATS_TEST_TMPDIR/out3.img'"
     [ "$status" -ne 0 ]
     [ ! -e "$BATS_TEST_TMPDIR/out3.img" ]
+}
+
+prepend_microcode() { # <initrd> — make it a real-world image: uncompressed
+    # early-cpio (microcode) + 512-byte pad + the compressed main archive,
+    # which is what every Fedora/bootc initramfs actually is.
+    local img="$1"
+    local tree="$BATS_TEST_TMPDIR/early-tree"
+    rm -rf "$tree"; mkdir -p "$tree/kernel/x86/microcode"
+    : > "$tree/early_cpio"
+    head -c 2048 /dev/urandom > "$tree/kernel/x86/microcode/GenuineIntel.bin"
+    ( cd "$tree" && find . | cpio -o -H newc --quiet ) > "$img.early"
+    # dracut pads the early segment out to a 512-byte boundary.
+    local pad=$(( (512 - ($(wc -c < "$img.early") % 512)) % 512 ))
+    (( pad > 0 )) && head -c "$pad" /dev/zero >> "$img.early"
+    cat "$img.early" "$img" > "$img.concat"
+    mv "$img.concat" "$img"
+    rm -f "$img.early"
+}
+
+@test "behavioral: a microcode early-cpio does not hide the real initrd (#76)" {
+    command -v cpio >/dev/null || skip "cpio unavailable"
+    # `cpio -it` stops at the first TRAILER!!!, so listing the raw image
+    # yields the microcode segment and nothing else — five paths, no /usr.
+    # Reading that as "the initrd lacks bash/losetup/udevadm/mount" failed
+    # every dakota deploy (run 30700616717) on an initrd holding all four.
+    ovl="$BATS_TEST_TMPDIR/ovl-uc"; make_overlay "$ovl"
+    base="$BATS_TEST_TMPDIR/base-uc.img"
+    make_base_initrd "$base" bash losetup udevadm mount
+    prepend_microcode "$base"
+    # Guard the premise: the naive single-archive listing really is blind here.
+    run bash -c "cpio -it --quiet < '$base'"
+    [ "$status" -eq 0 ]
+    ! echo "$output" | grep -q bash
+    echo "$output" | grep -q microcode
+
+    run run_helpers "build_phase2_initrd '$ovl' '$base' '$BATS_TEST_TMPDIR/out-uc.img'"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q 'base initrd verified'
+}
+
+@test "behavioral: a real absence is still fatal behind an early-cpio" {
+    command -v cpio >/dev/null || skip "cpio unavailable"
+    # The segment walk must not turn the gate into a rubber stamp.
+    ovl="$BATS_TEST_TMPDIR/ovl-uc2"; make_overlay "$ovl"
+    base="$BATS_TEST_TMPDIR/base-uc2.img"
+    make_base_initrd "$base" losetup udevadm mount
+    prepend_microcode "$base"
+    run run_helpers "build_phase2_initrd '$ovl' '$base' '$BATS_TEST_TMPDIR/out-uc2.img'"
+    [ "$status" -ne 0 ]
+    echo "$output" | grep -q 'lacks: bash'
+}
+
+@test "behavioral: a microcode-only image is unverifiable, not a failure" {
+    command -v cpio >/dev/null || skip "cpio unavailable"
+    # No bin/ tree anywhere in the listing means the probe saw no rootfs —
+    # WARN, never a fatal verdict about tools it never looked at.
+    ovl="$BATS_TEST_TMPDIR/ovl-uc3"; make_overlay "$ovl"
+    base="$BATS_TEST_TMPDIR/base-uc3.img"
+    : > "$base"
+    prepend_microcode "$base"
+    run run_helpers "build_phase2_initrd '$ovl' '$base' '$BATS_TEST_TMPDIR/out-uc3.img'"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q 'unverified'
 }
 
 @test "behavioral: an unlistable base initrd warns but does not fail the deploy" {

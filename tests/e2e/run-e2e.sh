@@ -607,6 +607,45 @@ qga_windows_probe() {
     [[ "$os" =~ Windows_NT ]]
 }
 
+# The mirror of qga_windows_probe, and the missing half of the pair. Every
+# transition in this script is "one OS leaves, another arrives", and guest-ping
+# cannot tell those two apart: it answers for whichever agent is up. So the
+# only way to say "the guest is STILL the one I was talking to" is to ask the
+# guest what it is, positively. Run 30710282779 is what the negative form
+# costs — see p2_reboot_observe().
+qga_linux_probe() {
+    local os
+    os=$(WOOTC_QGA_CALL_TIMEOUT=5 qga_call exec /bin/sh -c 'uname -s' 2>/dev/null | tr -d '\r\n' || true)
+    [[ "$os" == *Linux* ]]
+}
+
+# Classify what the guest is doing after a Phase-2 reboot request, from
+# observables only. Echoes exactly one of:
+#
+#   down     no agent answers — Phase 2 has left and the return is underway
+#   windows  the answering agent IS Windows — the return already completed
+#   linux    a LINUX agent still answers — the reboot request did nothing
+#   unknown  an agent answers but has not identified itself as either yet
+#
+# This function never resets anything. `linux` is the ONLY one of the four that
+# a QEMU system_reset is a correct answer to; every other value means the reset
+# would land on a Windows that is booting or already back, i.e. a hard power
+# cut to the exact thing this step exists to verify.
+#
+# Both knobs are env overrides rather than arguments so the only call site stays
+# argument-free: a budget passed positionally by tests but never by the script
+# is indistinguishable from a bug (SC2120), and the tests are the one caller
+# that needs to shrink it.
+p2_reboot_observe() {
+    local budget="${WOOTC_E2E_P2_REBOOT_TRIES:-9}" poll="${WOOTC_E2E_P2_REBOOT_POLL_S:-5}" i
+    for i in $(seq 1 "$budget"); do
+        if [ "$poll" -gt 0 ]; then sleep "$poll"; fi
+        qga_probe || { echo down; return 0; }
+        if qga_windows_probe; then echo windows; return 0; fi
+    done
+    if qga_linux_probe; then echo linux; else echo unknown; fi
+}
+
 qga_wait_windows() {
     local timeout="$1" elapsed=0 idle_hits=0 cpu
     step "Waiting for QGA: Windows guest..."
@@ -1156,8 +1195,18 @@ cp "$SCRIPT_DIR/wootc-files/grub/"*.cfg "$OEM_PAYLOAD/grub/"
 # the deployer about it via mirror.txt beside vault.json; the deployer probes
 # before trusting, so a dead cache degrades to normal direct pulls.
 MIRROR_ADDR=""
-for ip in $(ip -4 addr show tailscale0 2>/dev/null | awk '/inet /{sub(/\/.*/,"",$2); print $2}') \
-          $(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1); exit}'); do
+# `|| true` inside each group is load-bearing under `set -Eeuo pipefail`. A
+# hosted runner has no tailscale0, so `ip -4 addr show tailscale0` exits 1, the
+# pipeline inherits it, and the ERR trap — which -E propagates into command
+# substitutions — printed
+#     [FAIL] run-e2e.sh aborted: awk '/inet /{...}' (exit 1)
+# into the console log of a run that had aborted nothing (run 30707067821).
+# The matrix reads the LAST [FAIL] as the verdict, so on any run whose real
+# failure is silent (a timeout) this line becomes the recorded reason.
+for ip in $({ ip -4 addr show tailscale0 2>/dev/null || true; } \
+                | awk '/inet /{sub(/\/.*/,"",$2); print $2}') \
+          $({ ip -4 route get 1.1.1.1 2>/dev/null || true; } \
+                | awk '{for(i=1;i<NF;i++) if($i=="src") print $(i+1); exit}'); do
     if curl -fsS -m 2 "http://${ip}:5000/v2/" >/dev/null 2>&1; then
         MIRROR_ADDR="${ip}:5000"
         break
@@ -1186,10 +1235,15 @@ fi
 # axis with WOOTC_E2E_BOOTLOADER=grub2|systemd / WOOTC_E2E_COMPOSEFS=0|1.
 E2E_BOOTLOADER="${WOOTC_E2E_BOOTLOADER:-auto}"
 E2E_COMPOSEFS="${WOOTC_E2E_COMPOSEFS:-auto}"
+# Root filesystem axis (#35): auto = the deployer's own default (xfs unsealed /
+# ext4 sealed); WOOTC_E2E_FILESYSTEM=btrfs forces wootc.filesystem=btrfs so the
+# matrix can prove the btrfs Phase-2 path.
+E2E_FILESYSTEM="${WOOTC_E2E_FILESYSTEM:-auto}"
 {
     printf 'ImageRef=%s\n'   "$IMAGE_REF"
     printf 'Bootloader=%s\n' "$E2E_BOOTLOADER"
     printf 'ComposeFs=%s\n'  "$E2E_COMPOSEFS"
+    printf 'Filesystem=%s\n' "$E2E_FILESYSTEM"
     # RunId lets the OEM barrier prove the completion marker came from THIS run.
     # Without it the barrier passes on a stale marker left by a previous run —
     # see the comment on the barrier loop below.
@@ -1209,8 +1263,8 @@ E2E_COMPOSEFS="${WOOTC_E2E_COMPOSEFS:-auto}"
         printf 'RootDiskGiB=%s\n' "${WOOTC_E2E_ROOT_DISK_GIB:-35}"
     fi
 } > "$OEM_DIR/wootc-config.txt"
-printf '[INFO] Deployer config: image=%s bootloader=%s composefs=%s\n' \
-    "$IMAGE_REF" "$E2E_BOOTLOADER" "$E2E_COMPOSEFS" >&2
+printf '[INFO] Deployer config: image=%s bootloader=%s composefs=%s filesystem=%s\n' \
+    "$IMAGE_REF" "$E2E_BOOTLOADER" "$E2E_COMPOSEFS" "$E2E_FILESYSTEM" >&2
 
 # ── Step 1: Check prerequisites ──────────────────────────────────────────────
 step "Checking prerequisites..."
@@ -2774,6 +2828,14 @@ BOOT_STARTED=$(date +%s)
 BOOT_DEADLINE=$(deadline_in "$TIMEOUT")
 BOOT_SUCCESS=false
 PHASE2_DIAGNOSED=false
+# Byte offset where THIS Phase-2 boot starts in the serial. The diagnosis below
+# must read the whole boot, not the 5-second delta the poll loop happens to be
+# holding: the attach line lands at t≈5s and the emergency at t≈130s, so
+# grepping NEW_OUTPUT for it reported "root.disk never attached" against a
+# serial that says "attached raw root.disk … as /dev/loop0" two minutes
+# earlier (bluefin-lts-win11pro-btrfs, hosted matrix run 30700616717) — status
+# derived from a window instead of from the boot.
+PHASE2_BYTE0=$LAST_BYTE
 
 while ! past_deadline "$BOOT_DEADLINE"; do
     snapshot_serial || true
@@ -2804,15 +2866,30 @@ while ! past_deadline "$BOOT_DEADLINE"; do
             # dropped to an emergency shell. The diagnostic killed the run
             # before it could report (el10-gnome-win11pro-phase3, 2026-07-27).
             # Absence of the attach line is the very thing being tested for.
-            ATTACHED=$(printf '%s\n' "$NEW_OUTPUT" | grep -aiE "attached raw root.disk .* as /dev/loop" | tail -1 || true)
-            if [ -n "$ATTACHED" ]; then
+            PHASE2_OUTPUT=$(tail -c "+$((PHASE2_BYTE0 + 1))" "$PTY")
+            ATTACHED=$(printf '%s\n' "$PHASE2_OUTPUT" | grep -aiE "attached raw root.disk .* as /dev/loop" | tail -1 || true)
+            # A btrfs root the kernel cannot LOAD is its own verdict. The hook
+            # prints "module loaded=0" per btrfs partition and the kernel says
+            # "Loading of module with unavailable key is rejected" when the
+            # image's btrfs is an out-of-tree kmod signed with a key Secure
+            # Boot does not trust — blaming sysroot.mount there sends the next
+            # reader after the mount step instead of after the image.
+            BTRFS_UNLOADED=$(printf '%s\n' "$PHASE2_OUTPUT" \
+                | grep -aiE "btrfs .*module loaded=0|Loading of module with unavailable key is rejected" | tail -1 || true)
+            if [ -n "$BTRFS_UNLOADED" ]; then
+                PHASE2_DIAGNOSED=true; fail "Phase 2 dropped to an emergency shell — the target kernel never loaded btrfs"
+                info "  $(printf '%s' "$BTRFS_UNLOADED" | sed 's/.*wootc:/wootc:/')"
+                info "  → btrfs.ko is absent or its signature is untrusted under Secure Boot, so the"
+                info "    udev readiness gate never clears and the root=UUID device unit never activates."
+                info "    The image cannot host a btrfs root here; the attach and the mount are not the fault."
+            elif [ -n "$ATTACHED" ]; then
                 PHASE2_DIAGNOSED=true; fail "Phase 2 dropped to an emergency shell — root.disk ATTACHED but sysroot.mount failed"
                 info "  attach succeeded: $(printf '%s' "$ATTACHED" | sed 's/.*wootc:/wootc:/')"
                 info "  → the loop-attach worked; the mount/root-UUID step is the fault (see #35 for the btrfs case)"
             else
                 PHASE2_DIAGNOSED=true; fail "Phase 2 dropped to an emergency shell — root.disk never attached"
             fi
-            echo "$NEW_OUTPUT" | grep -aiE "wootc|sysroot|does not exist|mount|root=UUID" | tail -12
+            echo "$PHASE2_OUTPUT" | grep -aiE "wootc|sysroot|does not exist|mount|root=UUID" | tail -12
             break
         fi
         if printf '%s\n' "$NEW_OUTPUT" | grep -E "No bootable device|BOOTMGR is missing|kernel panic" >/dev/null 2>&1; then
@@ -3139,9 +3216,56 @@ if [ "${RUN_PHASE3:-false}" = true ]; then
     fi
 else
     step "Rebooting Phase 2 Linux and verifying return to Windows..."
-    qga_call exec /bin/sh -c 'systemctl reboot' 2>/dev/null \
-        || $DOCKER exec "$CONTAINER_NAME" python3 -c 'import socket; s=socket.socket(socket.AF_UNIX); s.connect("/run/shm/monitor.sock"); s.sendall(b"system_reset\n"); s.close()'
-    qga_wait "Windows return after Phase 2 Linux" 600
+    # A guest-exec RPC accepting the request only proves a process SPAWNED —
+    # not that the guest rebooted. On bonito the request was accepted and
+    # nothing happened: Phase 2 sat at its login prompt while this step
+    # waited 10 minutes for a Windows that was never coming (runs
+    # 30700616717 / 30704513401 — the serial's last line is
+    # "wootc-test login:"). `systemctl reboot -ff` is the in-guest fallback
+    # (direct syscall, no init round-trip for a confined agent context);
+    # then REQUIRE the observable — the Linux agent going silent — and fall
+    # back to a QEMU-level reset while the guest is still answering. The
+    # monitor write drains the HMP banner first (record-video.sh's proven
+    # pattern) rather than a blind sendall.
+    #
+    # BOUND THE REQUEST. qga_call polls guest-exec-status until the process
+    # exits, then retries the whole call three times on timeout — up to ~3
+    # minutes against a guest that is busy dying. Run 30710282779 spent 110
+    # blind seconds right here: Phase 2 took the request and was through
+    # "reboot: machine restart" two seconds later (serial, t=75.97), Windows
+    # came back, and the observation below opened its eyes on the WINDOWS
+    # agent. A timeout of 5s or less collapses qga_call's retry budget to a
+    # single try, and guest-exec spawns asynchronously, so the request lands
+    # whether or not we linger for an exit status we never read.
+    WOOTC_QGA_CALL_TIMEOUT=5 qga_call exec /bin/sh -c 'systemctl reboot || systemctl reboot -ff' 2>/dev/null || true
+    # "An agent answers" is NOT "Phase 2 is still up" — guest-ping answers for
+    # whoever is home, and after this reboot that is increasingly Windows. The
+    # old loop only looked for the ping to FAIL, so a Windows that returned
+    # promptly read as a Phase 2 that had not rebooted at all, and the fallback
+    # then fired system_reset into it. That is run 30710282779's actual
+    # failure: every Linux assertion passed, the exitrd handed C: back cleanly
+    # ("wootc: shutdown: unmounted the Windows host NTFS"), Windows booted, and
+    # the harness power-cut it mid-boot — after which the firmware looped
+    # Boot0003 and the guest sat in recovery until the 10-minute budget ran
+    # out. Reset ONLY on a positively identified Linux agent.
+    case "$(p2_reboot_observe)" in
+        down)
+            info "Phase 2 Linux stopped answering QGA — the return to Windows is underway"
+            ;;
+        windows)
+            info "Windows QGA is already answering — Phase 2 rebooted and Windows returned inside the observation window"
+            ;;
+        linux)
+            info "Phase 2 Linux is STILL answering QGA after the reboot request — forcing a QEMU system_reset"
+            $DOCKER exec "$CONTAINER_NAME" python3 -c 'import socket,time; s=socket.socket(socket.AF_UNIX); s.connect("/run/shm/monitor.sock"); time.sleep(.2); s.recv(4096); s.sendall(b"system_reset\n"); time.sleep(.4); s.recv(4096); s.close()' || true
+            ;;
+        *)
+            info "An agent answers but has identified itself as neither Linux nor Windows — NOT resetting; a reset here would power-cut a booting Windows"
+            ;;
+    esac
+    # Assert WINDOWS answered, not merely "some agent": a Phase 2 that never
+    # went down would satisfy a bare QGA wait instantly and fake the return.
+    qga_wait_windows 600
     pass "One-shot Phase 2 boot consumed; Windows returned successfully"
 fi
 

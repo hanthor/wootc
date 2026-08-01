@@ -994,6 +994,66 @@ if [[ "${ROOTFS_SEALED:-0}" == 1 || "$COMPOSEFS" == 1 ]] && \
     log "  composefs-sealed rootfs → ext4 (fs-verity, proven); btrfs blocked on #35"
 fi
 
+# ── btrfs preflight: can the TARGET kernel actually LOAD btrfs? ─────────────
+# Knowable here in seconds, otherwise it costs a full deploy plus a Phase-2
+# emergency shell to discover. bluefin-lts-win11pro-btrfs (hosted matrix run
+# 30700616717) formatted btrfs happily, deployed green, and then Phase 2 said:
+#   Loading of module with unavailable key is rejected
+#   [FAILED] Failed to start systemd-modules-load.service
+#   wootc: btrfs /dev/loop0p3: module loaded=0 ID_BTRFS_READY=0 SYSTEMD_READY=0
+# and sat in emergency until the harness gave up 25 minutes later. CentOS
+# Stream 10 has no in-tree btrfs, so bluefin:lts carries an out-of-tree kmod
+# signed with a key that kernel does not trust; under Secure Boot the kernel
+# is locked down and rejects it, the udev readiness gate never clears, and the
+# root=UUID device unit never activates (#35's shape, different cause).
+#
+# The SIGNER is the observable, not the module's presence: a kmod signed by
+# the kernel's own key loads fine, and an unsigned-module kernel has no
+# signature to reject. Compare btrfs's signer against the signer of a module
+# that ships WITH the kernel, and only refuse on a positive mismatch.
+if [[ "$FILESYSTEM" == btrfs ]]; then
+    if ! timeout 120 podman image exists "$IMAGE" 2>/dev/null; then
+        log "  btrfs preflight: pulling $IMAGE (not local yet)"
+        timeout "${WOOTC_PROBE_PULL_TIMEOUT:-1800}" podman pull "$IMAGE" >/dev/null 2>&1 || true
+    fi
+    BTRFS_PROBE="$(timeout 120 podman run --rm --network=host "$IMAGE" sh -c '
+        KV=$(ls /usr/lib/modules 2>/dev/null | head -1)
+        [ -n "$KV" ] || exit 0
+        echo "KVER=$KV"
+        KO=$(modinfo -k "$KV" -n btrfs 2>/dev/null || true)
+        echo "BTRFS_KO=$KO"
+        [ -n "$KO" ] || exit 0
+        echo "BTRFS_SIGNER=$(modinfo -k "$KV" -F signer btrfs 2>/dev/null | head -1)"
+        # Any module under the kernel package'"'"'s own tree carries the key the
+        # locked-down kernel trusts; out-of-tree kmods land in extra/ or
+        # weak-updates/ and are exactly what this compares against.
+        REF=$(find "/usr/lib/modules/$KV/kernel" -name "*.ko*" -print 2>/dev/null | head -1)
+        [ -n "$REF" ] || exit 0
+        echo "REF_KO=$REF"
+        echo "REF_SIGNER=$(modinfo -F signer "$REF" 2>/dev/null | head -1)"
+    ' 2>/dev/null || true)"
+    BTRFS_KO="$(sed -n 's/^BTRFS_KO=//p' <<<"$BTRFS_PROBE")"
+    BTRFS_SIGNER="$(sed -n 's/^BTRFS_SIGNER=//p' <<<"$BTRFS_PROBE")"
+    REF_SIGNER="$(sed -n 's/^REF_SIGNER=//p' <<<"$BTRFS_PROBE")"
+    if [[ -z "$BTRFS_PROBE" ]]; then
+        err "  [WARN] btrfs preflight could not inspect $IMAGE — proceeding blind"
+    elif [[ -z "$BTRFS_KO" ]]; then
+        err "  [FAIL] wootc.filesystem=btrfs but $IMAGE ships no btrfs module for its kernel"
+        err "         Phase 2 could not mount a btrfs root; refusing to deploy one."
+        exit 1
+    elif [[ -n "$BTRFS_SIGNER" && -n "$REF_SIGNER" && "$BTRFS_SIGNER" != "$REF_SIGNER" ]]; then
+        err "  [FAIL] wootc.filesystem=btrfs but $BTRFS_KO is an out-of-tree module"
+        err "         signed by '$BTRFS_SIGNER', while the kernel's own modules are"
+        err "         signed by '$REF_SIGNER'. Under Secure Boot the target kernel"
+        err "         rejects it, the btrfs udev readiness gate never clears, and"
+        err "         Phase 2 lands in an emergency shell. Refusing to deploy."
+        err "         Use an image whose kernel has btrfs in-tree, or enrol the key."
+        exit 1
+    else
+        log "  btrfs preflight: $BTRFS_KO loads under the kernel's own signing key"
+    fi
+fi
+
 # ── Write fisherman recipe ──────────────────────────────────────────────────
 # Fisherman handles partitioning, formatting, bootc install to-filesystem,
 # Flatpaks, and kernel cmdline injection. We just point it at the loop device.
@@ -1103,6 +1163,92 @@ stage_wootc_overlay() {
     mkdir -p "$ovl/usr/lib/systemd/system/initrd-root-device.target.wants"
     ln -sf ../wootc-attach.service \
         "$ovl/usr/lib/systemd/system/initrd-root-device.target.wants/wootc-attach.service"
+
+    # The Phase-2 shutdown pair — the counterpart to this deployer's own
+    # "leave the NTFS volume clean before the forced reboot" teardown, which
+    # Phase 2 had no equivalent of. Without them Phase 2 reboots with the rw
+    # NTFS still mounted and the loop device still attached (systemd: "Not all
+    # file systems unmounted, 1 left"), and Windows comes back to a volume it
+    # boot-loops on and cannot repair.
+    #
+    # These are dracut HOOKS, not units, so they go under the hook dirs rather
+    # than being wired through systemd. /usr/lib, never /lib: dracut's
+    # $hookdir is /lib/dracut/hooks, which is the same path on the usr-merged
+    # images this overlay targets, and creating a real /lib directory in an
+    # early cpio would collide with the base initrd's /lib -> usr/lib symlink.
+    install -D -m0755 /usr/lib/wootc/99wootc-boot/wootc-stage-shutdown.sh \
+        "$ovl/usr/lib/dracut/hooks/pre-pivot/99-wootc-stage-shutdown.sh"
+    install -D -m0755 /usr/lib/wootc/99wootc-boot/wootc-umount-host.sh \
+        "$ovl/usr/lib/dracut/hooks/shutdown/50-wootc-umount-host.sh"
+}
+
+# find_ldso
+# Print the path of the dynamic loader this initramfs runs on.
+#
+# Unlike ldd, the loader is NOT optional here: every dynamically linked binary
+# in the initramfs — bash, podman, qemu-ga — is unrunnable without it, so if
+# this returns nothing the deployer is not executing at all.
+find_ldso() {
+    local c
+    for c in /usr/lib64/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2 \
+             /usr/lib64/ld-linux-aarch64.so.1 /lib64/ld-linux-aarch64.so.1 \
+             /usr/lib64/ld-linux-*.so.* /lib64/ld-linux-*.so.* \
+             /usr/lib/ld-linux*.so.* /lib/ld-linux*.so.*; do
+        if [[ -x "$c" ]]; then printf '%s\n' "$c"; return 0; fi
+    done
+    return 1
+}
+
+# dso_closure <binary>
+# Print, one absolute path per line, every shared object <binary> needs plus
+# the dynamic loader itself.
+#
+# This replaces `ldd "$bin" | awk '…print $i'`, which every closure builder
+# here used to call and which is unrunnable in the deployer initramfs: `ldd`
+# is a glibc-common SHELL SCRIPT and dracut installs only what
+# module-setup.sh names, so it was never there. Under `set -o pipefail` the
+# missing script failed the pipeline with 127 while the ERR trap named the
+# *awk* stage, and the closure came back empty — the deployer then printed
+#   [FAIL] qga: ldd on the deployer's qemu-ga surfaced no dynamic loader
+# which run-e2e.sh reads as a fatal deployer error and kills the run
+# (bluefin-dakota-win11pro, run 30707067821, 11 minutes in).
+#
+# `$ldso --list` is what ldd ultimately execs, so it yields identical output
+# without the script. Parsing is pure bash for the same reason: a closure
+# resolver must not be breakable by a missing text tool.
+#
+# Returns 1 and prints nothing when <binary> is not a dynamic executable (a
+# shell script, a static binary): the callers read "no loader in the output"
+# as "no self-contained closure is possible", and that verdict has to stay
+# true, so the loader is never emitted for a binary that does not use it.
+dso_closure() {
+    local bin="$1" ldso="" raw="" line word saw_ldso=0 found=0
+    ldso="$(find_ldso 2>/dev/null || true)"
+    if [[ -n "$ldso" ]]; then
+        raw="$("$ldso" --list "$bin" 2>/dev/null || true)"
+    fi
+    if [[ -z "$raw" ]] && command -v ldd >/dev/null 2>&1; then
+        raw="$(ldd "$bin" 2>/dev/null || true)"
+    fi
+    [[ -n "$raw" ]] || return 1
+    while IFS=$' \t' read -r -a line; do
+        (( ${#line[@]} )) || continue
+        for word in "${line[@]}"; do
+            case "$word" in
+                /*) [[ -f "$word" ]] || continue
+                    printf '%s\n' "$word"
+                    found=1
+                    case "$word" in
+                        */ld-linux*|*/ld64.so*|*/ld.so*) saw_ldso=1 ;;
+                    esac ;;
+            esac
+        done
+    done <<< "$raw"
+    (( found )) || return 1
+    # glibc's --list names the loader itself; some libcs do not. Emit it only
+    # when the binary really did resolve against one.
+    if (( ! saw_ldso )) && [[ -n "$ldso" ]]; then printf '%s\n' "$ldso"; fi
+    return 0
 }
 
 # stage_ntfs3g_closure <ovl-dir>
@@ -1153,9 +1299,12 @@ stage_ntfs3g_closure() {
             case "$lib" in
                 */ld-linux*|*/ld64.so*|*/ld.so*) ldso="${lib##*/}" ;;
             esac
-        done < <(ldd "$nbin" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i ~ /^\//) print $i}')
+        done < <(dso_closure "$nbin")
         if [[ -z "$ldso" ]]; then
-            err "  [FAIL] early-cpio: ldd on the deployer's ntfs-3g surfaced no dynamic loader — cannot build a self-contained closure"
+            # Best-effort: all three callers fall back to kernel ntfs3 with a
+            # [WARN]. Never say [FAIL] for something the deployer survives —
+            # run-e2e.sh kills the run on the first [FAIL] on the serial.
+            err "  [WARN] early-cpio: no dynamic loader resolved for the deployer's ntfs-3g — cannot build a self-contained closure"
             rm -rf "${ovl:?}/$pdir"
             return 1
         fi
@@ -1164,7 +1313,7 @@ stage_ntfs3g_closure() {
         # deployer's own binary on the deployer's own kernel, so it can run
         # here — pinned to the staged loader + staged libs only.
         if ! "$ovl/$pdir/$ldso" --library-path "$ovl/$pdir" "$ovl/$pdir/ntfs-3g" --version >/dev/null 2>&1; then
-            err "  [FAIL] early-cpio: staged ntfs-3g closure does not execute against its own libraries"
+            err "  [WARN] early-cpio: staged ntfs-3g closure does not execute against its own libraries"
             rm -rf "${ovl:?}/$pdir"
             return 1
         fi
@@ -1184,6 +1333,199 @@ NTFSWRAP
     return 1
 }
 
+# stage_qemu_ga_into_target
+# Give the deployed system a guest agent the E2E control plane can reach, on
+# images that ship none.
+#
+# The previous implementation wrote the binary to $DEPLOY_ROOT/usr/bin/qemu-ga
+# and the unit to $DEPLOY_ROOT/usr/lib/systemd/system/. On a composefs
+# deployment both writes SUCCEED and both are INVISIBLE at runtime: the sealed
+# .cfs image is mounted over /usr, so the deployment directory's own /usr is
+# shadowed. dakota booted Phase 2 all the way to a login prompt carrying
+# `systemd.wants=qemu-guest-agent.service`, with no such unit anywhere in the
+# booted system, while the deployer logged "[PASS] qemu-guest-agent installed
+# from deployer into target" (run 30703716667). The harness then reported
+# "the Phase-2 guest agent never answered". A PASS derived from a write
+# landing rather than from the runtime seeing it.
+#
+# /etc and /var ARE the runtime ones under composefs. Ground truth from that
+# same boot: wootc-passthrough.service (installed into $DEPLOY_ROOT/etc with
+# ExecStart=/var/usrlocal/bin/wootc-mount-user-dirs) started and finished.
+# So stage into those, never into /usr:
+#   binary + full ldd closure  → /var/usrlocal/lib/wootc-qga/
+#   wrapper                    → /var/usrlocal/bin/qemu-ga
+#   unit + wants symlink       → /etc/systemd/system/
+#
+# The closure is the agent-lessons §8 rule that stage_ntfs3g_closure follows:
+# never mix the deployer's binary with the target's libraries: ship every
+# ldd-resolved library plus the loader, invoke through the staged loader, and
+# PROVE it by running it (ldd reports only the first missing library).
+#
+# The unit is named wootc-qemu-ga.service and gated on
+# ConditionPathExists=!/usr/bin/qemu-ga so it can never displace an agent the
+# image ships itself. That condition is evaluated in the booted real root,
+# the only place where "does this image have qemu-ga" is observable. A chroot
+# probe here cannot answer it: under composefs $DEPLOY_ROOT/usr is empty, so
+# the probe reports "absent" for every image, including ones that have it.
+stage_qemu_ga_into_target() {
+    local src pdir="var/usrlocal/lib/wootc-qga" lib ldso=""
+    src=$(command -v qemu-ga 2>/dev/null || true)
+    if [[ -z "$src" ]]; then
+        err "  [WARN] qga: the deployer initramfs carries no qemu-ga to stage"
+        return 1
+    fi
+    rm -rf "${DEPLOY_ROOT:?}/$pdir"
+    install -D -m0755 "$src" "$DEPLOY_ROOT/$pdir/qemu-ga"
+    while IFS= read -r lib; do
+        [[ -f "$lib" ]] || continue
+        install -D -m0755 "$lib" "$DEPLOY_ROOT/$pdir/${lib##*/}"
+        case "$lib" in
+            */ld-linux*|*/ld64.so*|*/ld.so*) ldso="${lib##*/}" ;;
+        esac
+    done < <(dso_closure "$src")
+    if [[ -z "$ldso" ]]; then
+        # [WARN], not [FAIL]: the caller continues with "no fallback qemu-ga
+        # staged", and run-e2e.sh aborts the deploy on the first [FAIL] it
+        # sees on the serial — which is how this line, on its own, ended
+        # bluefin-dakota-win11pro in run 30707067821.
+        err "  [WARN] qga: no dynamic loader resolved for the deployer's qemu-ga; cannot build a self-contained closure"
+        rm -rf "${DEPLOY_ROOT:?}/$pdir"
+        return 1
+    fi
+    if ! "$DEPLOY_ROOT/$pdir/$ldso" --library-path "$DEPLOY_ROOT/$pdir" \
+            "$DEPLOY_ROOT/$pdir/qemu-ga" --version >/dev/null 2>&1; then
+        err "  [WARN] qga: staged qemu-ga closure does not execute against its own libraries"
+        rm -rf "${DEPLOY_ROOT:?}/$pdir"
+        return 1
+    fi
+    install -d -m0755 "$DEPLOY_ROOT/var/usrlocal/bin"
+    cat > "$DEPLOY_ROOT/var/usrlocal/bin/qemu-ga" <<QGAWRAP
+#!/bin/sh
+exec /$pdir/$ldso --library-path /$pdir /$pdir/qemu-ga "\$@"
+QGAWRAP
+    chmod 0755 "$DEPLOY_ROOT/var/usrlocal/bin/qemu-ga"
+    install -d -m0755 "$DEPLOY_ROOT/etc/systemd/system" \
+                      "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants"
+    cat > "$DEPLOY_ROOT/etc/systemd/system/wootc-qemu-ga.service" <<'QGAUNIT'
+[Unit]
+Description=QEMU Guest Agent (staged by the wootc deployer)
+Documentation=https://github.com/tuna-os/wootc
+# Never displace an agent the image ships itself.
+ConditionPathExists=!/usr/bin/qemu-ga
+ConditionPathExists=!/usr/sbin/qemu-ga
+ConditionPathExists=/var/usrlocal/bin/qemu-ga
+After=local-fs.target
+# The virtio-serial port can appear after this unit is first tried; Restart
+# handles that, so the default 5-starts-in-10s limit must not give up on it.
+StartLimitIntervalSec=0
+
+[Service]
+# A breadcrumb on the console: the serial log is the only Phase-2 evidence the
+# harness can read when the agent is the thing that is broken, so "the unit was
+# tried" must be distinguishable from "the unit does not exist".
+ExecStartPre=/bin/sh -c 'echo "wootc: starting staged qemu-ga" > /dev/kmsg'
+ExecStart=/var/usrlocal/bin/qemu-ga --method=virtio-serial --path=/dev/virtio-ports/org.qemu.guest_agent.0
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+QGAUNIT
+    ln -sf ../wootc-qemu-ga.service \
+        "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/wootc-qemu-ga.service"
+    # Assert the runtime view, not the writes: the wants symlink must resolve
+    # to the unit, and the unit's ExecStart must exist under the deployment.
+    if [[ ! -e "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/wootc-qemu-ga.service" ]]; then
+        err "  [WARN] qga: multi-user.target.wants/wootc-qemu-ga.service dangles; the agent would never start"
+        return 1
+    fi
+    if [[ ! -x "$DEPLOY_ROOT/var/usrlocal/bin/qemu-ga" ]]; then
+        err "  [WARN] qga: /var/usrlocal/bin/qemu-ga is not executable in the deployment"
+        return 1
+    fi
+    log "  [PASS] fallback qemu-ga staged (loader=$ldso, exec-verified) at /var/usrlocal/bin/qemu-ga, enabled as wootc-qemu-ga.service"
+    return 0
+}
+
+# ── initramfs introspection ────────────────────────────────────────────────
+# An initramfs image is a CONCATENATION, not one archive: zero or more
+# UNCOMPRESSED early-cpio segments (CPU microcode, ACPI overrides) followed by
+# the compressed main archive. `cpio -it` stops at the first TRAILER!!!, so on
+# a Fedora/bootc image it lists the microcode segment — a handful of paths
+# under kernel/x86/microcode — and exits 0. That non-empty listing was then
+# read as proof that the initrd shipped no bash/losetup/udevadm/mount, and it
+# killed every dakota run at the Phase-2 gate (run 30700616717) on an initrd
+# that ships all four. Missing ALL FOUR is not a thing a bootable initrd does;
+# the listing was of the wrong segment. Walk the chain instead.
+
+# _initrd_segment_end <image> <offset>
+# Echo the offset just past the newc cpio archive that starts at <offset>
+# (i.e. past its TRAILER!!! member). Fails if no archive starts there.
+_initrd_segment_end() {
+    local img="$1" off="$2" hdr namesize filesize name
+    while :; do
+        hdr=$(dd if="$img" bs=1 skip="$off" count=110 status=none 2>/dev/null || true)
+        # 6-byte magic + 13 eight-digit hex fields = 110 ASCII bytes.
+        [[ "$hdr" =~ ^070701[0-9a-fA-F]{104}$ ]] || return 1
+        filesize=$((16#${hdr:54:8}))
+        namesize=$((16#${hdr:94:8}))
+        name=$(dd if="$img" bs=1 skip=$((off + 110)) count="$namesize" status=none 2>/dev/null | tr -d '\0')
+        # Header+name and then the file data are each padded to 4 bytes.
+        off=$(( (off + 110 + namesize + 3) / 4 * 4 ))
+        off=$(( (off + filesize + 3) / 4 * 4 ))
+        if [[ "$name" == "TRAILER!!!" ]]; then
+            printf '%s' "$off"
+            return 0
+        fi
+    done
+}
+
+# _initrd_skip_padding <image> <offset> <size>
+# Early-cpio segments are zero-padded (to 4 or to 512 bytes) before the next
+# segment begins. Echo the first non-padding offset, bounded so a corrupt
+# image cannot spin here.
+_initrd_skip_padding() {
+    local img="$1" off="$2" size="$3" limit nonzero
+    limit=$(( off + 4096 ))
+    (( limit > size )) && limit=$size
+    while (( off < limit )); do
+        nonzero=$(dd if="$img" bs=1 skip="$off" count=4 status=none 2>/dev/null | tr -d '\0' | wc -c)
+        if (( nonzero > 0 )); then
+            break
+        fi
+        off=$(( off + 4 ))
+    done
+    printf '%s' "$off"
+}
+
+# list_initrd_members <image>
+# Echo the member names of EVERY segment of an initramfs image. Empty output
+# means "unlistable here" (unknown compression), never "the initrd is empty".
+list_initrd_members() {
+    local img="$1" size off=0 seg dec end
+    size=$(wc -c < "$img" 2>/dev/null || echo 0)
+    while (( off < size )); do
+        if [[ $(dd if="$img" bs=1 skip="$off" count=6 status=none 2>/dev/null || true) == 070701 ]]; then
+            # An uncompressed segment: list it, then step over it.
+            seg=$(tail -c +$((off + 1)) "$img" 2>/dev/null | cpio -it --quiet 2>/dev/null || true)
+            [[ -n "$seg" ]] && printf '%s\n' "$seg"
+            end=$(_initrd_segment_end "$img" "$off") || break
+            off=$(_initrd_skip_padding "$img" "$end" "$size")
+            continue
+        fi
+        # Anything else is the compressed main archive, and it is last.
+        for dec in "zstd -qdc" "gzip -dc" "xz -dc" "lz4 -dc" "bzip2 -dc" "lzop -dc"; do
+            seg=$(tail -c +$((off + 1)) "$img" 2>/dev/null | $dec 2>/dev/null | cpio -it --quiet 2>/dev/null || true)
+            if [[ -n "$seg" ]]; then
+                printf '%s\n' "$seg"
+                break
+            fi
+        done
+        break
+    done
+    return 0
+}
+
 # build_phase2_initrd <ovl-dir> <base-initrd> <out-path>
 # Pack the overlay ahead of the base initrd and VERIFY the result by
 # inspection — "the concatenated file is non-empty" validated nothing (a
@@ -1201,6 +1543,15 @@ build_phase2_initrd() {
         err "  [FAIL] early-cpio overlay is incomplete (unit/wants/hook) — refusing to build a Phase-2 initrd that cannot attach root.disk"
         return 1
     fi
+    # The shutdown pair is checked separately, and separately fatal: an
+    # overlay missing it produces a Phase 2 that BOOTS PERFECTLY and then
+    # hands Windows back a volume it cannot repair — a failure that costs a
+    # full 60-90 minute VM run to see, and looks nothing like its cause.
+    if [[ ! -x "$ovl/usr/lib/dracut/hooks/pre-pivot/99-wootc-stage-shutdown.sh" ]] || \
+       [[ ! -x "$ovl/usr/lib/dracut/hooks/shutdown/50-wootc-umount-host.sh" ]]; then
+        err "  [FAIL] early-cpio overlay carries no Phase-2 shutdown hooks — refusing to build a Phase-2 initrd that would reboot with the Windows NTFS still mounted rw"
+        return 1
+    fi
     if ! ( cd "$ovl" && find . | cpio -o -H newc --quiet ) > "$ovl.cpio" || \
        ! cat "$ovl.cpio" "$base" > "$out" || [[ ! -s "$out" ]]; then
         rm -f "$ovl.cpio"
@@ -1210,17 +1561,20 @@ build_phase2_initrd() {
     rm -f "$ovl.cpio"
     # The overlay supplies unit+hook (+ possibly ntfs-3g); everything else the
     # hook needs at runtime must come from the BASE initrd: its interpreter
-    # (bash — the hook's shebang), losetup, udevadm, mount. List the base with
-    # whatever decompressor matches; each failed candidate is fine, an empty
-    # result overall just means "unverifiable here", which must WARN, not fail
-    # a deploy that may be good.
-    local listing="" dec
-    for dec in "cat" "zstd -qdc" "gzip -dc" "xz -dc" "lz4 -dc" "bzip2 -dc"; do
-        listing=$($dec < "$base" 2>/dev/null | cpio -it --quiet 2>/dev/null || true)
-        [[ -n "$listing" ]] && break
-    done
+    # (bash — the hook's shebang), losetup, udevadm, mount. Listing walks every
+    # segment of the image; an empty result just means "unverifiable here",
+    # which must WARN, not fail a deploy that may be good.
+    local listing=""
+    listing=$(list_initrd_members "$base")
     if [[ -z "$listing" ]]; then
         log "  [WARN] early-cpio: could not list the base initrd (unknown compression) — interpreter/tool presence unverified"
+        return 0
+    fi
+    # Only a listing that actually holds a root filesystem can prove a tool
+    # absent. A microcode-only early-cpio listing has no bin/ tree at all, and
+    # calling that proof is how a good initrd got declared unbootable.
+    if ! grep -qE '(^|/)(usr/)?s?bin/' <<<"$listing"; then
+        log "  [WARN] early-cpio: the base initrd listing holds no bin/ tree (early-cpio segment only?) — tool presence unverified"
         return 0
     fi
     local missing=() tool found
@@ -1234,7 +1588,7 @@ build_phase2_initrd() {
     done
     if (( ${#missing[@]} > 0 )); then
         err "  [FAIL] the target's base initrd lacks: ${missing[*]} — the wootc-attach hook cannot run in Phase 2"
-        err "         (listing succeeded, so this is proof, not a probe failure; the image's initrd must ship these or the hook must be rewritten against what it ships)"
+        err "         (every segment listed and a bin/ tree was found, so this is proof, not a probe failure; the image's initrd must ship these or the hook must be rewritten against what it ships)"
         return 1
     fi
     log "  early-cpio: base initrd verified (bash/losetup/udevadm/mount present)"
@@ -1622,7 +1976,10 @@ if [[ -n "$VERIFY_ROOT" ]]; then
                     # installed binary's deps INSIDE the chroot, so a bare copy
                     # would be installed and then fail to run for want of
                     # libntfs-3g.
-                    ldd "$_ntfs_src" 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' | \
+                    # `|| true` is load-bearing under `set -o pipefail`:
+                    # dso_closure returns 1 for a binary with no closure, and
+                    # a missing ntfs-3g closure must not abort the deploy.
+                    { dso_closure "$_ntfs_src" || true; } | \
                     while read -r _lib; do
                         [[ -e "$DEPLOY_ROOT$_lib" ]] && continue
                         mkdir -p "$DEPLOY_ROOT${_lib%/*}" 2>/dev/null || continue
@@ -1805,7 +2162,11 @@ if [[ -n "$VERIFY_ROOT" ]]; then
         GUARD_LOSETUP=$(chroot "$DEPLOY_ROOT" lsinitrd "$INITRD_CHROOT_PATH" 2>/dev/null | grep -c 'losetup' || true)
         log "  guard: losetup present in initramfs=$GUARD_LOSETUP"
         if [[ "${GUARD_LOSETUP:-0}" -lt 1 ]]; then
-            err "  [FAIL] Phase-2 initramfs has no losetup — root.disk cannot be attached"
+            # [WARN] here, [FAIL] in the summary below: this is a *detail* of a
+            # verdict that is rendered once, and every [FAIL] on the serial ends
+            # the run the instant run-e2e.sh reads it — which would truncate the
+            # very list this collector exists to print in full.
+            err "  [WARN] Phase-2 initramfs has no losetup — root.disk cannot be attached"
             PHASE2_PROBLEMS+=("initramfs missing losetup")
         fi
         if [[ "${GUARD_HITS:-0}" -ge 1 ]]; then
@@ -1820,9 +2181,18 @@ if [[ -n "$VERIFY_ROOT" ]]; then
     # One summary of everything that went wrong in this stretch, so a single run
     # yields the full picture instead of only its first fault.
     if (( ${#PHASE2_PROBLEMS[@]} > 0 )); then
+        # This is the summary's OWN verdict, so it aborts here. It used to only
+        # print — "PHASE2_PROBLEMS is only summarised, never fatal" (see the
+        # dracut-regen comment above) — but printing [FAIL] already ended the
+        # run: run-e2e.sh kills the deploy on the first [FAIL] it sees on the
+        # serial. So the run died either way; the difference was that the
+        # deployer never said why, and the harness recorded a generic
+        # "Deployer error" mid-deploy instead of a named cause. Exit on our own
+        # terms, after the full list has been printed.
         err "  [FAIL] Phase-2 setup completed with ${#PHASE2_PROBLEMS[@]} problem(s):"
         for p in "${PHASE2_PROBLEMS[@]}"; do err "         - $p"; done
         err "         Phase 2 will NOT boot correctly. Fix all of the above."
+        exit 1
     else
         log "  [PASS] Phase-2 setup completed with no problems"
     fi
@@ -1838,11 +2208,16 @@ if [[ -n "$VERIFY_ROOT" ]]; then
         mountpoint -q "$DEPLOY_ROOT/$fs" 2>/dev/null && umount "$DEPLOY_ROOT/$fs" 2>/dev/null || true
     done
 
-    # Check dracut module
+    # Check dracut module. [WARN], not [FAIL]: this inspects the module SOURCE
+    # tree, an input to the regen that already ran — and the guards above
+    # assert the thing that actually matters, the wootc-attach unit being
+    # present AND wired in the built initramfs, aborting when it is not. A
+    # [FAIL] here would let a stale source tree kill a deploy whose Phase-2
+    # initramfs had already been proven correct.
     if [[ -d "$DEPLOY_ROOT/usr/lib/dracut/modules.d/99wootc-boot" ]]; then
         log "  [PASS] dracut 99wootc-boot module installed"
     else
-        err "  [FAIL] dracut 99wootc-boot module NOT found"
+        err "  [WARN] dracut 99wootc-boot module source tree not found under \$DEPLOY_ROOT (the built initramfs was verified above)"
     fi
 
     vstage "before-userbridge (writes \$DEPLOY_ROOT/usr/local + /usr/share — read-only under composefs)"
@@ -1888,20 +2263,10 @@ block-rpcs=
 QGAEOF
     cp "$DEPLOY_ROOT/etc/qemu/qemu-ga.conf" "$DEPLOY_ROOT/etc/qemu-ga.conf" 2>/dev/null || true
 
-    # If the target image lacks qemu-guest-agent (common in composefs images),
-    # install the deployer's own binary + service so the E2E harness can reach
-    # Phase 2.  The dnf-based injection path fails on non-RPM images.
-    if ! chroot "$DEPLOY_ROOT" command -v qemu-ga >/dev/null 2>&1 && command -v qemu-ga >/dev/null 2>&1; then
-        install -D -m0755 "$(command -v qemu-ga)" "$DEPLOY_ROOT/usr/bin/qemu-ga"
-        for _svc in qemu-guest-agent.service qemu-ga@.service; do
-            for _d in /usr/lib/systemd/system /lib/systemd/system; do
-                [[ -f "$_d/$_svc" ]] && { install -D -m0644 "$_d/$_svc" "$DEPLOY_ROOT/usr/lib/systemd/system/$_svc"; break; }
-            done
-        done
-        mkdir -p "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants"
-        ln -sf /usr/lib/systemd/system/qemu-guest-agent.service \
-            "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/qemu-guest-agent.service"
-        log "  [PASS] qemu-guest-agent installed from deployer into target"
+    # A fallback guest agent for images that ship none, staged where the
+    # runtime can actually see it. See stage_qemu_ga_into_target.
+    if ! stage_qemu_ga_into_target; then
+        err "  [WARN] no fallback qemu-ga staged; Phase 2 is reachable only if the image ships its own agent"
     fi
 
     # Set SELinux to permissive mode so Phase 3 QGA & User Data Bridge are not blocked by virt_qemu_ga_t
@@ -1980,7 +2345,10 @@ QGAEOF
             "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/wootc-e2e-phase3.path"
         log "  [PASS] Phase-3 systemd request bridge enabled (units + wants link in target /etc)"
     else
-        log "  [FAIL] Phase-3 request bridge units missing from initramfs — dispatch will never trigger"
+        # [WARN]: Phase 3 is opt-in (rung 3) and a Phase-1/2 deploy is fully
+        # valid without it, so this must not end a run that never asked for it.
+        # Phase 3 has its own observable — the dispatch that never fires.
+        log "  [WARN] Phase-3 request bridge units missing from initramfs — a Phase-3 run would never dispatch"
     fi
     # WSL migration (§4.6): dotfiles + Brewfile from a WSL install.
     mig_opt 755 wootc-wsl-bridge "$DEPLOY_ROOT/var/usrlocal/bin/wootc-wsl-bridge"
@@ -2038,16 +2406,22 @@ QGAEOF
     ln -sf ../wootc-passthrough.service \
         "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/wootc-passthrough.service"
 
+    # [WARN] on both: the User Data Bridge is not what makes Phase 2 boot, and
+    # its absence has a real observable one reboot later — run-e2e.sh asserts
+    # "[FAIL] User data NOT visible in Phase 2 $HOME (expected RUN_ID …)". A
+    # [FAIL] here instead kills the deploy at the point of staging, so that
+    # assertion never gets to run and the recorded cause is a generic
+    # "Deployer error".
     if [[ -f "$DEPLOY_ROOT/etc/systemd/system/wootc-host-bind.service" ]]; then
         log "  [PASS] wootc-host-bind.service installed"
     else
-        err "  [FAIL] wootc-host-bind.service install failed"
+        err "  [WARN] wootc-host-bind.service install failed — user data will not be visible in Phase 2"
     fi
 
     if [[ -f "$DEPLOY_ROOT/etc/systemd/system/wootc-passthrough.service" ]]; then
         log "  [PASS] wootc-passthrough.service installed"
     else
-        err "  [FAIL] wootc-passthrough.service install failed"
+        err "  [WARN] wootc-passthrough.service install failed — user data will not be visible in Phase 2"
     fi
 
     if grep -q 'wootc.host_uuid=.*loop=/wootc/disks/root.disk' "${BLS_DIR:-$DEPLOY_ROOT/boot/loader/entries}"/*.conf; then
@@ -2147,21 +2521,13 @@ QGAEOF
                 if ! stage_ntfs3g_closure "$OVL"; then
                     log "  [WARN] no ntfs-3g stageable for the composefs Phase-2 initrd — relying on kernel ntfs3"
                 fi
-                # Composefs images (dakota) lack qemu-guest-agent which the E2E
-                # harness needs.  Copy the deployer's own qemu-ga into the cpio
-                # overlay (the deployed chroot won't have a package manager).
-                if command -v qemu-ga >/dev/null 2>&1; then
-                    install -D -m0755 "$(command -v qemu-ga)" "$OVL/usr/bin/qemu-ga"
-                    for _svc in qemu-guest-agent.service qemu-ga@.service; do
-                        for _d in /usr/lib/systemd/system /lib/systemd/system; do
-                            [[ -f "$_d/$_svc" ]] && { install -D -m0644 "$_d/$_svc" "$OVL/usr/lib/systemd/system/$_svc"; break; }
-                        done
-                    done
-                    # Enable it
-                    mkdir -p "$OVL/usr/lib/systemd/system/multi-user.target.wants"
-                    ln -sf ../qemu-guest-agent.service \
-                        "$OVL/usr/lib/systemd/system/multi-user.target.wants/qemu-guest-agent.service"
-                fi
+                # NOTHING guest-agent-related belongs in this overlay. It is a
+                # cpio unpacked into the INITRAMFS: at switch-root the whole
+                # tree is discarded, so a qemu-ga binary at $OVL/usr/bin and a
+                # multi-user.target.wants symlink (a target the initrd never
+                # reaches) cannot put an agent in the booted system: they only
+                # made the initrd bigger and the intent look satisfied. The
+                # real-root staging is stage_qemu_ga_into_target, above.
 
                 # The deployer kernel needs its OWN kernel modules — the UKI
                 # initrd has modules for the composefs kernel (vermagic

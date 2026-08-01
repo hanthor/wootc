@@ -512,3 +512,137 @@ Three habits:
   5.8.4, so an environment repair must be unconditional and then *verified by a
   real `podman run`*, not gated on a version comparison. Version strings are a
   proxy; a container that starts is the fact.
+
+## 27. Rebooting is not releasing. Phase 2 owed Windows a clean unmount.
+
+Both `fedora-gnome` cells of run 30704513401 failed identically — so, not a
+flake — with `[FAIL] QGA did not become available for Windows return after
+Phase 2 Linux within 10 minutes`. Phase 2 itself was flawless: it booted,
+passed every passthrough and user-data check, and rebooted on cue. The damage
+was done on the way out, and it was visible in five lines of serial nobody had
+been reading:
+
+```
+(sd-remount)[...]: Failed to remount '/run/initramfs/wootc-host' read-only: Device or resource busy
+systemd-shutdown[1]: Not all file systems unmounted, 1 left.
+systemd-shutdown[1]: Not all loop devices detached, 1 left.
+systemd-shutdown[1]: Cannot finalize remaining file systems, loop devices, continuing.
+reboot: machine restart
+```
+
+Windows then showed a desktop for ~26 s, rebooted itself, looped the boot
+manager three or four times and died in Startup Repair. The QGA timeout was a
+*symptom four reboots downstream* of the actual bug.
+
+- **A boot stack that lives on the thing it must release cannot release it.**
+  Phase-2 `/` is a loop device backed by `root.disk`, a file on the rw NTFS
+  mount. Nothing running inside that stack can unmount the volume. The
+  deployer already knew this — `deploy.sh` has a whole block ending "a
+  still-mounted rw NTFS would be flagged dirty" — and Phase 2 simply never got
+  the same treatment. **When one side of a symmetric operation has a hard-won
+  teardown, go look for the other side.**
+- **A missing file can disable an entire subsystem in total silence.**
+  `dracut-shutdown.service` populates `/run/initramfs` from
+  `/boot/initramfs-$(uname -r).img`. On ostree/composefs that path does not
+  exist, `dracut-initramfs-restore` no-ops, and systemd — which only pivots
+  when `/run/initramfs/shutdown` is executable — quietly skips the whole
+  shutdown-initramfs mechanism. No error, no warning, and the *absence* of
+  "Returning to initrd..." in the log is the only tell.
+- **Corruption sorts by driver, and the passing cells were the clue.** Every
+  cell mounting the host volume with kernel `ntfs3` failed; every cell that
+  fell back to the `ntfs-3g` FUSE driver passed. That correlation is what
+  turned "flaky Fedora cell" into "structural teardown bug" — a green cell is
+  evidence too, and diffing it against the red one costs minutes.
+- **Make the dangerous new path revert to the old one.** The fix arms a
+  shutdown pivot that did not previously happen, on every cell's boot path,
+  and cannot be tested outside a 60–90 minute VM run. So every failure path in
+  the staging hook ends by deleting `/run/initramfs/shutdown` — without it
+  systemd does not pivot, which is *exactly* today's behaviour. A partial or
+  broken staging can only reproduce the bug it is fixing; it cannot invent a
+  new one.
+
+## 28. The initramfs is not your laptop, and `[FAIL]` is not a log level
+
+`bluefin-dakota-win11pro` (run 30707067821) died 11 minutes into the deploy on
+two lines:
+
+```
+[wootc] ABORT: line 1281: awk '{for(i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' (exit 127)
+[FAIL] qga: ldd on the deployer's qemu-ga surfaced no dynamic loader
+```
+
+- **A dracut initramfs contains exactly what `module-setup.sh` names.** Every
+  closure builder in `deploy.sh` resolved libraries with `ldd "$bin" | awk …`.
+  `ldd` is a glibc-common *shell script*; no library dependency drags it in,
+  nothing listed it, so it was never in the image. Reach for the thing whose
+  presence is structurally guaranteed instead: the dynamic loader has to be
+  there or the deployer itself could not run, and `$ldso --list` is what `ldd`
+  execs anyway. `dso_closure()` now does that in pure bash, so no missing text
+  tool can break a closure either.
+- **Exit 127 names the wrong command.** Under `set -o pipefail` the ERR trap
+  reported the `awk` stage of a pipeline whose *first* stage was the missing
+  one. When a trap blames a command that obviously exists, suspect the rest of
+  the pipeline before you suspect the trap.
+- **`[FAIL]` on the deployer serial is an API, not a severity.** `run-e2e.sh`
+  greps the serial for `fatal|panic|[FAIL]` and ends the deploy on the first
+  hit. The qga stager printed `[FAIL]` for a condition its own caller absorbs
+  with `[WARN] no fallback qemu-ga staged` — so a survivable best-effort miss
+  killed a cell that was otherwise fine. A function may only shout `[FAIL]` if
+  every one of its callers treats the failure as fatal.
+- **The same rule bites the harness.** `run-e2e.sh` also printed
+  `[FAIL] run-e2e.sh aborted: awk …` on every hosted cell, because `-E`
+  propagates the ERR trap into the command substitution probing for a
+  `tailscale0` that hosted runners do not have. Nothing aborted. The matrix
+  takes the *last* `[FAIL]` as the verdict, so an optional probe was one silent
+  timeout away from becoming a run's official cause of death.
+
+## 29. The harness destroyed the run it had already passed
+
+`fedora-gnome-win11pro-btrfs` (run 30710282779) failed on:
+
+```
+[FAIL] Windows QGA did not become available within 10 minutes
+```
+
+It had already succeeded. Every Linux assertion passed, §27's shutdown pivot
+worked (`wootc: shutdown: unmounted the Windows host NTFS at
+/oldsys/run/initramfs/wootc-host`), and the serial shows the return happening
+two seconds after the reboot request:
+
+```
+[   75.9] reboot: machine restart
+BdsDxe: starting Boot0003 "Windows Boot Manager" ...
+```
+
+Then the harness power-cut it. The two boot-manager loads after that one are
+its own `system_reset` and the loop that followed; the final screenshot is a
+recovery screen.
+
+- **A ping is not an identity.** The reboot step watched for `qga_probe` to
+  *fail* and reset the VM if it never did. `qga_probe` is `guest-ping`, which
+  answers for whichever agent is up — so "Phase 2 has not rebooted" and
+  "Windows is already back" produced the identical reading, and the fallback
+  for the first is a hard power cut to the second. §1 again, in its purest
+  form: the observable is *which* OS answers, and the code only ever sampled
+  *whether* one did. `qga_windows_probe` had existed for months, six lines
+  above; `qga_wait_down` already used it. This loop just didn't.
+- **A destructive fallback needs positive evidence, not the absence of
+  evidence.** `p2_reboot_observe()` now returns one of `down` / `windows` /
+  `linux` / `unknown`, and only `linux` — a guest that answered `uname -s` —
+  may be reset. `unknown` (a Windows agent pinging before PowerShell is up)
+  deliberately does nothing: the cost of waiting is one honest timeout, the
+  cost of guessing wrong is the whole run.
+- **Blind time is where the state changes underneath you.** The request went
+  out through an unbounded `qga_call exec`, which polls `guest-exec-status`
+  until exit and then retries three times at 60s. Against a guest that is busy
+  dying that is ~110 seconds of not looking — long enough for Phase 2 to leave
+  *and* Windows to come back, so the observation opened its eyes on the wrong
+  OS. §4 says bound the blocking call; the corollary is that anything you do
+  not watch is free to become its own opposite while you wait.
+- **This is why §27 read as a partial fix.** That session saw Windows "show a
+  desktop for ~26 s, reboot, and die in Startup Repair" and attributed the
+  reboot to the dirty volume. The unclean unmount was real and worth fixing,
+  but the reboot at ~26 s was this bug: the harness resetting a Windows that
+  had come back fine. When a fix lands and the symptom shifts but survives,
+  check whether you are now looking at a *second* cause rather than a
+  an incomplete first one.
