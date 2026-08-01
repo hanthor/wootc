@@ -646,3 +646,37 @@ recovery screen.
   had come back fine. When a fix lands and the symptom shifts but survives,
   check whether you are now looking at a *second* cause rather than a
   an incomplete first one.
+
+## 30. The product refused, and it was right to
+
+`el10-gnome-win10pro`, the first GUI-driven Win10 cell (run 30717631172),
+failed with the app's own words:
+
+```
+[FAIL] the GUI REFUSES this configuration — Install is disabled, so no install can be driven
+[FAIL]   the app says: Windows has an update waiting to finish (servicing,windows-update).
+         Restart the PC, let it complete, then run wootc again
+```
+
+Nothing was broken. `pendingReboot()` read the two registry keys it is meant
+to read, both were set, and the preflight declined a machine that is
+mid-servicing — exactly the gate #63 exists for.
+
+- **A red cell is not automatically a bug in the thing under test.** The
+  harness had handed the product a machine in a state no user is supposed to
+  install from: Win10 media stage servicing work that outlives OOBE, and the
+  harness's own WebView2 bootstrapper (installed seconds earlier, because
+  wails cannot render without it) adds an update of its own. The failing
+  component was the *setup*, and the fix is to provision the guest into a
+  state a real user would be in — not to loosen a gate that protects boot
+  configuration during a migration.
+- **When the product tells the user what to do, the harness should do it.**
+  `gui_settle_pending_servicing()` reads the *same two keys* the app reads,
+  restarts the guest when either is set, and re-reads them. If a restart does
+  not clear them, it says so and lets the app's refusal stand as the verdict:
+  the harness must never assert a machine is ready, only observe that it is.
+- **Coming back is not being logged on.** QGA answers from session 0 long
+  before autologon finishes, and the GUI is launched via `schtasks /IT`, which
+  needs a real interactive session or fails with "the system cannot find the
+  file specified". §1 again: ping is a proxy, the logged-on user is the
+  observable, so the restart waits for `Win32_ComputerSystem.UserName`.

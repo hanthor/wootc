@@ -2063,6 +2063,63 @@ fi
 # state so the dispatched run is the only writer.
 reset_oem_attempt
 
+# The app's preflight REFUSES to migrate a machine that is mid-servicing, and
+# it is right to: a staged servicing operation can rewrite boot configuration
+# underneath the migration or resume in the middle of it. The two signals are
+# Component Based Servicing\RebootPending and WindowsUpdate\Auto Update\
+# RebootRequired (app/installer_windows.go pendingReboot()).
+#
+# el10-gnome-win10pro, the first GUI-driven Win10 cell (run 30717631172), died
+# on exactly that: Install stayed disabled and the app said "Windows has an
+# update waiting to finish (servicing,windows-update). Restart the PC, let it
+# complete, then run wootc again." That is the product working as designed —
+# the harness was simply handing it a machine in a state no user is supposed
+# to install from. Win10 media stage servicing work that outlives OOBE, and
+# the WebView2 bootstrapper installed just above adds an update of its own.
+#
+# So do the one thing the app asks for, BEFORE launching it: read the SAME two
+# keys the product reads (never a proxy for them), and if either is set,
+# restart the guest and let servicing finish. Environment provisioning, not a
+# workaround — a user who follows the app's instruction arrives here too.
+# If a restart does not clear it, say so and leave the app's own refusal as
+# the verdict rather than pretending the machine is ready.
+gui_settle_pending_servicing() {
+    # shellcheck disable=SC2016 # PowerShell variables must remain literal.
+    local probe='$r = @()
+if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") { $r += "servicing" }
+if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") { $r += "windows-update" }
+Write-Output ($r -join ",")'
+    local pending
+    pending=$(qga_powershell "$probe" 2>/dev/null | tr -d '[:space:]' || true)
+    if [ -z "$pending" ]; then
+        info "    no pending servicing operation — the app's preflight has nothing to refuse"
+        return 0
+    fi
+    info "    Windows is mid-servicing ($pending) — restarting the guest, exactly as the app instructs a user to"
+    qga_powershell 'cmd.exe /c "shutdown.exe /a >NUL 2>&1 & shutdown.exe /r /t 1 /f >NUL 2>&1"' >/dev/null 2>&1 || true
+    qga_wait_reboot "Windows after the pending-servicing restart"
+    # QGA answers from session 0 well before autologon completes, and the GUI
+    # is launched with `schtasks /IT` — which needs a real interactive session
+    # or it fails with "the system cannot find the file specified", the same
+    # opaque message el10-gnome-win11ent produced. Wait for the logged-on user
+    # to exist, positively, rather than assuming the agent implies a desktop.
+    local logon_deadline
+    logon_deadline=$(deadline_in 300)
+    while ! past_deadline "$logon_deadline"; do
+        # shellcheck disable=SC2016 # PowerShell variable, not a shell one.
+        if [ -n "$(qga_powershell '$u = (Get-CimInstance Win32_ComputerSystem).UserName; if ($u) { Write-Output $u }' 2>/dev/null | tr -d '[:space:]')" ]; then
+            break
+        fi
+        sleep 10
+    done
+    pending=$(qga_powershell "$probe" 2>/dev/null | tr -d '[:space:]' || true)
+    if [ -n "$pending" ]; then
+        warn "    still mid-servicing after the restart ($pending) — the app will refuse, and it will be right to"
+        return 0
+    fi
+    pass "Pending servicing cleared by a restart — the machine is migration-ready"
+}
+
 # ── GUI-driven Phase 1 (--gui-install) ──────────────────────────────────────
 # Arms the machine through the REAL wootc.exe GUI instead of the OEM
 # setup-wootc.ps1 script: stage the app + artifacts, launch it with a CDP
@@ -2136,6 +2193,8 @@ Write-Output "webview2-install-started"' >/dev/null 2>&1 || warn "    (could not
         qga_powershell "if (Test-Path '$wv2_key') { exit 0 } else { exit 1 }" >/dev/null 2>&1 \
             || warn "    WebView2 still absent after 7m — the GUI will stall on its install prompt"
     fi
+
+    gui_settle_pending_servicing
 
     qga_powershell 'New-Item -ItemType Directory -Force -Path C:\wootc\install | Out-Null
 Copy-Item \\host.lan\Data\wootc.exe C:\wootc\wootc.exe -Force
