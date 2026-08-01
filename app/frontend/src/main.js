@@ -226,11 +226,13 @@ function stepLabel() {
 function renderLaunchpad() {
   const screen = el('div', 'screen');
 
-  // Header
+  // Header. The subtitle answers the first question a nervous Windows user
+  // brings to this screen — "will this erase my stuff?" — before anything
+  // else asks them to make a choice.
   const hdr = el('div');
   hdr.innerHTML = `
     <div class="screen-title">${installVerb()} TunaOS</div>
-    <div class="screen-subtitle">${state.brand?.tagline || 'Choose a variant, set your disk size and credentials, then click Install.'}</div>
+    <div class="screen-subtitle">${state.brand?.tagline || 'Try Linux alongside Windows — no repartitioning, nothing deleted, and fully undoable. Pick a look, set a password, and wootc does the rest.'}</div>
   `;
   screen.appendChild(hdr);
 
@@ -303,7 +305,7 @@ function renderLaunchpad() {
       // systemd-boot here sent a bluefin:lts install into "systemd-boot is
       // not bundled" (run 20260723T1100); the deployer's own probe corrects
       // the backend at deploy time either way.
-      state.selected = { id: 'custom', name: 'Custom image', imageRef: state.config.customImageRef, bootloader: 'grub2', composeFs: false };
+      state.selected = { id: 'custom', name: 'Custom image', imageRef: state.config.customImageRef, bootloader: 'auto', composeFs: false };
       applyImageDefaults(state.selected);
       render();
     }
@@ -395,12 +397,17 @@ function renderLaunchpad() {
   fields.appendChild(lookRow);
 
   const advanced = el('details');
+  // Every control change re-renders the form; without persisting the open
+  // state the panel snaps shut on each toggle — the user opens Advanced,
+  // clicks a checkbox, and watches their panel vanish.
+  if (state.advancedOpen) advanced.open = true;
+  advanced.addEventListener('toggle', () => { state.advancedOpen = advanced.open; });
   advanced.style.cssText = 'margin-top:6px;border:1px solid var(--border);border-radius:6px;padding:7px 9px';
   advanced.innerHTML = `<summary style="cursor:pointer;font-size:12px;font-weight:600">Advanced boot options</summary>`;
   const bootChoice = el('label');
   bootChoice.style.cssText = 'display:flex;gap:8px;margin-top:8px;font-size:12px;align-items:flex-start';
-  bootChoice.innerHTML = `<input type="checkbox" ${state.config.bootloader === 'systemd-boot' ? 'checked' : ''}><span>Use systemd-boot<br><span style="color:var(--text-muted)">Required by composefs images. Uses a bundled EFI binary and ESP-synced kernel entries.</span></span>`;
-  bootChoice.querySelector('input').onchange = e => { state.config.bootloader = e.target.checked ? 'systemd-boot' : 'grub2'; render(); };
+  bootChoice.innerHTML = `<input type="checkbox" ${state.config.bootloader === 'systemd-boot' ? 'checked' : ''}><span>Force systemd-boot<br><span style="color:var(--text-muted)">Off (recommended): wootc detects the image's boot method automatically and uses the Secure-Boot-signed chain. On: boots the installer with a bundled systemd-boot EFI binary instead.</span></span>`;
+  bootChoice.querySelector('input').onchange = e => { state.config.bootloader = e.target.checked ? 'systemd-boot' : 'auto'; render(); };
   advanced.appendChild(bootChoice);
   if (state.config.bootloader === 'systemd-boot') {
     const sb = el('div');
@@ -504,12 +511,26 @@ function renderProgressInner() {
     errDiv.style.cssText = 'color:var(--danger);font-size:12.5px;background:rgba(248,113,113,0.08);border:1px solid rgba(248,113,113,0.25);border-radius:6px;padding:10px 14px;margin-top:8px';
     errDiv.textContent = '✖ ' + state.progress.error;
     pw.appendChild(errDiv);
+    // The moment of maximum fear. Everything wootc does before the reboot
+    // lives in one folder plus a boot entry — say so, truthfully.
+    const errCalm = el('div');
+    errCalm.style.cssText = 'font-size:12px;color:var(--text-muted);margin-top:6px';
+    errCalm.textContent = 'Your files and Windows are unharmed — nothing outside the wootc folder was changed. You can safely close this and try again.';
+    pw.appendChild(errCalm);
   }
 
   pw.appendChild(stepLabel);
   pw.appendChild(msgLabel);
   pw.appendChild(track);
   pw.appendChild(stepList);
+
+  // Standing reassurance while the user watches the bar: the truthful safety
+  // model (SPEC: nothing permanent until Linux is proven working), in one
+  // line, visible the whole time.
+  const calm = el('div');
+  calm.style.cssText = 'display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--text-muted);margin-top:12px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:9px 12px';
+  calm.innerHTML = `<span>🛡️</span><span>Your files and Windows stay untouched. Everything here goes into one folder — until Linux is proven working, nothing permanent changes, and you can undo this at any time.</span>`;
+  pw.appendChild(calm);
   frag.appendChild(pw);
   return frag;
 }
@@ -607,8 +628,13 @@ function renderDoneScreen() {
     <div class="done-title">TunaOS is ready!</div>
     <div class="done-body">
       ${state.selected?.name || 'TunaOS'} ${state.selected?.desktopName || ''} has been configured.<br>
-      Click <strong>Reboot Now</strong> to start the deployer. The first boot takes 5–15 minutes
-      while it downloads and installs TunaOS. Subsequent boots are instant.
+      Click <strong>Reboot Now</strong> to start the setup. The first boot takes 5–15 minutes
+      while it downloads and installs TunaOS. After that, starting Linux is fast.
+    </div>
+    <div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--text-muted);margin-top:14px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:9px 12px;text-align:left;max-width:460px">
+      <span>🛡️</span><span>This is a one-time setup boot. If anything at all goes wrong,
+      your PC simply starts Windows again as normal — Windows stays your default
+      until Linux has proven it works. Your files aren't touched either way.</span>
     </div>
   `;
   screen.appendChild(hero);
@@ -980,8 +1006,17 @@ function refreshInstallValidity() {
 
 function applyImageDefaults(image) {
   if (!image) return;
-  state.config.bootloader = image.bootloader || (image.family === 'el10' ? 'grub2' : 'systemd-boot');
-  state.config.composeFs = image.composeFs !== undefined ? !!image.composeFs : state.config.bootloader === 'systemd-boot';
+  // The deployer probes the image and detects its backend definitively
+  // (bootupd-shipped signed grub → ostree/grub2; systemd-boot only →
+  // composefs-native). The catalog's bootloader/composeFs fields are DISPLAY
+  // metadata — forcing them into the install config sent bonito (ostree per
+  // the deploy-time probe) down the composefs path, and pointed composefs
+  // images at the unsigned systemd-boot deployer chain that Secure Boot
+  // rejects. 'auto' keeps the E2E-proven signed chain booting the deployer
+  // on every image, and deploy.sh stages the right Phase 2 — this is the
+  // configuration that took dakota green (run 30710282014).
+  state.config.bootloader = 'auto';
+  state.config.composeFs = false;
 }
 
 async function startInstall() {

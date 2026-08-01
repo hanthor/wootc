@@ -633,7 +633,16 @@ func setupSignedChain(espPath string, cfg InstallConfig) error {
 	if cfg.Encryption != "" && cfg.Encryption != "none" {
 		luks = " wootc.luks=" + cfg.Encryption
 	}
-	installMode := " wootc.bootloader=grub2"
+	// Default to auto: the deployer probes the image and picks the backend
+	// definitively (this is the configuration that took dakota/composefs
+	// green — run 30710282014). Explicit values are an advanced override.
+	installMode := " wootc.bootloader=auto"
+	switch cfg.Bootloader {
+	case "grub2":
+		installMode = " wootc.bootloader=grub2"
+	case "systemd-boot":
+		installMode = " wootc.bootloader=systemd"
+	}
 	if cfg.ComposeFS {
 		installMode += " wootc.composefs=1"
 	}

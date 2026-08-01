@@ -112,4 +112,9 @@ jobs:
       # alpha yet"), so a GUI-driven BitLocker cell asks the product to do
       # something it refuses by design and can only ever fail. The script path
       # still covers that axis. Revisit when the GUI supports BitLocker.
-      gui_install: ${{ inputs.gui_install && matrix.bitlocker != 'on' }}
+      #
+      # NEVER on filesystem-forced cells either: the app has no filesystem
+      # knob, so a GUI-driven btrfs cell would silently install the default
+      # filesystem and report the btrfs axis green without ever touching it.
+      # The script path carries wootc.filesystem=; GUI mode must skip it.
+      gui_install: ${{ inputs.gui_install && matrix.bitlocker != 'on' && matrix.filesystem == '' }}

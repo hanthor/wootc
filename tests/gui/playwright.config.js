@@ -20,6 +20,12 @@ export default defineConfig({
     // wootc's window is a fixed 820×620; match it so screenshots are honest.
     viewport: { width: 820, height: 620 },
     baseURL: 'http://127.0.0.1:5599',
+    // Sandboxed dev/CI environments often ship a system Chromium and block
+    // browser downloads; WOOTC_CHROMIUM points the suite at it instead of
+    // requiring `playwright install`.
+    ...(process.env.WOOTC_CHROMIUM
+      ? { launchOptions: { executablePath: process.env.WOOTC_CHROMIUM } }
+      : {}),
   },
   // CDP runs attach to the live wootc.exe — no local bundle server needed
   // (and the dist path does not exist inside the driver container).
