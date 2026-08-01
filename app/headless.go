@@ -62,11 +62,19 @@ func headlessInstall(args []string) int {
 		fs.Usage()
 		return 2
 	}
+	// headless bypasses StartInstall, so validate the chain here too rather
+	// than letting a typo'd -bootloader fall through to the auto path.
+	bootloader, err := normalizeBootloader(cfg.Bootloader)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "install: %v\n", err)
+		return 2
+	}
+	cfg.Bootloader = bootloader
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	err := runPipeline(ctx, cfg, func(e ProgressEvent) {
+	err = runPipeline(ctx, cfg, func(e ProgressEvent) {
 		if e.Error != "" {
 			fmt.Fprintf(os.Stderr, "[wootc %3.0f%%] ERROR %s: %s\n", e.Percent, e.Step, e.Error)
 			return

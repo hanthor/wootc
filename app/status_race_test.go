@@ -32,6 +32,39 @@ func TestStartInstallRejectsConcurrent(t *testing.T) {
 	}
 }
 
+// TestNormalizeBootloader pins the auto backend contract. The GUI sends
+// "auto" for every image (applyImageDefaults), and headless defaults to it.
+// Rejecting it here failed every GUI-driven E2E cell with
+// `unsupported bootloader "auto"` before the pipeline started (run
+// 30717631172).
+func TestNormalizeBootloader(t *testing.T) {
+	for _, tc := range []struct {
+		in, want string
+		wantErr  bool
+	}{
+		{in: "", want: "auto"},
+		{in: "auto", want: "auto"},
+		{in: "grub2", want: "grub2"},
+		{in: "systemd-boot", want: "systemd-boot"},
+		{in: "systemd", wantErr: true},
+		{in: "grub", wantErr: true},
+	} {
+		got, err := normalizeBootloader(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("normalizeBootloader(%q) = %q, want an error", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("normalizeBootloader(%q): unexpected error %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Errorf("normalizeBootloader(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestGetImagesEmbedded verifies the embedded catalog parses and is non-empty.
 func TestGetImagesEmbedded(t *testing.T) {
 	a := NewApp()

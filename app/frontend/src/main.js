@@ -20,7 +20,10 @@ const state = {
     username: '',
     password: '',
     hostname: 'tunaos',
-    bootloader: 'grub2',
+    // 'auto' is the backend contract: the deployer probes the image and
+    // picks the chain. 'systemd-boot' is the only explicit override the UI
+    // offers (Advanced → Force systemd-boot).
+    bootloader: 'auto',
     encryption: 'tpm2-luks',
     luksPassphrase: '',
     windowsLook: false,
