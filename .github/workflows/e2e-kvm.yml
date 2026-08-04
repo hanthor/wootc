@@ -9,16 +9,18 @@ concurrency:
   group: e2e-kvm-pages
   cancel-in-progress: false
 
-# Runs on Runs-On (self-hosted-in-AWS autoscaler), on the build-kvm runner
-# profile defined in .github/runs-on.yml — nested-virt: true on a c8i/m8i/r8i
-# instance for hardware-accelerated KVM.
+# Needs a KVM-capable self-hosted runner (nested virt is NOT available on
+# GitHub-hosted runners). Wire the kanpur KVM host as an org runner with the
+# "kvm" label, then set the KVM_E2E_ENABLED org variable to "true".
+# Job is gated off by default so dispatch doesn't hang on an unmatched label.
 
 on:
   workflow_dispatch:        # manual trigger
 
 jobs:
   e2e:
-    runs-on: runs-on=${{ github.run_id }}/runner=build-kvm
+    if: ${{ vars.KVM_E2E_ENABLED == 'true' }}
+    runs-on: [self-hosted, kvm]
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7

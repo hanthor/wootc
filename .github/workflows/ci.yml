@@ -190,7 +190,7 @@ jobs:
 
   gui-cdp-windows:
     if: ${{ vars.WOOTC_CDP_ENABLED == 'true' }}
-    runs-on: [self-hosted, Windows]
+    runs-on: windows-latest
     env:
       WOOTC_CDP_URL: ${{ vars.WOOTC_CDP_URL }}
     steps:
