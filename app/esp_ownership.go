@@ -32,6 +32,20 @@ const espOwnershipManifest = `EFI\wootc\wootc-owned.txt`
 // its tests) must build everywhere.
 const wootcGrubMarker = "# wootc deployer"
 
+// wootcGrubOwnership is the marker family every wootc grub.cfg writer shares.
+// wootc writes EFI\fedora\grub.cfg from THREE places, each with its own
+// header comment:
+//   - this app:            "# wootc deployer ..."
+//   - setup-wootc.ps1:     "# wootc first-boot installer menu" / "# wootc deployer - ..."
+//   - deploy.sh (Phase 2): "# wootc Phase 2 — boot installed system ..." and
+//     "# wootc Phase 2 (composefs) ..."
+// Matching only the first refused wootc's own post-deploy ESP: a user who
+// completed a deploy and later reinstalled got "belongs to another operating
+// system" from the very files wootc wrote (GUI cell, run 31076749824). A
+// genuine Fedora/RHEL grub.cfg contains no "# wootc" comment at all, so the
+// family prefix keeps the guard's teeth against real dual-boot installs.
+const wootcGrubOwnership = "# wootc"
+
 func espManifestPath(espPath string) string {
 	return filepath.Join(espPath, "EFI", "wootc", "wootc-owned.txt")
 }
@@ -81,10 +95,13 @@ func isOwnNamespace(rel string) bool {
 // ownsFedoraNamespace reports whether the EFI\fedora tree was staged by wootc.
 // An older wootc predating the manifest still left its marker in grub.cfg, so
 // this keeps upgrades working without weakening the guard against a real
-// Fedora/RHEL install (whose grub.cfg has no such marker).
+// Fedora/RHEL install (whose grub.cfg has no such marker). The match is the
+// shared "# wootc" marker family, NOT only this app's own header — the
+// deployer rewrites this file with its Phase-2 menu on every completed
+// deploy, and a reinstall must recognize that as ours too.
 func ownsFedoraNamespace(espPath string) bool {
 	data, err := os.ReadFile(filepath.Join(espPath, "EFI", "fedora", "grub.cfg"))
-	return err == nil && strings.Contains(string(data), wootcGrubMarker)
+	return err == nil && strings.Contains(string(data), wootcGrubOwnership)
 }
 
 // guardESPDestinations refuses to continue if any destination already exists

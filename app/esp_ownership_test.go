@@ -137,6 +137,27 @@ func TestOlderWootcInstallIsRecognisedByItsMarker(t *testing.T) {
 	}
 }
 
+// A COMPLETED deploy leaves the deployer's Phase-2 menu in grub.cfg — a
+// different header ("# wootc Phase 2 — ...") from this app's own. That ESP is
+// ours, and a reinstall over it must not be refused as a foreign Linux
+// (GUI-driven bluefin cell, run 31076749824: "belongs to another operating
+// system" from files wootc itself wrote).
+func TestPostDeployPhase2MenuIsRecognisedAsOurs(t *testing.T) {
+	esp := t.TempDir()
+	writeFile(t, filepath.Join(esp, "EFI", "fedora", "grub.cfg"),
+		"# wootc Phase 2 — boot installed system from root.disk\nset default=0\nmenuentry \"wootc Linux\" { ... }")
+	writeFile(t, filepath.Join(esp, "EFI", "fedora", "grubx64.efi"), "target-signed grub staged by deploy.sh")
+	if err := guardESPDestinations(esp, []string{filepath.Join("EFI", "fedora", "grubx64.efi")}); err != nil {
+		t.Fatalf("a post-deploy Phase-2 ESP is wootc's own; reinstall must proceed, got: %v", err)
+	}
+	// The composefs variant's header too.
+	writeFile(t, filepath.Join(esp, "EFI", "fedora", "grub.cfg"),
+		"# wootc Phase 2 (composefs) — deployer kernel + patched UKI initrd\nmenuentry ...")
+	if err := guardESPDestinations(esp, []string{filepath.Join("EFI", "fedora", "grubx64.efi")}); err != nil {
+		t.Fatalf("a composefs Phase-2 ESP is wootc's own; reinstall must proceed, got: %v", err)
+	}
+}
+
 // ...but a REAL Fedora, whose grub.cfg carries no marker, still stops us.
 func TestRealFedoraStillBlocksAfterTheNamespaceFix(t *testing.T) {
 	esp := t.TempDir()
