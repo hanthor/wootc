@@ -1058,6 +1058,43 @@ snapshot_before_deployer() {
     pass "Pre-deployer snapshot saved: $snapshot ($(du -h "$snapshot" | cut -f1))"
 }
 
+# A registry blob copy can die mid-transfer for reasons that have nothing to do
+# with this checkout: run 31078332031's bluefin-dakota cell lost the quay.io CDN
+# three seconds in (`writing blob ... happened during read: unexpected EOF`
+# fetching quay.io/fedora/fedora:45) and burned the whole cell before a single
+# VM booted. podman does not retry a broken blob stream, so retry the build here.
+# The retry is gated on the output actually naming a transport failure, so a real
+# Containerfile or dracut error still fails on the first attempt instead of being
+# repeated three times over five minutes.
+WOOTC_BUILD_TRANSIENT_RE='unexpected EOF|happened during read|TLS handshake timeout|i/o timeout|connection reset by peer|no such host|[Tt]emporary failure in name resolution|net/http: request canceled|dial tcp|unexpected HTTP status: 5[0-9][0-9]|Bad Gateway|Service Unavailable|Gateway Time|Internal Server Error|toomanyrequests|Too Many Requests'
+
+# podman_build_retry <tag> <podman build args...>
+podman_build_retry() {
+    local tag="$1"; shift
+    local log attempt rc
+    log="${TMPDIR:-/tmp}/wootc-build-${tag}.$$.log"
+    for attempt in 1 2 3; do
+        rc=0
+        podman build -t "$tag" "$@" 2>&1 | tee "$log" || rc=$?
+        if [ "$rc" -eq 0 ]; then
+            rm -f "$log"
+            return 0
+        fi
+        if ! grep -qE "$WOOTC_BUILD_TRANSIENT_RE" "$log"; then
+            warn "$tag build failed with no registry/transport error in its output; not retrying"
+            break
+        fi
+        if [ "$attempt" -eq 3 ]; then
+            warn "$tag build still hitting registry/transport errors after 3 attempts"
+            break
+        fi
+        warn "$tag build hit a registry/transport error (attempt $attempt/3); retrying in $((attempt * 10))s"
+        sleep $((attempt * 10))
+    done
+    rm -f "$log"
+    return 1
+}
+
 # ── Step 0: Build deployer initramfs ─────────────────────────────────────────
 if [ "$SKIP_BUILD" = false ]; then
     step "Building deployer initramfs..."
@@ -1069,7 +1106,7 @@ if [ "$SKIP_BUILD" = false ]; then
     exec 8>"$SCRIPT_DIR/.build.lock"
     flock 8
 
-    podman build -t wootc-deployer -f payload/deployer/Containerfile . || {
+    podman_build_retry wootc-deployer -f payload/deployer/Containerfile . || {
         fail "Deployer build failed"
         exit 1
     }
@@ -1094,7 +1131,7 @@ if [ "$SKIP_BUILD" = false ]; then
         mv -f "$tmp_output" "$output"
     done
 
-    podman build -t wootc-wubildr -f payload/wubildr/Containerfile . || {
+    podman_build_retry wootc-wubildr -f payload/wubildr/Containerfile . || {
         info "wubildr EFI build failed (non-fatal — using signed shim chain instead)"
     }
     if podman image exists wootc-wubildr 2>/dev/null; then
