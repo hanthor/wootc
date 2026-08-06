@@ -874,18 +874,51 @@ qga_sync_oem() {
 reset_oem_attempt() {
     step "Resetting prior OEM handoff state..."
     qga_powershell '$ErrorActionPreference = "Stop"; cmd.exe /d /c "schtasks.exe /Delete /TN \"wootc-e2e-setup\" /F >NUL 2>&1"; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and ($_.CommandLine -like "*run-wootc-e2e.ps1*" -or $_.CommandLine -like "*setup-wootc.ps1*") } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }; Remove-Item -LiteralPath "$env:SystemDrive\wootc" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath "$env:SystemDrive\OEM\e2e-setup-complete.txt","$env:SystemDrive\OEM\e2e-setup-failed.txt","$env:SystemDrive\OEM\e2e-snapshot-complete.txt","$env:SystemDrive\OEM\wootc-e2e.log" -Force -ErrorAction SilentlyContinue; if (Test-Path "$env:SystemDrive\wootc") { throw "failed to clear prior E2E state" }'
-    # The kill above can catch the snapshot-baked OEM arm MID-ESP-STAGE: the
-    # first logon after a base-image restore fires the OEM task, and by the
-    # time this reset lands the script may have copied shimx64.efi/grubx64.efi
-    # into EFI\fedora without having written grub.cfg yet. C:\wootc is swept
-    # but those ESP orphans were not — and the GUI arm then correctly refuses
-    # an unattributable EFI\fedora\shimx64.efi as "another operating system"
-    # (runs 31076749824 / 31078332031; timing-dependent, which is why the same
-    # snapshot went GUI-green on other days). Sweep the ESP the same way:
-    # EFI\wootc is ours by definition; EFI\fedora only when its grub.cfg is
-    # wootc-marked or ABSENT (an interrupted arm — a real Linux always has a
-    # cfg beside its loader; this is a disposable E2E guest regardless).
-    qga_powershell '$ErrorActionPreference = "SilentlyContinue"; $esp = "S:"; mountvol $esp /S | Out-Null; if (Test-Path "$esp\EFI") { Remove-Item -LiteralPath "$esp\EFI\wootc" -Recurse -Force -ErrorAction SilentlyContinue; $cfg = "$esp\EFI\fedora\grub.cfg"; $fed = "$esp\EFI\fedora"; if (Test-Path $fed) { $ours = (-not (Test-Path $cfg)) -or ((Get-Content -Raw $cfg) -match "# wootc"); if ($ours) { Remove-Item -LiteralPath $fed -Recurse -Force -ErrorAction SilentlyContinue } } ; mountvol $esp /D | Out-Null }' >/dev/null 2>&1 || true
+    # An interrupted OEM arm (killed above, or killed during the snapshot
+    # PRIME) copies shimx64.efi/grubx64.efi into EFI\fedora before it writes
+    # grub.cfg — setup-wootc.ps1 stages the binaries first — so the GUI arm
+    # then refuses an unattributable EFI\fedora\shimx64.efi as "another
+    # operating system" (runs 31076749824 / 31078332031 / 31079784936, the
+    # last one on ALL win11pro GUI cells at once, i.e. baked into the shared
+    # snapshot, not a per-run race). The first sweep here used
+    # `mountvol S: /S`, which FAILS when the ESP already has a drive letter —
+    # and the interrupted arm's Add-PartitionAccessPath persists its letter
+    # into the snapshot via the mount-manager database, so the sweep no-oped
+    # on exactly the ESPs it existed to clean (same trap as findESP's
+    # "Cannot assign multiple drive letters" note in installer_windows.go).
+    # Discover the ESP the way the app does — GPT type on the C: disk, letter
+    # from AccessPaths, assign one only if missing — and remove EFI\wootc and
+    # EFI\fedora unconditionally: this guest is a disposable E2E Windows
+    # restored from a Windows-only snapshot, so anything in either directory
+    # is wootc residue, never a real Linux. Log what was found and what
+    # remains; a silent sweep already cost three diagnosis rounds.
+    local sweep_out
+    sweep_out=$(qga_powershell '$ErrorActionPreference = "SilentlyContinue"
+$sysDisk = (Get-Partition -DriveLetter C -ErrorAction SilentlyContinue).DiskNumber
+$esp = Get-Partition -DiskNumber $sysDisk -ErrorAction SilentlyContinue | Where-Object { $_.GptType -eq "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}" } | Select-Object -First 1
+if (-not $esp) { Write-Output "no ESP found on disk $sysDisk"; exit 0 }
+$letter = ""
+foreach ($ap in @($esp.AccessPaths)) { if ($ap -match "^([A-Za-z]):\\$") { $letter = $Matches[1] } }
+if (-not $letter) {
+    $esp | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction SilentlyContinue
+    foreach ($i in 1..20) {
+        $p = Get-Partition -DiskNumber $esp.DiskNumber -PartitionNumber $esp.PartitionNumber -ErrorAction SilentlyContinue
+        foreach ($ap in @($p.AccessPaths)) { if ($ap -match "^([A-Za-z]):\\$") { $letter = $Matches[1] } }
+        if ($letter) { break }
+        Start-Sleep -Milliseconds 500
+    }
+}
+if (-not $letter) { Write-Output "ESP found but no drive letter could be assigned"; exit 0 }
+$root = "${letter}:\EFI"
+$before = @(Get-ChildItem -Path "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+Write-Output ("before: " + $(if ($before) { $before -join "; " } else { "clean" }))
+Remove-Item -LiteralPath "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue
+$after = @(Get-ChildItem -Path "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+if ($after) { Write-Output ("SWEEP-INCOMPLETE: " + ($after -join "; ")) } else { Write-Output "after: clean" }' 2>&1) || true
+    printf '%s\n' "$sweep_out" | sed 's/^/    esp-sweep: /'
+    if printf '%s' "$sweep_out" | grep -q 'SWEEP-INCOMPLETE'; then
+        warn "ESP sweep left wootc residue behind; the GUI ownership guard may refuse this install"
+    fi
     rm -f "$STORAGE_DIR/qemu.pty"
     printf '%s run_id=%s reset prior OEM handoff state\n' "$(date -u +%FT%TZ)" "$RUN_ID" > "$STORAGE_DIR/e2e-timeline.log"
     pass "Prior OEM handoff state cleared"
