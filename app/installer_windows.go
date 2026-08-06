@@ -552,9 +552,12 @@ func setupSignedChain(espPath string, cfg InstallConfig) error {
 
 	// D1 guard: a machine dual-booting a real Fedora-family install owns
 	// EFI\fedora — overwriting its grub.cfg would break that Linux. Refuse
-	// unless the existing config is ours (reinstall).
+	// unless the existing config is ours (reinstall). "Ours" is the shared
+	// "# wootc" marker family: the deployer rewrites this file with its
+	// Phase-2 menu after every completed deploy, and a reinstall over that
+	// state must not be refused as a foreign Linux.
 	if data, err := os.ReadFile(grubCfg); err == nil {
-		if !strings.Contains(string(data), wootcGrubMarker) {
+		if !strings.Contains(string(data), wootcGrubOwnership) {
 			return fmt.Errorf("this PC already has a Linux bootloader at EFI\\fedora — " +
 				"installing wootc would break it. Dual-boot alongside an existing " +
 				"Linux install is not supported yet")
@@ -633,7 +636,16 @@ func setupSignedChain(espPath string, cfg InstallConfig) error {
 	if cfg.Encryption != "" && cfg.Encryption != "none" {
 		luks = " wootc.luks=" + cfg.Encryption
 	}
-	installMode := " wootc.bootloader=grub2"
+	// Default to auto: the deployer probes the image and picks the backend
+	// definitively (this is the configuration that took dakota/composefs
+	// green — run 30710282014). Explicit values are an advanced override.
+	installMode := " wootc.bootloader=auto"
+	switch cfg.Bootloader {
+	case "grub2":
+		installMode = " wootc.bootloader=grub2"
+	case "systemd-boot":
+		installMode = " wootc.bootloader=systemd"
+	}
 	if cfg.ComposeFS {
 		installMode += " wootc.composefs=1"
 	}
@@ -991,11 +1003,13 @@ func uninstallWith(ctx context.Context, opts UninstallOptions) error {
 	// 1. Remove all wootc BCD entries.
 	deleteWootcBCDEntries()
 
-	// 2. Remove ESP files. EFI\fedora only when its grub.cfg is ours.
+	// 2. Remove ESP files. EFI\fedora only when its grub.cfg is ours — the
+	// shared "# wootc" family, so a post-deploy Phase-2 menu is cleaned up
+	// too instead of stranding wootc's chain on the ESP forever.
 	if espPath, err := findESP(); err == nil {
 		os.RemoveAll(filepath.Join(espPath, "EFI", "wootc")) //nolint:errcheck
 		grubCfg := filepath.Join(espPath, "EFI", "fedora", "grub.cfg")
-		if data, err := os.ReadFile(grubCfg); err == nil && strings.Contains(string(data), wootcGrubMarker) {
+		if data, err := os.ReadFile(grubCfg); err == nil && strings.Contains(string(data), wootcGrubOwnership) {
 			os.RemoveAll(filepath.Join(espPath, "EFI", "fedora")) //nolint:errcheck
 		}
 	}

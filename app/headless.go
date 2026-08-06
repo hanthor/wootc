@@ -52,7 +52,7 @@ func headlessInstall(args []string) int {
 	fs.StringVar(&cfg.Username, "username", "", "initial user name (required)")
 	fs.StringVar(&cfg.Password, "password", "", "initial user password (required; hashed before persisting)")
 	fs.StringVar(&cfg.Hostname, "hostname", "tunaos", "target hostname")
-	fs.StringVar(&cfg.Bootloader, "bootloader", "grub2", "bootloader chain (grub2)")
+	fs.StringVar(&cfg.Bootloader, "bootloader", "auto", "bootloader chain (auto|grub2|systemd-boot; auto lets the deployer detect the image's backend)")
 	noReboot := fs.Bool("no-reboot", true, "do not reboot after arming (default true; pass -no-reboot=false to reboot)")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -62,11 +62,19 @@ func headlessInstall(args []string) int {
 		fs.Usage()
 		return 2
 	}
+	// headless bypasses StartInstall, so validate the chain here too rather
+	// than letting a typo'd -bootloader fall through to the auto path.
+	bootloader, err := normalizeBootloader(cfg.Bootloader)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "install: %v\n", err)
+		return 2
+	}
+	cfg.Bootloader = bootloader
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	err := runPipeline(ctx, cfg, func(e ProgressEvent) {
+	err = runPipeline(ctx, cfg, func(e ProgressEvent) {
 		if e.Error != "" {
 			fmt.Fprintf(os.Stderr, "[wootc %3.0f%%] ERROR %s: %s\n", e.Percent, e.Step, e.Error)
 			return

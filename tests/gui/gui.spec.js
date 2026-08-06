@@ -119,12 +119,19 @@ test('installer — NTFS defrag recommendation is advisory and actionable (§3.6
   await expect(page.getByText('Windows recommends optimizing C:')).toBeHidden();
 });
 
-test('installer — image metadata selects composefs/systemd-boot and warns for Secure Boot', async ({ page }) => {
+test('installer — backend detection is automatic; forcing systemd-boot warns for Secure Boot', async ({ page }) => {
+  // Catalog bootloader/composeFs are display metadata: the deployer's probe
+  // decides the backend (forcing metadata sent ostree bonito down the
+  // composefs path, and pointed composefs images at the unsigned
+  // systemd-boot deployer chain that Secure Boot rejects). Selecting any
+  // image leaves the override OFF; turning it on is explicit and warns.
   await boot(page, { mode: 'installer', images: IMAGES, sysinfo: SYSINFO });
   await page.getByText('Bonito').first().click();
   await page.getByText('Advanced boot options').click();
-  await expect(page.getByRole('checkbox', { name: /Use systemd-boot/ })).toBeChecked();
-  await expect(page.getByText(/requires a verified shim plus vendor-signed loader chain/)).toBeVisible();
+  const force = page.getByRole('checkbox', { name: /Force systemd-boot/ });
+  await expect(force).not.toBeChecked();
+  await force.check();
+  await expect(page.getByText(/requires a verified.*shim plus vendor-signed/)).toBeVisible();
 });
 
 test('installer — supported family custom OCI reference is accepted', async ({ page }) => {
@@ -160,7 +167,7 @@ test('installer — LUKS encryption options (§2.6) with TPM recommended', async
   await expect(page.getByText('Disk Encryption')).toBeVisible();
   await expect(page.getByText('No encryption')).toBeVisible();
   await expect(page.getByText('TPM auto-unlock')).toBeVisible();
-  await expect(page.getByText('RECOMMENDED')).toBeVisible();
+  await expect(page.getByText('RECOMMENDED', { exact: true })).toBeVisible();
   await expect(page.getByText('Passphrase')).toBeVisible();
   // Default is TPM auto-unlock; no passphrase field shown.
   const passCount = await page.locator('input[type="password"]').count();
@@ -207,16 +214,17 @@ test('migration dashboard — files, apps, office', async ({ page }) => {
   await shot(page, '06-migration-dashboard');
 });
 
-test('installer — custom OCI ref defaults to the grub2/ostree path', async ({ page }) => {
+test('installer — custom OCI ref defaults to auto backend detection', async ({ page }) => {
   // Guessing systemd-boot for custom refs sent a bluefin:lts install into
-  // "systemd-boot is not bundled" (run 20260723T1100). grub2/ostree is the
-  // measured backend of every supported family except dakota; the deployer
-  // probe corrects at deploy time.
+  // "systemd-boot is not bundled" (run 20260723T1100), and guessing grub2
+  // hardcoded the other direction. The deployer probes the image and picks
+  // the backend definitively (the configuration that took dakota green —
+  // run 30710282014), so the GUI's job is to say 'auto' and stay out of it.
   await boot(page, { mode: 'installer', images: IMAGES, sysinfo: SYSINFO });
   await page.locator('input[placeholder="ghcr.io/ublue-os/image:tag"]').fill('ghcr.io/projectbluefin/bluefin:lts');
   const sel = await page.evaluate(() => window.__WOOTC_STATE?.selected || null);
   if (sel) {
-    expect(sel.bootloader).toBe('grub2');
+    expect(sel.bootloader).toBe('auto');
     expect(sel.composeFs).toBe(false);
   } else {
     // State not exported to the page — assert via the visible config text.

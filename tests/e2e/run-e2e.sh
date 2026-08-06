@@ -874,6 +874,79 @@ qga_sync_oem() {
 reset_oem_attempt() {
     step "Resetting prior OEM handoff state..."
     qga_powershell '$ErrorActionPreference = "Stop"; cmd.exe /d /c "schtasks.exe /Delete /TN \"wootc-e2e-setup\" /F >NUL 2>&1"; Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and ($_.CommandLine -like "*run-wootc-e2e.ps1*" -or $_.CommandLine -like "*setup-wootc.ps1*") } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }; Remove-Item -LiteralPath "$env:SystemDrive\wootc" -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath "$env:SystemDrive\OEM\e2e-setup-complete.txt","$env:SystemDrive\OEM\e2e-setup-failed.txt","$env:SystemDrive\OEM\e2e-snapshot-complete.txt","$env:SystemDrive\OEM\wootc-e2e.log" -Force -ErrorAction SilentlyContinue; if (Test-Path "$env:SystemDrive\wootc") { throw "failed to clear prior E2E state" }'
+    # An interrupted OEM arm (killed above, or killed during the snapshot
+    # PRIME) copies shimx64.efi/grubx64.efi into EFI\fedora before it writes
+    # grub.cfg — setup-wootc.ps1 stages the binaries first — so the GUI arm
+    # then refuses an unattributable EFI\fedora\shimx64.efi as "another
+    # operating system" (runs 31076749824 / 31078332031 / 31079784936, the
+    # last one on ALL win11pro GUI cells at once, i.e. baked into the shared
+    # snapshot, not a per-run race). Two sweeps have failed here already:
+    #   1. `mountvol S: /S` — fails outright when the ESP already has a
+    #      letter (same trap as findESP's "Cannot assign multiple drive
+    #      letters" note in installer_windows.go).
+    #   2. Single-process Get-Partition + Add-PartitionAccessPath +
+    #      Get-ChildItem — run 31081727936 printed "before: clean" and the
+    #      guard STILL found shimx64.efi minutes later with no other writer
+    #      alive: a drive letter assigned mid-process is not reliably visible
+    #      to that same PowerShell's FileSystem provider, so every path test
+    #      silently read as "not found" and the sweep no-oped again.
+    # So: discover the ESP (GPT type on the C: disk, letter from AccessPaths,
+    # assign only if missing) in one QGA PowerShell, then do ALL file
+    # operations in a SECOND, fresh PowerShell process — a new process always
+    # sees the current drive letters. Removal is unconditional: this guest is
+    # a disposable E2E Windows restored from a Windows-only snapshot, so
+    # anything in EFI\wootc or EFI\fedora is wootc residue, never a real
+    # Linux. Log the letter and both listings; silence here has cost four
+    # diagnosis rounds.
+    #
+    # Remove-Item is not the last word: PowerShell 5.1 recurses into a tree
+    # whose entries carry the system/hidden attributes Windows puts on EFI\
+    # and then reports "directory is not empty", so anything still standing
+    # gets a second pass through attrib + `rd /s /q`, which does not care.
+    # The retry announces itself, so if it ever fires we learn that the ESP
+    # letter was never the whole story.
+    local esp_letter sweep_out
+    esp_letter=$(qga_powershell '$ErrorActionPreference = "SilentlyContinue"
+$sysDisk = (Get-Partition -DriveLetter C -ErrorAction SilentlyContinue).DiskNumber
+$esp = Get-Partition -DiskNumber $sysDisk -ErrorAction SilentlyContinue | Where-Object { $_.GptType -eq "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}" } | Select-Object -First 1
+if (-not $esp) { Write-Output "NO-ESP"; exit 0 }
+$letter = ""
+foreach ($ap in @($esp.AccessPaths)) { if ($ap -match "^([A-Za-z]):\\$") { $letter = $Matches[1] } }
+if (-not $letter) {
+    $esp | Add-PartitionAccessPath -AssignDriveLetter -ErrorAction SilentlyContinue
+    foreach ($i in 1..20) {
+        $p = Get-Partition -DiskNumber $esp.DiskNumber -PartitionNumber $esp.PartitionNumber -ErrorAction SilentlyContinue
+        foreach ($ap in @($p.AccessPaths)) { if ($ap -match "^([A-Za-z]):\\$") { $letter = $Matches[1] } }
+        if ($letter) { break }
+        Start-Sleep -Milliseconds 500
+    }
+}
+if ($letter) { Write-Output $letter } else { Write-Output "NO-LETTER" }' 2>&1 | tr -d '[:space:]') || true
+    echo "    esp-sweep: ESP drive letter: ${esp_letter:-<empty>}"
+    case "$esp_letter" in
+        [A-Za-z])
+            sweep_out=$(qga_powershell '$ErrorActionPreference = "SilentlyContinue"
+$root = "'"$esp_letter"':\EFI"
+$before = @(Get-ChildItem -Path "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+Write-Output ("before: " + $(if ($before) { $before -join "; " } else { "clean" }))
+Remove-Item -LiteralPath "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($dir in @("$root\wootc", "$root\fedora")) {
+    if (-not (Test-Path -LiteralPath $dir)) { continue }
+    Write-Output "retry-rd: $dir survived Remove-Item"
+    cmd.exe /d /c "attrib -r -s -h `"$dir`" /s /d >NUL 2>&1" | Out-Null
+    cmd.exe /d /c "rd /s /q `"$dir`" >NUL 2>&1" | Out-Null
+}
+$after = @(Get-ChildItem -Path "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
+if ($after) { Write-Output ("SWEEP-INCOMPLETE: " + ($after -join "; ")) } else { Write-Output "after: clean" }' 2>&1) || true
+            printf '%s\n' "$sweep_out" | sed 's/^/    esp-sweep: /'
+            if printf '%s' "$sweep_out" | grep -q 'SWEEP-INCOMPLETE'; then
+                warn "ESP sweep left wootc residue behind; the GUI ownership guard may refuse this install"
+            fi
+            ;;
+        *)
+            warn "ESP sweep could not reach the ESP ($esp_letter); the GUI ownership guard may refuse this install"
+            ;;
+    esac
     rm -f "$STORAGE_DIR/qemu.pty"
     printf '%s run_id=%s reset prior OEM handoff state\n' "$(date -u +%FT%TZ)" "$RUN_ID" > "$STORAGE_DIR/e2e-timeline.log"
     pass "Prior OEM handoff state cleared"
@@ -1058,6 +1131,43 @@ snapshot_before_deployer() {
     pass "Pre-deployer snapshot saved: $snapshot ($(du -h "$snapshot" | cut -f1))"
 }
 
+# A registry blob copy can die mid-transfer for reasons that have nothing to do
+# with this checkout: run 31078332031's bluefin-dakota cell lost the quay.io CDN
+# three seconds in (`writing blob ... happened during read: unexpected EOF`
+# fetching quay.io/fedora/fedora:45) and burned the whole cell before a single
+# VM booted. podman does not retry a broken blob stream, so retry the build here.
+# The retry is gated on the output actually naming a transport failure, so a real
+# Containerfile or dracut error still fails on the first attempt instead of being
+# repeated three times over five minutes.
+WOOTC_BUILD_TRANSIENT_RE='unexpected EOF|happened during read|TLS handshake timeout|i/o timeout|connection reset by peer|no such host|[Tt]emporary failure in name resolution|net/http: request canceled|dial tcp|unexpected HTTP status: 5[0-9][0-9]|Bad Gateway|Service Unavailable|Gateway Time|Internal Server Error|toomanyrequests|Too Many Requests'
+
+# podman_build_retry <tag> <podman build args...>
+podman_build_retry() {
+    local tag="$1"; shift
+    local log attempt rc
+    log="${TMPDIR:-/tmp}/wootc-build-${tag}.$$.log"
+    for attempt in 1 2 3; do
+        rc=0
+        podman build -t "$tag" "$@" 2>&1 | tee "$log" || rc=$?
+        if [ "$rc" -eq 0 ]; then
+            rm -f "$log"
+            return 0
+        fi
+        if ! grep -qE "$WOOTC_BUILD_TRANSIENT_RE" "$log"; then
+            warn "$tag build failed with no registry/transport error in its output; not retrying"
+            break
+        fi
+        if [ "$attempt" -eq 3 ]; then
+            warn "$tag build still hitting registry/transport errors after 3 attempts"
+            break
+        fi
+        warn "$tag build hit a registry/transport error (attempt $attempt/3); retrying in $((attempt * 10))s"
+        sleep $((attempt * 10))
+    done
+    rm -f "$log"
+    return 1
+}
+
 # ── Step 0: Build deployer initramfs ─────────────────────────────────────────
 if [ "$SKIP_BUILD" = false ]; then
     step "Building deployer initramfs..."
@@ -1069,7 +1179,7 @@ if [ "$SKIP_BUILD" = false ]; then
     exec 8>"$SCRIPT_DIR/.build.lock"
     flock 8
 
-    podman build -t wootc-deployer -f payload/deployer/Containerfile . || {
+    podman_build_retry wootc-deployer -f payload/deployer/Containerfile . || {
         fail "Deployer build failed"
         exit 1
     }
@@ -1094,7 +1204,7 @@ if [ "$SKIP_BUILD" = false ]; then
         mv -f "$tmp_output" "$output"
     done
 
-    podman build -t wootc-wubildr -f payload/wubildr/Containerfile . || {
+    podman_build_retry wootc-wubildr -f payload/wubildr/Containerfile . || {
         info "wubildr EFI build failed (non-fatal — using signed shim chain instead)"
     }
     if podman image exists wootc-wubildr 2>/dev/null; then
@@ -1778,9 +1888,10 @@ info "Container $CONTAINER_NAME started"
 # A first run extracts the ISO, injects drivers, and rebuilds the installer
 # image — several minutes on slower disks — so poll long (up to 15 min) and
 # distinguish "QEMU never started" from a real acceleration failure.
+qemu_argv_sample() { $DOCKER exec "$CONTAINER_NAME" ps -ef 2>/dev/null | grep '[q]emu-system' || true; }
 QEMU_CMD=""
 for _ in $(seq 1 300); do
-    QEMU_CMD=$($DOCKER exec "$CONTAINER_NAME" ps -ef 2>/dev/null | grep '[q]emu-system' || true)
+    QEMU_CMD=$(qemu_argv_sample)
     [ -n "$QEMU_CMD" ] && break
     sleep 3
 done
@@ -1789,11 +1900,33 @@ if [ -z "$QEMU_CMD" ]; then
     capture_vm_diagnostics
     exit 1
 fi
-if [[ ( "$QEMU_CMD" != *"-accel=kvm"* && "$QEMU_CMD" != *"accel=kvm"* ) || "$QEMU_CMD" != *"-enable-kvm"* ]]; then
-    fail "QEMU is not using KVM acceleration"
-    capture_vm_diagnostics
-    exit 1
-fi
+# The FIRST sample of a just-started process is not evidence about its argv.
+# A process caught inside execve exposes a partially-written
+# /proc/<pid>/cmdline, so ps prints a command line truncated mid-argument.
+# el10-gnome-win11pro-bitlocker (run 31076749824) died on
+# "QEMU is not using KVM acceleration" 3s after the container came up, and the
+# diagnostics dump 300ms later printed the very same PID with both accel=kvm
+# and -enable-kvm. Every assertion below reads a flag that sits late on a
+# ~2 KB command line (-enable-kvm, -tpmdev emulator, property=secure,value=on,
+# /storage2/data2.qcow2), so a short read fails them all spuriously.
+# Re-sample until the argv shows acceleration, and only call it a real failure
+# once the process has had time to finish exec'ing.
+QEMU_ARGV_DEADLINE=$(deadline_in 60)
+until [[ ( "$QEMU_CMD" == *"-accel=kvm"* || "$QEMU_CMD" == *"accel=kvm"* ) && "$QEMU_CMD" == *"-enable-kvm"* ]]; do
+    if past_deadline "$QEMU_ARGV_DEADLINE"; then
+        fail "QEMU is not using KVM acceleration"
+        info "settled QEMU argv: ${QEMU_CMD:-<qemu no longer running>}"
+        capture_vm_diagnostics
+        exit 1
+    fi
+    sleep 2
+    NEXT_QEMU_CMD=$(qemu_argv_sample)
+    # An empty sample means QEMU exited; keep the last good line for the
+    # verdict rather than reporting an empty command line.
+    if [ -n "$NEXT_QEMU_CMD" ]; then
+        QEMU_CMD="$NEXT_QEMU_CMD"
+    fi
+done
 QEMU_RAM_MB=$(awk '{
     for (i = 1; i < NF; i++) if ($i == "-m" && $(i + 1) ~ /^[0-9]+[MG]$/) {
         value = $(i + 1)
@@ -2063,6 +2196,63 @@ fi
 # state so the dispatched run is the only writer.
 reset_oem_attempt
 
+# The app's preflight REFUSES to migrate a machine that is mid-servicing, and
+# it is right to: a staged servicing operation can rewrite boot configuration
+# underneath the migration or resume in the middle of it. The two signals are
+# Component Based Servicing\RebootPending and WindowsUpdate\Auto Update\
+# RebootRequired (app/installer_windows.go pendingReboot()).
+#
+# el10-gnome-win10pro, the first GUI-driven Win10 cell (run 30717631172), died
+# on exactly that: Install stayed disabled and the app said "Windows has an
+# update waiting to finish (servicing,windows-update). Restart the PC, let it
+# complete, then run wootc again." That is the product working as designed —
+# the harness was simply handing it a machine in a state no user is supposed
+# to install from. Win10 media stage servicing work that outlives OOBE, and
+# the WebView2 bootstrapper installed just above adds an update of its own.
+#
+# So do the one thing the app asks for, BEFORE launching it: read the SAME two
+# keys the product reads (never a proxy for them), and if either is set,
+# restart the guest and let servicing finish. Environment provisioning, not a
+# workaround — a user who follows the app's instruction arrives here too.
+# If a restart does not clear it, say so and leave the app's own refusal as
+# the verdict rather than pretending the machine is ready.
+gui_settle_pending_servicing() {
+    # shellcheck disable=SC2016 # PowerShell variables must remain literal.
+    local probe='$r = @()
+if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") { $r += "servicing" }
+if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") { $r += "windows-update" }
+Write-Output ($r -join ",")'
+    local pending
+    pending=$(qga_powershell "$probe" 2>/dev/null | tr -d '[:space:]' || true)
+    if [ -z "$pending" ]; then
+        info "    no pending servicing operation — the app's preflight has nothing to refuse"
+        return 0
+    fi
+    info "    Windows is mid-servicing ($pending) — restarting the guest, exactly as the app instructs a user to"
+    qga_powershell 'cmd.exe /c "shutdown.exe /a >NUL 2>&1 & shutdown.exe /r /t 1 /f >NUL 2>&1"' >/dev/null 2>&1 || true
+    qga_wait_reboot "Windows after the pending-servicing restart"
+    # QGA answers from session 0 well before autologon completes, and the GUI
+    # is launched with `schtasks /IT` — which needs a real interactive session
+    # or it fails with "the system cannot find the file specified", the same
+    # opaque message el10-gnome-win11ent produced. Wait for the logged-on user
+    # to exist, positively, rather than assuming the agent implies a desktop.
+    local logon_deadline
+    logon_deadline=$(deadline_in 300)
+    while ! past_deadline "$logon_deadline"; do
+        # shellcheck disable=SC2016 # PowerShell variable, not a shell one.
+        if [ -n "$(qga_powershell '$u = (Get-CimInstance Win32_ComputerSystem).UserName; if ($u) { Write-Output $u }' 2>/dev/null | tr -d '[:space:]')" ]; then
+            break
+        fi
+        sleep 10
+    done
+    pending=$(qga_powershell "$probe" 2>/dev/null | tr -d '[:space:]' || true)
+    if [ -n "$pending" ]; then
+        warn "    still mid-servicing after the restart ($pending) — the app will refuse, and it will be right to"
+        return 0
+    fi
+    pass "Pending servicing cleared by a restart — the machine is migration-ready"
+}
+
 # ── GUI-driven Phase 1 (--gui-install) ──────────────────────────────────────
 # Arms the machine through the REAL wootc.exe GUI instead of the OEM
 # setup-wootc.ps1 script: stage the app + artifacts, launch it with a CDP
@@ -2137,6 +2327,8 @@ Write-Output "webview2-install-started"' >/dev/null 2>&1 || warn "    (could not
             || warn "    WebView2 still absent after 7m — the GUI will stall on its install prompt"
     fi
 
+    gui_settle_pending_servicing
+
     qga_powershell 'New-Item -ItemType Directory -Force -Path C:\wootc\install | Out-Null
 Copy-Item \\host.lan\Data\wootc.exe C:\wootc\wootc.exe -Force
 foreach ($f in "deployer-vmlinuz","deployer-initramfs.img","shimx64.efi","grubx64.efi","wubildr.efi","mirror.txt") { if (Test-Path "\\host.lan\Data\$f") { Copy-Item "\\host.lan\Data\$f" "C:\wootc\install\$f" -Force } }
@@ -2204,6 +2396,59 @@ Write-Output ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption)
         exit 1
     fi
     pass "wootc.exe GUI launched in drive mode in the wootc session"
+
+    # The task that launched the app must not launch it a SECOND time.
+    # `/Create /SC ONCE /ST <now+1m>` leaves a live trigger behind and `/Run`
+    # does not consume it, so Task Scheduler starts launch-gui.cmd again within
+    # the minute — and nothing makes wootc.exe single-instance. The second app
+    # polls the SAME C:\wootc\e2e-drive.json, clicks Install on its own form,
+    # and two install pipelines race on one ESP. Each writes its ownership
+    # manifest only AFTER all four files land (app/installer_windows.go), so the
+    # loser's guard sees an unattributable EFI\fedora\shimx64.efi (or
+    # grubx64.efi — Go map order in the winner's copy loop) and refuses the
+    # install as "another operating system": run 31081727936 killed
+    # bluefin-dakota and fedora-gnome that way, each on a DIFFERENT member of
+    # that set — the signature of a set written in Go map order being read
+    # mid-flight.
+    #
+    # This does not depend on reading the sweep's verdict: the second launch is
+    # a property of the two schtasks calls above, so EVERY GUI cell has been
+    # running two installers, whatever else was or was not on the ESP.
+    #
+    # So drop the trigger now that the app is up (launch-gui.cmd exited the
+    # moment it `start`ed the exe, so there is no task instance left to kill),
+    # then assert the observable rather than trusting the delete: exactly ONE
+    # wootc.exe. Both happen BEFORE the directive is written, and no instance
+    # can install until it exists — after this point a second launch is
+    # impossible and any extra we killed provably never started an install.
+    local single_out
+    single_out=$(qga_powershell '$ErrorActionPreference = "SilentlyContinue"
+cmd.exe /d /c "schtasks.exe /Delete /TN \"wootc-gui-e2e\" /F >NUL 2>&1" | Out-Null
+# The delete can lose by a hair to a launch already in flight (launch-gui.cmd
+# started, wootc.exe not yet created), so settle before counting: a second app
+# that appears after the count would drive the directive we are about to write.
+# Bounded well inside the 60 s qga_call timeout: a client killed mid-command
+# poisons the single-connection socket for the rest of the run.
+Start-Sleep -Seconds 4
+for ($round = 1; $round -le 2; $round++) {
+    $procs = @(Get-Process wootc -ErrorAction SilentlyContinue | Sort-Object StartTime)
+    Write-Output ("round " + $round + ": instances=" + $procs.Count)
+    if ($procs.Count -le 1) { break }
+    foreach ($p in $procs[1..($procs.Count - 1)]) {
+        Write-Output ("EXTRA-INSTANCE: killing pid " + $p.Id + " (the task trigger fired a second launch)")
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 4
+}
+$left = @(Get-Process wootc -ErrorAction SilentlyContinue)
+if ($left.Count -ne 1) { Write-Output ("SINGLE-INSTANCE-UNPROVEN: " + $left.Count + " wootc.exe running") }' 2>&1) || true
+    printf '%s\n' "$single_out" | sed 's/^/    gui-single: /'
+    if printf '%s' "$single_out" | grep -q 'EXTRA-INSTANCE'; then
+        warn "a second wootc.exe had already been launched by the task trigger; killed it before the directive was written"
+    fi
+    if printf '%s' "$single_out" | grep -q 'SINGLE-INSTANCE-UNPROVEN'; then
+        warn "could not reduce the guest to a single wootc.exe — two install pipelines may race on the ESP"
+    fi
 
     step "Driving the REAL install through the live form (drive directive)..."
     qga_powershell "@'
@@ -2293,6 +2538,24 @@ Write-Output ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption)
         if printf '%s' "$drive_state" | grep -q '"error":"'; then
             fail "GUI install pipeline surfaced an error:"
             printf '%s\n' "$drive_state" | head -3
+            # ESP state at failure time, from a FRESH PowerShell (a reused
+            # process can miss letters assigned after it started). The
+            # ownership-guard failures took four rounds to diagnose because
+            # nothing recorded what was actually on the ESP when the app
+            # refused it.
+            info "ESP contents at failure time:"
+            qga_powershell '$ErrorActionPreference = "SilentlyContinue"
+$sysDisk = (Get-Partition -DriveLetter C -ErrorAction SilentlyContinue).DiskNumber
+$esp = Get-Partition -DiskNumber $sysDisk -ErrorAction SilentlyContinue | Where-Object { $_.GptType -eq "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}" } | Select-Object -First 1
+$letter = ""
+foreach ($ap in @($esp.AccessPaths)) { if ($ap -match "^([A-Za-z]):\\$") { $letter = $Matches[1] } }
+if (-not $letter) { Write-Output "ESP has no drive letter"; exit 0 }
+Write-Output ("ESP at " + $letter + ":")
+Get-ChildItem -Path "${letter}:\EFI" -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { Write-Output ("  " + $_.FullName + "  " + $_.Length) }
+$man = "${letter}:\EFI\wootc\wootc-owned.txt"
+if (Test-Path $man) { Write-Output "manifest:"; Get-Content $man | ForEach-Object { Write-Output ("  " + $_) } }
+$cfg = "${letter}:\EFI\fedora\grub.cfg"
+if (Test-Path $cfg) { Write-Output "grub.cfg first line:"; Write-Output ("  " + (Get-Content $cfg -TotalCount 1)) }' 2>&1 | sed 's/^/    esp-dump: /' || true
             capture_vm_diagnostics
             exit 1
         fi

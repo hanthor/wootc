@@ -20,7 +20,7 @@ export interface InstallConfig {
   username: string;
   password: string;
   hostname: string;
-  bootloader: string;
+  bootloader: 'auto' | 'grub2' | 'systemd-boot';
   composeFs: boolean;
   storageDrive: string;
   encryption: 'none' | 'tpm2-luks' | 'luks-passphrase';

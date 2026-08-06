@@ -43,7 +43,10 @@ type InstallConfig struct {
 	Username   string `json:"username"`
 	Password   string `json:"password"`
 	Hostname   string `json:"hostname"`
-	Bootloader string `json:"bootloader"` // "grub2" | "systemd-boot"
+	// Bootloader is the deployer boot chain: "auto" (default; the deployer
+	// probes the image and picks the backend), "grub2" or "systemd-boot"
+	// (explicit Advanced overrides).
+	Bootloader string `json:"bootloader"` // "auto" | "grub2" | "systemd-boot"
 	ComposeFS  bool   `json:"composeFs"`
 	// StorageDrive is the drive letter (no colon) where root.disk + vault
 	// live. Empty means C:. On a BitLocker-protected C:, the GUI sets this
@@ -373,6 +376,22 @@ func mergeBranding(base *Branding, over Branding) {
 
 // ── Install ───────────────────────────────────────────────────────────────────
 
+// normalizeBootloader validates the requested boot chain and fills in the
+// default. "auto" is the contract the GUI and `headless -bootloader` both
+// send: the deployer probes the image and picks the backend, which is what
+// took dakota/composefs green. "grub2" and "systemd-boot" are explicit
+// Advanced overrides. Anything else is a caller bug, not a user choice.
+func normalizeBootloader(v string) (string, error) {
+	switch v {
+	case "":
+		return "auto", nil
+	case "auto", "grub2", "systemd-boot":
+		return v, nil
+	default:
+		return "", fmt.Errorf("unsupported bootloader %q", v)
+	}
+}
+
 // StartInstall begins the install pipeline in a goroutine. Progress events
 // are emitted via Wails runtime events (event: "install:progress").
 // Returns immediately — poll GetStatus() or listen to events.
@@ -383,12 +402,11 @@ func (a *App) StartInstall(cfg InstallConfig) error {
 	if err := a.gateScenario(cfg); err != nil {
 		return err
 	}
-	if cfg.Bootloader == "" {
-		cfg.Bootloader = "grub2"
+	bootloader, err := normalizeBootloader(cfg.Bootloader)
+	if err != nil {
+		return err
 	}
-	if cfg.Bootloader != "grub2" && cfg.Bootloader != "systemd-boot" {
-		return fmt.Errorf("unsupported bootloader %q", cfg.Bootloader)
-	}
+	cfg.Bootloader = bootloader
 	if cfg.Encryption == "" {
 		cfg.Encryption = "tpm2-luks"
 	}

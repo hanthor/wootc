@@ -646,3 +646,110 @@ recovery screen.
   had come back fine. When a fix lands and the symptom shifts but survives,
   check whether you are now looking at a *second* cause rather than a
   an incomplete first one.
+
+## 30. The product refused, and it was right to
+
+`el10-gnome-win10pro`, the first GUI-driven Win10 cell (run 30717631172),
+failed with the app's own words:
+
+```
+[FAIL] the GUI REFUSES this configuration — Install is disabled, so no install can be driven
+[FAIL]   the app says: Windows has an update waiting to finish (servicing,windows-update).
+         Restart the PC, let it complete, then run wootc again
+```
+
+Nothing was broken. `pendingReboot()` read the two registry keys it is meant
+to read, both were set, and the preflight declined a machine that is
+mid-servicing — exactly the gate #63 exists for.
+
+- **A red cell is not automatically a bug in the thing under test.** The
+  harness had handed the product a machine in a state no user is supposed to
+  install from: Win10 media stage servicing work that outlives OOBE, and the
+  harness's own WebView2 bootstrapper (installed seconds earlier, because
+  wails cannot render without it) adds an update of its own. The failing
+  component was the *setup*, and the fix is to provision the guest into a
+  state a real user would be in — not to loosen a gate that protects boot
+  configuration during a migration.
+- **When the product tells the user what to do, the harness should do it.**
+  `gui_settle_pending_servicing()` reads the *same two keys* the app reads,
+  restarts the guest when either is set, and re-reads them. If a restart does
+  not clear them, it says so and lets the app's refusal stand as the verdict:
+  the harness must never assert a machine is ready, only observe that it is.
+- **Coming back is not being logged on.** QGA answers from session 0 long
+  before autologon finishes, and the GUI is launched via `schtasks /IT`, which
+  needs a real interactive session or fails with "the system cannot find the
+  file specified". §1 again: ping is a proxy, the logged-on user is the
+  observable, so the restart waits for `Win32_ComputerSystem.UserName`.
+
+## 31. The first sample of a just-started process is not its argv
+
+`el10-gnome-win11pro-bitlocker` (run 31076749824) died three seconds after the
+container came up:
+
+```
+[INFO] Container wootc-e2e-windows started
+[FAIL] QEMU is not using KVM acceleration
+```
+
+The diagnostics dump 300 ms later printed the very same PID with
+`accel=kvm -enable-kvm` on it, at 0 s of CPU time. Nothing was misconfigured:
+the harness read `ps -ef` while QEMU was still inside `execve`, where
+`/proc/<pid>/cmdline` is only partially written, and judged a command line that
+had been truncated mid-argument.
+
+- **A racy read is a proxy (§1).** The observable is the settled argv, not the
+  first one that happens to be readable. `-enable-kvm`, `-tpmdev emulator`,
+  `property=secure,value=on` and `/storage2/data2.qcow2` all sit late on a
+  ~2 KB command line, so a short read fails *every* one of those assertions and
+  reports the most alarming of them as the verdict.
+- **Poll until the assertion is satisfiable, then fail on a deadline.** The
+  check re-samples for up to 60 s and prints the settled command line with the
+  failure, so a genuine "dockur disabled KVM" still fails, and fails legibly.
+- The generic form: when polling for a *process*, the appearance of the process
+  and the readability of its state are two different events. Waiting for the
+  first tells you nothing about the second.
+
+## 32. `schtasks /Run` does not consume the trigger you created
+
+`bluefin-dakota-win11pro` and `fedora-gnome-win11pro` (run 31081727936) both
+died at 65% with the product's own foreign-ESP refusal:
+
+```
+    esp-sweep: before: clean
+    esp-sweep: after: clean
+...
+Setting up ESP: this PC's EFI boot partition already contains
+EFI\fedora\shimx64.efi, which wootc did not put there
+```
+
+One cell named `shimx64.efi`, the other `grubx64.efi` — two different members of
+the four files `setupSignedChain` copies, which is what reading a set mid-write
+looks like, not what leftover state looks like. (`reset_oem_attempt` reads the
+same run differently — that `before: clean` was itself an unreliable print,
+because a drive letter assigned mid-process is not visible to that process's
+FileSystem provider. Both can be true; the argument below rests on neither.)
+
+`gui_install_arm` launched the app with
+
+```
+schtasks /Create /TN wootc-gui-e2e /SC ONCE /ST <now+1m> ... ; schtasks /Run ...
+```
+
+`/Run` starts the task immediately and leaves the ONCE trigger armed, so Task
+Scheduler started `launch-gui.cmd` again inside the minute. Nothing makes
+wootc.exe single-instance, both apps polled the same `e2e-drive.json`, and both
+clicked Install. The install mutex in `StartInstall` is per-process, so two
+pipelines raced onto one ESP — and because `recordESPOwnership` runs only after
+all four copies land, whichever pipeline reached the guard during the other's
+copy loop saw an unattributable vendor binary and refused, correctly.
+
+- **A manual start and a schedule are two launches.** `/Run` is not "run instead
+  of the trigger"; it is "run as well as".
+- **The bug was in the launch, not in the logs.** Two schtasks calls are two
+  launches whatever the run printed, so this needed no verdict to be trusted —
+  and every GUI cell to date had been running two installers.
+- **Which file it blamed was the tell.** A random member of a set that one code
+  path writes in Go map order is being read mid-write.
+- The harness now drops the task once the app is up and then *counts*
+  `wootc.exe` before writing the directive — no instance can install until the
+  directive exists, so an extra killed at that point provably never installed.
