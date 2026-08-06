@@ -1778,9 +1778,10 @@ info "Container $CONTAINER_NAME started"
 # A first run extracts the ISO, injects drivers, and rebuilds the installer
 # image — several minutes on slower disks — so poll long (up to 15 min) and
 # distinguish "QEMU never started" from a real acceleration failure.
+qemu_argv_sample() { $DOCKER exec "$CONTAINER_NAME" ps -ef 2>/dev/null | grep '[q]emu-system' || true; }
 QEMU_CMD=""
 for _ in $(seq 1 300); do
-    QEMU_CMD=$($DOCKER exec "$CONTAINER_NAME" ps -ef 2>/dev/null | grep '[q]emu-system' || true)
+    QEMU_CMD=$(qemu_argv_sample)
     [ -n "$QEMU_CMD" ] && break
     sleep 3
 done
@@ -1789,11 +1790,33 @@ if [ -z "$QEMU_CMD" ]; then
     capture_vm_diagnostics
     exit 1
 fi
-if [[ ( "$QEMU_CMD" != *"-accel=kvm"* && "$QEMU_CMD" != *"accel=kvm"* ) || "$QEMU_CMD" != *"-enable-kvm"* ]]; then
-    fail "QEMU is not using KVM acceleration"
-    capture_vm_diagnostics
-    exit 1
-fi
+# The FIRST sample of a just-started process is not evidence about its argv.
+# A process caught inside execve exposes a partially-written
+# /proc/<pid>/cmdline, so ps prints a command line truncated mid-argument.
+# el10-gnome-win11pro-bitlocker (run 31076749824) died on
+# "QEMU is not using KVM acceleration" 3s after the container came up, and the
+# diagnostics dump 300ms later printed the very same PID with both accel=kvm
+# and -enable-kvm. Every assertion below reads a flag that sits late on a
+# ~2 KB command line (-enable-kvm, -tpmdev emulator, property=secure,value=on,
+# /storage2/data2.qcow2), so a short read fails them all spuriously.
+# Re-sample until the argv shows acceleration, and only call it a real failure
+# once the process has had time to finish exec'ing.
+QEMU_ARGV_DEADLINE=$(deadline_in 60)
+until [[ ( "$QEMU_CMD" == *"-accel=kvm"* || "$QEMU_CMD" == *"accel=kvm"* ) && "$QEMU_CMD" == *"-enable-kvm"* ]]; do
+    if past_deadline "$QEMU_ARGV_DEADLINE"; then
+        fail "QEMU is not using KVM acceleration"
+        info "settled QEMU argv: ${QEMU_CMD:-<qemu no longer running>}"
+        capture_vm_diagnostics
+        exit 1
+    fi
+    sleep 2
+    NEXT_QEMU_CMD=$(qemu_argv_sample)
+    # An empty sample means QEMU exited; keep the last good line for the
+    # verdict rather than reporting an empty command line.
+    if [ -n "$NEXT_QEMU_CMD" ]; then
+        QEMU_CMD="$NEXT_QEMU_CMD"
+    fi
+done
 QEMU_RAM_MB=$(awk '{
     for (i = 1; i < NF; i++) if ($i == "-m" && $(i + 1) ~ /^[0-9]+[MG]$/) {
         value = $(i + 1)

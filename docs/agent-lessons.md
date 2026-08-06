@@ -680,3 +680,31 @@ mid-servicing — exactly the gate #63 exists for.
   needs a real interactive session or fails with "the system cannot find the
   file specified". §1 again: ping is a proxy, the logged-on user is the
   observable, so the restart waits for `Win32_ComputerSystem.UserName`.
+
+## 31. The first sample of a just-started process is not its argv
+
+`el10-gnome-win11pro-bitlocker` (run 31076749824) died three seconds after the
+container came up:
+
+```
+[INFO] Container wootc-e2e-windows started
+[FAIL] QEMU is not using KVM acceleration
+```
+
+The diagnostics dump 300 ms later printed the very same PID with
+`accel=kvm -enable-kvm` on it, at 0 s of CPU time. Nothing was misconfigured:
+the harness read `ps -ef` while QEMU was still inside `execve`, where
+`/proc/<pid>/cmdline` is only partially written, and judged a command line that
+had been truncated mid-argument.
+
+- **A racy read is a proxy (§1).** The observable is the settled argv, not the
+  first one that happens to be readable. `-enable-kvm`, `-tpmdev emulator`,
+  `property=secure,value=on` and `/storage2/data2.qcow2` all sit late on a
+  ~2 KB command line, so a short read fails *every* one of those assertions and
+  reports the most alarming of them as the verdict.
+- **Poll until the assertion is satisfiable, then fail on a deadline.** The
+  check re-samples for up to 60 s and prints the settled command line with the
+  failure, so a genuine "dockur disabled KVM" still fails, and fails legibly.
+- The generic form: when polling for a *process*, the appearance of the process
+  and the readability of its state are two different events. Waiting for the
+  first tells you nothing about the second.
