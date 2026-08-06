@@ -892,6 +892,13 @@ reset_oem_attempt() {
     # restored from a Windows-only snapshot, so anything in either directory
     # is wootc residue, never a real Linux. Log what was found and what
     # remains; a silent sweep already cost three diagnosis rounds.
+    #
+    # Remove-Item is not the last word: PowerShell 5.1 recurses into a tree
+    # whose entries carry the system/hidden attributes Windows puts on EFI\
+    # and then reports "directory is not empty", so anything still standing
+    # gets a second pass through attrib + `rd /s /q`, which does not care.
+    # The retry announces itself, so if it ever fires we learn that the ESP
+    # letter was never the whole story.
     local sweep_out
     sweep_out=$(qga_powershell '$ErrorActionPreference = "SilentlyContinue"
 $sysDisk = (Get-Partition -DriveLetter C -ErrorAction SilentlyContinue).DiskNumber
@@ -913,6 +920,12 @@ $root = "${letter}:\EFI"
 $before = @(Get-ChildItem -Path "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 Write-Output ("before: " + $(if ($before) { $before -join "; " } else { "clean" }))
 Remove-Item -LiteralPath "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($dir in @("$root\wootc", "$root\fedora")) {
+    if (-not (Test-Path -LiteralPath $dir)) { continue }
+    Write-Output "retry-rd: $dir survived Remove-Item"
+    cmd.exe /d /c "attrib -r -s -h `"$dir`" /s /d >NUL 2>&1" | Out-Null
+    cmd.exe /d /c "rd /s /q `"$dir`" >NUL 2>&1" | Out-Null
+}
 $after = @(Get-ChildItem -Path "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 if ($after) { Write-Output ("SWEEP-INCOMPLETE: " + ($after -join "; ")) } else { Write-Output "after: clean" }' 2>&1) || true
     printf '%s\n' "$sweep_out" | sed 's/^/    esp-sweep: /'
