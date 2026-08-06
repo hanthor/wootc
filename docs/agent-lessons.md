@@ -708,3 +708,48 @@ had been truncated mid-argument.
 - The generic form: when polling for a *process*, the appearance of the process
   and the readability of its state are two different events. Waiting for the
   first tells you nothing about the second.
+
+## 32. `schtasks /Run` does not consume the trigger you created
+
+`bluefin-dakota-win11pro` and `fedora-gnome-win11pro` (run 31081727936) both
+died at 65% with the product's own foreign-ESP refusal:
+
+```
+    esp-sweep: before: clean
+    esp-sweep: after: clean
+...
+Setting up ESP: this PC's EFI boot partition already contains
+EFI\fedora\shimx64.efi, which wootc did not put there
+```
+
+One cell named `shimx64.efi`, the other `grubx64.efi` — two different members of
+the four files `setupSignedChain` copies, which is what reading a set mid-write
+looks like, not what leftover state looks like. (`reset_oem_attempt` reads the
+same run differently — that `before: clean` was itself an unreliable print,
+because a drive letter assigned mid-process is not visible to that process's
+FileSystem provider. Both can be true; the argument below rests on neither.)
+
+`gui_install_arm` launched the app with
+
+```
+schtasks /Create /TN wootc-gui-e2e /SC ONCE /ST <now+1m> ... ; schtasks /Run ...
+```
+
+`/Run` starts the task immediately and leaves the ONCE trigger armed, so Task
+Scheduler started `launch-gui.cmd` again inside the minute. Nothing makes
+wootc.exe single-instance, both apps polled the same `e2e-drive.json`, and both
+clicked Install. The install mutex in `StartInstall` is per-process, so two
+pipelines raced onto one ESP — and because `recordESPOwnership` runs only after
+all four copies land, whichever pipeline reached the guard during the other's
+copy loop saw an unattributable vendor binary and refused, correctly.
+
+- **A manual start and a schedule are two launches.** `/Run` is not "run instead
+  of the trigger"; it is "run as well as".
+- **The bug was in the launch, not in the logs.** Two schtasks calls are two
+  launches whatever the run printed, so this needed no verdict to be trusted —
+  and every GUI cell to date had been running two installers.
+- **Which file it blamed was the tell.** A random member of a set that one code
+  path writes in Go map order is being read mid-write.
+- The harness now drops the task once the app is up and then *counts*
+  `wootc.exe` before writing the directive — no instance can install until the
+  directive exists, so an extra killed at that point provably never installed.

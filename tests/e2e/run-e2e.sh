@@ -2397,6 +2397,59 @@ Write-Output ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption)
     fi
     pass "wootc.exe GUI launched in drive mode in the wootc session"
 
+    # The task that launched the app must not launch it a SECOND time.
+    # `/Create /SC ONCE /ST <now+1m>` leaves a live trigger behind and `/Run`
+    # does not consume it, so Task Scheduler starts launch-gui.cmd again within
+    # the minute — and nothing makes wootc.exe single-instance. The second app
+    # polls the SAME C:\wootc\e2e-drive.json, clicks Install on its own form,
+    # and two install pipelines race on one ESP. Each writes its ownership
+    # manifest only AFTER all four files land (app/installer_windows.go), so the
+    # loser's guard sees an unattributable EFI\fedora\shimx64.efi (or
+    # grubx64.efi — Go map order in the winner's copy loop) and refuses the
+    # install as "another operating system": run 31081727936 killed
+    # bluefin-dakota and fedora-gnome that way, each on a DIFFERENT member of
+    # that set — the signature of a set written in Go map order being read
+    # mid-flight.
+    #
+    # This does not depend on reading the sweep's verdict: the second launch is
+    # a property of the two schtasks calls above, so EVERY GUI cell has been
+    # running two installers, whatever else was or was not on the ESP.
+    #
+    # So drop the trigger now that the app is up (launch-gui.cmd exited the
+    # moment it `start`ed the exe, so there is no task instance left to kill),
+    # then assert the observable rather than trusting the delete: exactly ONE
+    # wootc.exe. Both happen BEFORE the directive is written, and no instance
+    # can install until it exists — after this point a second launch is
+    # impossible and any extra we killed provably never started an install.
+    local single_out
+    single_out=$(qga_powershell '$ErrorActionPreference = "SilentlyContinue"
+cmd.exe /d /c "schtasks.exe /Delete /TN \"wootc-gui-e2e\" /F >NUL 2>&1" | Out-Null
+# The delete can lose by a hair to a launch already in flight (launch-gui.cmd
+# started, wootc.exe not yet created), so settle before counting: a second app
+# that appears after the count would drive the directive we are about to write.
+# Bounded well inside the 60 s qga_call timeout: a client killed mid-command
+# poisons the single-connection socket for the rest of the run.
+Start-Sleep -Seconds 4
+for ($round = 1; $round -le 2; $round++) {
+    $procs = @(Get-Process wootc -ErrorAction SilentlyContinue | Sort-Object StartTime)
+    Write-Output ("round " + $round + ": instances=" + $procs.Count)
+    if ($procs.Count -le 1) { break }
+    foreach ($p in $procs[1..($procs.Count - 1)]) {
+        Write-Output ("EXTRA-INSTANCE: killing pid " + $p.Id + " (the task trigger fired a second launch)")
+        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 4
+}
+$left = @(Get-Process wootc -ErrorAction SilentlyContinue)
+if ($left.Count -ne 1) { Write-Output ("SINGLE-INSTANCE-UNPROVEN: " + $left.Count + " wootc.exe running") }' 2>&1) || true
+    printf '%s\n' "$single_out" | sed 's/^/    gui-single: /'
+    if printf '%s' "$single_out" | grep -q 'EXTRA-INSTANCE'; then
+        warn "a second wootc.exe had already been launched by the task trigger; killed it before the directive was written"
+    fi
+    if printf '%s' "$single_out" | grep -q 'SINGLE-INSTANCE-UNPROVEN'; then
+        warn "could not reduce the guest to a single wootc.exe — two install pipelines may race on the ESP"
+    fi
+
     step "Driving the REAL install through the live form (drive directive)..."
     qga_powershell "@'
 {\"action\":\"install\",\"image\":\"$IMAGE_REF\",\"username\":\"wootc\",\"password\":\"wootc-e2e-pass\",\"hostname\":\"wootc-test\"}
