@@ -880,18 +880,24 @@ reset_oem_attempt() {
     # then refuses an unattributable EFI\fedora\shimx64.efi as "another
     # operating system" (runs 31076749824 / 31078332031 / 31079784936, the
     # last one on ALL win11pro GUI cells at once, i.e. baked into the shared
-    # snapshot, not a per-run race). The first sweep here used
-    # `mountvol S: /S`, which FAILS when the ESP already has a drive letter —
-    # and the interrupted arm's Add-PartitionAccessPath persists its letter
-    # into the snapshot via the mount-manager database, so the sweep no-oped
-    # on exactly the ESPs it existed to clean (same trap as findESP's
-    # "Cannot assign multiple drive letters" note in installer_windows.go).
-    # Discover the ESP the way the app does — GPT type on the C: disk, letter
-    # from AccessPaths, assign one only if missing — and remove EFI\wootc and
-    # EFI\fedora unconditionally: this guest is a disposable E2E Windows
-    # restored from a Windows-only snapshot, so anything in either directory
-    # is wootc residue, never a real Linux. Log what was found and what
-    # remains; a silent sweep already cost three diagnosis rounds.
+    # snapshot, not a per-run race). Two sweeps have failed here already:
+    #   1. `mountvol S: /S` — fails outright when the ESP already has a
+    #      letter (same trap as findESP's "Cannot assign multiple drive
+    #      letters" note in installer_windows.go).
+    #   2. Single-process Get-Partition + Add-PartitionAccessPath +
+    #      Get-ChildItem — run 31081727936 printed "before: clean" and the
+    #      guard STILL found shimx64.efi minutes later with no other writer
+    #      alive: a drive letter assigned mid-process is not reliably visible
+    #      to that same PowerShell's FileSystem provider, so every path test
+    #      silently read as "not found" and the sweep no-oped again.
+    # So: discover the ESP (GPT type on the C: disk, letter from AccessPaths,
+    # assign only if missing) in one QGA PowerShell, then do ALL file
+    # operations in a SECOND, fresh PowerShell process — a new process always
+    # sees the current drive letters. Removal is unconditional: this guest is
+    # a disposable E2E Windows restored from a Windows-only snapshot, so
+    # anything in EFI\wootc or EFI\fedora is wootc residue, never a real
+    # Linux. Log the letter and both listings; silence here has cost four
+    # diagnosis rounds.
     #
     # Remove-Item is not the last word: PowerShell 5.1 recurses into a tree
     # whose entries carry the system/hidden attributes Windows puts on EFI\
@@ -899,11 +905,11 @@ reset_oem_attempt() {
     # gets a second pass through attrib + `rd /s /q`, which does not care.
     # The retry announces itself, so if it ever fires we learn that the ESP
     # letter was never the whole story.
-    local sweep_out
-    sweep_out=$(qga_powershell '$ErrorActionPreference = "SilentlyContinue"
+    local esp_letter sweep_out
+    esp_letter=$(qga_powershell '$ErrorActionPreference = "SilentlyContinue"
 $sysDisk = (Get-Partition -DriveLetter C -ErrorAction SilentlyContinue).DiskNumber
 $esp = Get-Partition -DiskNumber $sysDisk -ErrorAction SilentlyContinue | Where-Object { $_.GptType -eq "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}" } | Select-Object -First 1
-if (-not $esp) { Write-Output "no ESP found on disk $sysDisk"; exit 0 }
+if (-not $esp) { Write-Output "NO-ESP"; exit 0 }
 $letter = ""
 foreach ($ap in @($esp.AccessPaths)) { if ($ap -match "^([A-Za-z]):\\$") { $letter = $Matches[1] } }
 if (-not $letter) {
@@ -915,8 +921,12 @@ if (-not $letter) {
         Start-Sleep -Milliseconds 500
     }
 }
-if (-not $letter) { Write-Output "ESP found but no drive letter could be assigned"; exit 0 }
-$root = "${letter}:\EFI"
+if ($letter) { Write-Output $letter } else { Write-Output "NO-LETTER" }' 2>&1 | tr -d '[:space:]') || true
+    echo "    esp-sweep: ESP drive letter: ${esp_letter:-<empty>}"
+    case "$esp_letter" in
+        [A-Za-z])
+            sweep_out=$(qga_powershell '$ErrorActionPreference = "SilentlyContinue"
+$root = "'"$esp_letter"':\EFI"
 $before = @(Get-ChildItem -Path "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 Write-Output ("before: " + $(if ($before) { $before -join "; " } else { "clean" }))
 Remove-Item -LiteralPath "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue
@@ -928,10 +938,15 @@ foreach ($dir in @("$root\wootc", "$root\fedora")) {
 }
 $after = @(Get-ChildItem -Path "$root\wootc","$root\fedora" -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName })
 if ($after) { Write-Output ("SWEEP-INCOMPLETE: " + ($after -join "; ")) } else { Write-Output "after: clean" }' 2>&1) || true
-    printf '%s\n' "$sweep_out" | sed 's/^/    esp-sweep: /'
-    if printf '%s' "$sweep_out" | grep -q 'SWEEP-INCOMPLETE'; then
-        warn "ESP sweep left wootc residue behind; the GUI ownership guard may refuse this install"
-    fi
+            printf '%s\n' "$sweep_out" | sed 's/^/    esp-sweep: /'
+            if printf '%s' "$sweep_out" | grep -q 'SWEEP-INCOMPLETE'; then
+                warn "ESP sweep left wootc residue behind; the GUI ownership guard may refuse this install"
+            fi
+            ;;
+        *)
+            warn "ESP sweep could not reach the ESP ($esp_letter); the GUI ownership guard may refuse this install"
+            ;;
+    esac
     rm -f "$STORAGE_DIR/qemu.pty"
     printf '%s run_id=%s reset prior OEM handoff state\n' "$(date -u +%FT%TZ)" "$RUN_ID" > "$STORAGE_DIR/e2e-timeline.log"
     pass "Prior OEM handoff state cleared"
@@ -2470,6 +2485,24 @@ Write-Output ("OS: " + (Get-CimInstance Win32_OperatingSystem).Caption)
         if printf '%s' "$drive_state" | grep -q '"error":"'; then
             fail "GUI install pipeline surfaced an error:"
             printf '%s\n' "$drive_state" | head -3
+            # ESP state at failure time, from a FRESH PowerShell (a reused
+            # process can miss letters assigned after it started). The
+            # ownership-guard failures took four rounds to diagnose because
+            # nothing recorded what was actually on the ESP when the app
+            # refused it.
+            info "ESP contents at failure time:"
+            qga_powershell '$ErrorActionPreference = "SilentlyContinue"
+$sysDisk = (Get-Partition -DriveLetter C -ErrorAction SilentlyContinue).DiskNumber
+$esp = Get-Partition -DiskNumber $sysDisk -ErrorAction SilentlyContinue | Where-Object { $_.GptType -eq "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}" } | Select-Object -First 1
+$letter = ""
+foreach ($ap in @($esp.AccessPaths)) { if ($ap -match "^([A-Za-z]):\\$") { $letter = $Matches[1] } }
+if (-not $letter) { Write-Output "ESP has no drive letter"; exit 0 }
+Write-Output ("ESP at " + $letter + ":")
+Get-ChildItem -Path "${letter}:\EFI" -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object { Write-Output ("  " + $_.FullName + "  " + $_.Length) }
+$man = "${letter}:\EFI\wootc\wootc-owned.txt"
+if (Test-Path $man) { Write-Output "manifest:"; Get-Content $man | ForEach-Object { Write-Output ("  " + $_) } }
+$cfg = "${letter}:\EFI\fedora\grub.cfg"
+if (Test-Path $cfg) { Write-Output "grub.cfg first line:"; Write-Output ("  " + (Get-Content $cfg -TotalCount 1)) }' 2>&1 | sed 's/^/    esp-dump: /' || true
             capture_vm_diagnostics
             exit 1
         fi
