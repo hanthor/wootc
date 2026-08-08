@@ -607,26 +607,35 @@ func setupSignedChain(espPath string, cfg InstallConfig) error {
 	}
 
 	// Signed chain into EFI\fedora, deployer pair into EFI\wootc.
-	for src, dst := range map[string]string{
-		filepath.Join(installDir, "shimx64.efi"):            filepath.Join(fedoraEFI, "shimx64.efi"),
-		filepath.Join(installDir, "grubx64.efi"):            filepath.Join(fedoraEFI, "grubx64.efi"),
-		filepath.Join(installDir, "deployer-vmlinuz"):       filepath.Join(wootcEFI, "deployer-vmlinuz"),
-		filepath.Join(installDir, "deployer-initramfs.img"): filepath.Join(wootcEFI, "deployer-initramfs.img"),
+	//
+	// Claim each file BEFORE creating it (stageESPFile), never as a batch after
+	// the copies. Claiming afterwards left every one of these paths on the ESP
+	// unattributed for the seconds its copy took, and whatever read the ESP in
+	// that window — a second installer process, or this machine's next attempt
+	// after a crash mid-copy — refused the install because wootc's own
+	// shimx64.efi looked like another OS's (see app/esp_ownership.go).
+	//
+	// An ordered slice, not a map: the copy order decided which file was
+	// half-written when a concurrent installer looked, so Go's map order was
+	// choosing which filename appeared in the refusal from run to run
+	// (31081727936 named grubx64.efi, 31160072559 named shimx64.efi). A stable
+	// order will not fix a race on its own, but a nondeterministic one makes
+	// every report of it look like a different bug.
+	for _, s := range []struct{ name, rel string }{
+		{"shimx64.efi", filepath.Join("EFI", "fedora", "shimx64.efi")},
+		{"grubx64.efi", filepath.Join("EFI", "fedora", "grubx64.efi")},
+		{"deployer-vmlinuz", filepath.Join("EFI", "wootc", "deployer-vmlinuz")},
+		{"deployer-initramfs.img", filepath.Join("EFI", "wootc", "deployer-initramfs.img")},
 	} {
-		if err := copyFile(src, dst); err != nil {
-			return fmt.Errorf("copy %s: %w", filepath.Base(src), err)
+		src := filepath.Join(installDir, s.name)
+		if err := stageESPFile(espPath, s.rel, func() error {
+			if err := copyFile(src, filepath.Join(espPath, s.rel)); err != nil {
+				return fmt.Errorf("copy %s: %w", s.name, err)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
-	}
-
-	// Claim what we just wrote, so a REINSTALL recognises its own files while
-	// a foreign bootloader in the same place still stops us.
-	if err := recordESPOwnership(espPath, []string{
-		filepath.Join("EFI", "fedora", "shimx64.efi"),
-		filepath.Join("EFI", "fedora", "grubx64.efi"),
-		filepath.Join("EFI", "wootc", "deployer-vmlinuz"),
-		filepath.Join("EFI", "wootc", "deployer-initramfs.img"),
-	}); err != nil {
-		return fmt.Errorf("recording which ESP files belong to wootc: %w", err)
 	}
 
 	// LUKS type on the cmdline (never the passphrase — that travels in the

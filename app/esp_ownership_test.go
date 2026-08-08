@@ -158,6 +158,178 @@ func TestPostDeployPhase2MenuIsRecognisedAsOurs(t *testing.T) {
 	}
 }
 
+// The manifest is written in one rendering (lowercase, forward slashes) and the
+// guard checks paths in another (Windows' uppercase EFI\...\ backslashes). Both
+// renderings of the same file must resolve to the same claim, or a reinstall
+// reads its own boot files as another OS's. Pinned against a manifest written
+// out byte-for-byte rather than through recordESPOwnership, so the property is
+// asserted about the FILE FORMAT and not just about a round trip through one
+// normaliser.
+func TestManifestClaimSurvivesEitherPathRendering(t *testing.T) {
+	esp := t.TempDir()
+	writeFile(t, filepath.Join(esp, "EFI", "fedora", "shimx64.efi"), "staged by wootc")
+	writeFile(t, espManifestPath(esp),
+		"# Files on this EFI partition written by wootc.\nefi/fedora/shimx64.efi\n")
+
+	for _, rel := range []string{
+		`EFI\fedora\shimx64.efi`, // as Windows' filepath.Join renders it
+		"EFI/fedora/shimx64.efi",
+		"efi/fedora/shimx64.efi",
+		`\EFI\FEDORA\SHIMX64.EFI`, // FAT32 is case-insensitive
+	} {
+		if err := guardESPDestinations(esp, []string{rel}); err != nil {
+			t.Errorf("manifest-owned path rendered as %q must be recognised, got: %v", rel, err)
+		}
+	}
+}
+
+// ...and the same normalisation must NOT make a different file look claimed.
+// A guard satisfied by simply matching loosely is no guard at all.
+func TestNormalisationDoesNotClaimADifferentFile(t *testing.T) {
+	esp := t.TempDir()
+	writeFile(t, espManifestPath(esp), "efi/fedora/shimx64.efi\n")
+	for _, foreign := range []string{
+		filepath.Join("EFI", "fedora", "grubx64.efi"),  // sibling in the same dir
+		filepath.Join("EFI", "ubuntu", "shimx64.efi"),  // same name, other vendor
+		filepath.Join("EFI", "fedora", "shimx64.efi2"), // prefix of a claim
+		filepath.Join("EFI", "BOOT", "bootx64.efi"),    // the firmware's fallback
+	} {
+		writeFile(t, filepath.Join(esp, foreign), "belongs to somebody else")
+		if err := guardESPDestinations(esp, []string{foreign}); err == nil {
+			t.Errorf("%s is not claimed by the manifest and must be refused", foreign)
+		}
+	}
+}
+
+// The real defect behind runs 31081727936 / 31160072559: a second installer
+// looked at the ESP while the first was mid-copy. Claiming after the copies left
+// wootc's own freshly written shimx64.efi unattributed for the length of a
+// 140 MB copy, and the observer refused the install as another operating
+// system's — while the manifest dumped seconds later listed every file.
+//
+// stageESPFile is the fix: claim, then write. So the observable state at ANY
+// point during staging must never look foreign. The observer runs from inside
+// the write, which is exactly the window that used to be fatal.
+func TestStagingIsNeverObservableAsForeign(t *testing.T) {
+	esp := t.TempDir()
+	rel := filepath.Join("EFI", "fedora", "shimx64.efi")
+
+	err := stageESPFile(esp, rel, func() error {
+		// Mid-copy: the file exists (partially written), the install has not
+		// finished. A concurrent installer — or this machine's next attempt
+		// after a crash right here — must still see wootc's own file.
+		writeFile(t, filepath.Join(esp, rel), "half a shim")
+		if err := guardESPDestinations(esp, []string{rel}); err != nil {
+			t.Errorf("a file wootc is in the middle of writing must not read as foreign, got: %v", err)
+		}
+		writeFile(t, filepath.Join(esp, rel), "a whole shim")
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("staging failed: %v", err)
+	}
+	if err := guardESPDestinations(esp, []string{rel}); err != nil {
+		t.Fatalf("after staging, the file is ours: %v", err)
+	}
+}
+
+// An install interrupted mid-staging must not brick future installs. Before the
+// ordering fix, a kill (or a power cut) between the first copy and the manifest
+// write left a file on the ESP that every later attempt refused forever.
+func TestInterruptedStagingLeavesTheESPReinstallable(t *testing.T) {
+	esp := t.TempDir()
+	rel := filepath.Join("EFI", "fedora", "grubx64.efi")
+
+	// The copy starts, creates the file, and dies.
+	stageErr := stageESPFile(esp, rel, func() error {
+		writeFile(t, filepath.Join(esp, rel), "truncated grub")
+		return os.ErrClosed // stand-in for the machine going away mid-copy
+	})
+	if stageErr == nil {
+		t.Fatal("the interrupted write should have reported its failure")
+	}
+
+	// Next attempt: our own debris, so it may be replaced.
+	if err := guardESPDestinations(esp, []string{rel}); err != nil {
+		t.Fatalf("wootc must be able to reinstall over its own interrupted staging, got: %v", err)
+	}
+	// But the guard did not go soft: a neighbour dropped in the same directory
+	// afterwards is still off limits.
+	foreign := filepath.Join("EFI", "fedora", "shimx64.efi")
+	writeFile(t, filepath.Join(esp, foreign), "real fedora shim")
+	if err := guardESPDestinations(esp, []string{rel, foreign}); err == nil {
+		t.Fatal("an unclaimed shimx64.efi beside our debris must still stop the install")
+	}
+}
+
+// Claims already earned must never disappear. os.WriteFile truncates in place,
+// so a reader could catch the manifest empty mid-rewrite and conclude nothing
+// was owned — the same false "another operating system" from the other side.
+// Ownership must only ever grow as far as any reader can tell.
+func TestManifestIsNeverObservablyEmpty(t *testing.T) {
+	esp := t.TempDir()
+	paths := []string{
+		filepath.Join("EFI", "fedora", "shimx64.efi"),
+		filepath.Join("EFI", "fedora", "grubx64.efi"),
+		filepath.Join("EFI", "wootc", "deployer-vmlinuz"),
+		filepath.Join("EFI", "wootc", "deployer-initramfs.img"),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			for _, p := range paths {
+				if err := recordESPOwnership(esp, []string{p}); err != nil {
+					t.Errorf("claim failed: %v", err)
+					return
+				}
+			}
+		}
+	}()
+
+	seen := 0
+	for {
+		select {
+		case <-done:
+			if seen == 0 {
+				t.Skip("reader never observed a manifest; nothing to conclude")
+			}
+			return
+		default:
+		}
+		owned, err := readESPOwnership(esp)
+		if err != nil {
+			t.Fatalf("manifest unreadable while being rewritten: %v", err)
+		}
+		if len(owned) == 0 {
+			continue // not written yet
+		}
+		if len(owned) < seen {
+			t.Fatalf("ownership shrank from %d to %d claims — a reader caught the manifest mid-rewrite", seen, len(owned))
+		}
+		seen = len(owned)
+	}
+}
+
+// The temp file the atomic write uses must not survive as ESP litter, and it
+// must never be mistaken for a claim.
+func TestAtomicWriteLeavesNoTempFile(t *testing.T) {
+	esp := t.TempDir()
+	if err := recordESPOwnership(esp, []string{filepath.Join("EFI", "fedora", "shimx64.efi")}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(espManifestPath(esp)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != filepath.Base(espManifestPath(esp)) {
+			t.Errorf("unexpected file left in EFI\\wootc: %s", e.Name())
+		}
+	}
+}
+
 // ...but a REAL Fedora, whose grub.cfg carries no marker, still stops us.
 func TestRealFedoraStillBlocksAfterTheNamespaceFix(t *testing.T) {
 	esp := t.TempDir()

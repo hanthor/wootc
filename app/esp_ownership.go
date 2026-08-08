@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -24,6 +25,29 @@ import (
 //
 // The manifest is a plain text file — one relative path per line — deliberately
 // readable by a human staring at a broken ESP with a rescue disk.
+//
+// ORDERING IS THE WHOLE SAFETY ARGUMENT. A path is claimed BEFORE the byte that
+// creates it, never after (stageESPFile), and the claim lands atomically. That
+// gives one invariant, in both directions:
+//
+//	a wootc-written file exists on the ESP  <=>  the manifest claims it
+//
+// Claiming afterwards broke the left-to-right direction: between the first copy
+// and the manifest write, wootc's own freshly written shimx64.efi sat on the
+// ESP with nothing attributing it to wootc — and anything that read the ESP in
+// that window (a second installer process, or the SAME machine's next attempt
+// after a crash, a kill, or a power cut mid-copy) correctly concluded the file
+// was unattributable and refused the install as "another operating system".
+// GUI-driven runs 31081727936 and 31160072559 died exactly there, each naming a
+// different member of the staged set: the ESP dump taken seconds after the
+// refusal showed a COMPLETE manifest listing the very file just called foreign.
+// On a user's machine the same window turns one interrupted install into a
+// permanent refusal to ever install again.
+//
+// The right-to-left direction is what keeps the guard's teeth, so claims are
+// written one file at a time, immediately before that file is created: the
+// manifest can only ever name a destination wootc was in the act of writing,
+// which is the same fixed set of paths it named before.
 const espOwnershipManifest = `EFI\wootc\wootc-owned.txt`
 
 // wootcGrubMarker identifies a grub.cfg written by wootc, so reinstalls can
@@ -130,6 +154,17 @@ func guardESPDestinations(espPath string, relPaths []string) error {
 		if fedoraIsOurs {
 			continue // an older wootc staged this tree (marker in grub.cfg)
 		}
+		// Last chance before refusing: re-read the manifest. Our snapshot was
+		// taken before this os.Stat, so it can predate a claim written by
+		// another wootc in the meantime — and since every wootc claims a path
+		// before creating it, a file that exists because another wootc put it
+		// there is claimed by the time we can see it. Reading fresh closes that
+		// window without loosening anything: a file wootc never wrote appears
+		// in no manifest at any moment, so this can only ever un-refuse
+		// wootc's own work.
+		if fresh, ferr := readESPOwnership(espPath); ferr == nil && fresh[normalizeESPPath(rel)] {
+			continue
+		}
 		return fmt.Errorf("this PC's EFI boot partition already contains %s, which wootc did not "+
 			"put there — it belongs to another operating system. Installing would make that "+
 			"system unbootable, so wootc stopped before changing anything", rel)
@@ -138,8 +173,9 @@ func guardESPDestinations(espPath string, relPaths []string) error {
 }
 
 // recordESPOwnership claims the given paths, merging with anything already
-// claimed. Written after a successful copy so an aborted install never claims
-// files it did not write.
+// claimed. Call it immediately BEFORE writing each path (see stageESPFile): the
+// claim is what makes the file attributable, so it has to exist by the time the
+// file does.
 func recordESPOwnership(espPath string, relPaths []string) error {
 	owned, err := readESPOwnership(espPath)
 	if err != nil {
@@ -151,11 +187,74 @@ func recordESPOwnership(espPath string, relPaths []string) error {
 	if err := os.MkdirAll(filepath.Dir(espManifestPath(espPath)), 0o755); err != nil {
 		return err
 	}
+	// Sorted, so the manifest a human (or the E2E's esp-dump) reads is stable
+	// between installs instead of shuffled by Go's map order.
+	claimed := make([]string, 0, len(owned))
+	for p := range owned {
+		claimed = append(claimed, p)
+	}
+	sort.Strings(claimed)
 	var b strings.Builder
 	b.WriteString("# Files on this EFI partition written by wootc.\n")
 	b.WriteString("# wootc will replace these on reinstall and refuse to touch anything else.\n")
-	for p := range owned {
+	for _, p := range claimed {
 		b.WriteString(p + "\n")
 	}
-	return os.WriteFile(espManifestPath(espPath), []byte(b.String()), 0o644)
+	return writeESPManifest(espPath, b.String())
+}
+
+// writeESPManifest replaces the manifest atomically and durably.
+//
+// os.WriteFile truncates in place, which leaves two ways to lose claims that
+// have already been earned: a reader (another installer) can catch the file
+// empty mid-rewrite and read zero owned paths, and an interruption during the
+// rewrite can leave a truncated manifest on the ESP for good — after which
+// wootc calls its own boot files another operating system's, forever. Write a
+// sibling temp file, flush it to the device, then rename over: a reader sees
+// either the whole old manifest or the whole new one, and an interruption at
+// any point leaves one of those two on disk.
+func writeESPManifest(espPath, content string) error {
+	final := espManifestPath(espPath)
+	tmp := final + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	// The ESP is FAT32 on a device the installer is about to reboot: an
+	// unflushed manifest is a lost manifest.
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, final); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// stageESPFile claims rel and then writes it, in that order, so the ESP is
+// never in a state where a wootc-written file exists unattributed. write must
+// be the call that actually creates the file at rel.
+//
+// If write fails the claim stays behind, deliberately: the write may well have
+// created or truncated the file before failing, and a destination wootc has
+// half-written must stay replaceable by the next attempt. The claim can only
+// ever name a destination wootc was in the act of writing — never a path
+// outside the fixed set the installer stages.
+func stageESPFile(espPath, rel string, write func() error) error {
+	if err := recordESPOwnership(espPath, []string{rel}); err != nil {
+		return fmt.Errorf("recording that %s belongs to wootc: %w", rel, err)
+	}
+	return write()
 }
