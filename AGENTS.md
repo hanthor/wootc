@@ -244,3 +244,4 @@ registry literally named `localhost`. Rebuild with
 `bash tests/e2e/build-ssh-image.sh`.
 
 For delegated work, use the `wootc.wootc-e2e-runner` agent.
+# scratch test
