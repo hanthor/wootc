@@ -144,7 +144,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${WIN_VERSION}-${WIN_EDITION}-bl-${BITLOCKER}"
-          echo "${{ secrets.GITHUB_TOKEN }}" | \
+          echo "${{ env.GITHUB_TOKEN }}" | \
             oras login ghcr.io -u "${{ github.actor }}" --password-stdin
           cd /mnt/wootc-snapshot
           ls -lh
@@ -157,3 +157,6 @@ jobs:
             .wootc-autounattend.sha256:text/plain \
             $(ls windows.* 2>/dev/null | sed 's,$,:application/octet-stream,')
           echo "Pushed ${PKG}:${TAG}"
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
