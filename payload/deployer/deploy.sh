@@ -721,18 +721,20 @@ ensure_ntfs_support() {
     if timeout 60 podman run --rm "$IMAGE" sh -c \
         'command -v ntfs-3g >/dev/null 2>&1 || command -v mount.ntfs >/dev/null 2>&1 || \
          ls /usr/lib/modules/*/kernel/fs/ntfs3/ntfs3.ko* >/dev/null 2>&1 || \
-         grep -qw ntfs3 /proc/filesystems 2>/dev/null || \
          grep -qxE "CONFIG_NTFS3_FS=[ym]" /usr/lib/modules/*/config 2>/dev/null'; then
         log "Image already has an NTFS driver (ntfs3 or ntfs-3g)."
         return 0
     fi
-    # NOTE: the capability check above is NOT authoritative. It looks for an
-    # ntfs3.ko and an ntfs-3g binary, but a kernel with CONFIG_NTFS3=y (built
-    # in, no module file) mounts ntfs3 fine and shows neither. Evidence: a run
-    # where this injection FAILED still booted Phase-2 successfully, so the
-    # image could mount NTFS all along. Treat injection as best-effort belt —
-    # the braces are the hook's runtime ntfs3 -> ntfs-3g fallback plus the
-    # loop-attach guard. Making these failures fatal broke deploys that worked.
+    # NOTE: the capability check above is NOT authoritative. It inspects only
+    # target-owned artifacts (config, modules, binaries). /proc/filesystems is
+    # deliberately excluded: inside a container it reflects the deployer's
+    # kernel, not the image's boot kernel (#48, docs/agent-lessons.md §8).
+    # Even so, a kernel with CONFIG_NTFS3=y (built in, no module file) mounts
+    # ntfs3 fine and shows neither .ko nor config. Evidence: a run where this
+    # injection FAILED still booted Phase-2 successfully, so the image could
+    # mount NTFS all along. Treat injection as best-effort belt — the braces
+    # are the hook's runtime ntfs3 -> ntfs-3g fallback plus the loop-attach
+    # guard. Making these failures fatal broke deploys that worked.
     log "No NTFS driver in ${IMAGE}; injecting ntfs-3g (persisted layer)…"
     local derived="localhost/wootc-ntfs-injected:latest" cname="wootc-ntfs-inject"
     timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
@@ -834,8 +836,8 @@ if ! ensure_ntfs_support; then
     # and mounts ntfs3 fine — "a run where this injection FAILED still booted
     # Phase-2 successfully ... making these failures fatal broke deploys that
     # worked". A weaker probe here would refuse deploys that work.
-    # (`/proc/filesystems` inside the container reflects the DEPLOYER's kernel,
-    # not the image's, so it is checked last and never alone.)
+    # (/proc/filesystems is deliberately excluded — it reflects the deployer's
+    # kernel, not the image's. See #48 and docs/agent-lessons.md §8.)
     if timeout 300 podman run --rm --network=host "$IMAGE" sh -c \
         'command -v ntfs-3g >/dev/null 2>&1 || command -v mount.ntfs >/dev/null 2>&1 || \
          ls /usr/lib/modules/*/kernel/fs/ntfs3/ntfs3.ko* >/dev/null 2>&1 || \
