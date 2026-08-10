@@ -68,10 +68,11 @@ observe_with() {
 }
 
 @test "guest-ping is OS-agnostic, so it cannot stand alone as a down-detector" {
-    # This is the premise of the whole file: qga_probe asks `ping`, which any
-    # agent answers. If it ever grows an OS discriminator of its own, the
-    # reasoning below needs revisiting.
-    extract_fn qga_probe | grep -q 'qga_call ping'
+    # This is the premise of the whole file: qga_probe asks `ping` (via the
+    # idempotent-only qga_call_retry helper, #40), which any agent answers. If
+    # it ever grows an OS discriminator of its own, the reasoning below needs
+    # revisiting.
+    extract_fn qga_probe | grep -q 'qga_call_retry ping'
     ! extract_fn qga_probe | grep -qE 'uname|Windows_NT'
 }
 
