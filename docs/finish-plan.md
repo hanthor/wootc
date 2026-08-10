@@ -81,6 +81,8 @@ Each rung is one KVM run; do them in this order, one change per run:
 - One non-dakota composefs-native family (marlin or flounder) green
   through Phase-2, proving the path is image-agnostic, not dakota-shaped.
 - btrfs: bonito:gnome sealed-btrfs green through Phase-2 twice; #35 closed
+  (fix: modules-load.d + udev re-trigger); ext4 stays the sealed default —
+  btrfs is opt-in via wootc.filesystem=btrfs on supported kernels
   (bluefin:lts is not a candidate — its btrfs kmod is rejected under Secure
   Boot, and the deployer's btrfs preflight now says so at deploy time).
 - All three keep their bats regression guards

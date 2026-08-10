@@ -142,9 +142,10 @@ setup() {
     awk -v s="$reboot_line" 'NR>s && NR<s+60' "$RUNNER" | grep -q 'qga_wait_windows 600'
 }
 
-@test "ext4 stays the sealed default until #35 is proven green" {
+@test "ext4 stays the sealed default; btrfs works on supported kernels via opt-in" {
     # btrfs remains reachable via wootc.filesystem=btrfs; flipping the sealed
-    # default is an E2E decision (a green btrfs matrix run), not a code one.
+    # default is a product decision (a green btrfs matrix run), not a code one.
+    # #35 is fixed — modules-load.d + udev re-trigger clears the readiness gate.
     grep -q 'FILESYSTEM=ext4' "$DEPLOY"
-    grep -q 'btrfs blocked on #35\|btrfs stays reachable' "$DEPLOY"
+    grep -q 'btrfs available via wootc.filesystem=btrfs' "$DEPLOY"
 }
