@@ -539,9 +539,7 @@ func (a *App) E2EDriveReport(state string) {
 // ── Existing install detection ────────────────────────────────────────────────
 
 func (a *App) existingInstallFound() bool {
-	disk := filepath.Join(wootcDir(), "disks", "root.vhdx")
-	_, err := os.Stat(disk)
-	return err == nil
+	return getUninstallInfo().Found
 }
 
 // ExistingInstallFound is the JS-callable version.
