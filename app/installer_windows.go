@@ -579,6 +579,19 @@ func setupSignedChain(espPath string, cfg InstallConfig) error {
 		return err
 	}
 
+	// D1c: same collision guard for RHEL-family installs (#52). A machine
+	// dual-booting RHEL, CentOS, or Rocky owns EFI\redhat — overwriting its
+	// grub.cfg would break that Linux. Mirror the text-marker check from D1
+	// so a reinstall over wootc's own redhat config still proceeds.
+	redhatGrubCfg := filepath.Join(espPath, "EFI", "redhat", "grub.cfg")
+	if data, err := os.ReadFile(redhatGrubCfg); err == nil {
+		if !strings.Contains(string(data), wootcGrubOwnership) {
+			return fmt.Errorf("this PC already has a Linux bootloader at EFI\\redhat — " +
+				"installing wootc would break it. Dual-boot alongside an existing " +
+				"Linux install is not supported yet")
+		}
+	}
+
 	// D2 gate: the deployer pair must fit on the ESP. Measure before
 	// copying so the failure is a clear sentence, not a mid-copy ENOSPC.
 	var need int64
@@ -712,6 +725,27 @@ func setupSystemdBoot(espPath string, cfg InstallConfig) error {
 			return fmt.Errorf("Secure Boot is %s and the bundled systemd-boot EFI binary is not trusted; choose GRUB2 or disable Secure Boot explicitly", state)
 		}
 	}
+
+	// D3 guard (#52): a machine with an existing systemd-boot installation
+	// owns loader/loader.conf and EFI/systemd/. Overwriting them would break
+	// that OS. Refuse unless the existing config is ours (reinstall).
+	loaderConf := filepath.Join(espPath, "loader", "loader.conf")
+	if data, err := os.ReadFile(loaderConf); err == nil {
+		if !strings.Contains(string(data), wootcGrubOwnership) {
+			return fmt.Errorf("this PC already has a systemd-boot installation — " +
+				"installing wootc would break it. Dual-boot is not supported yet")
+		}
+	}
+	if err := guardESPDestinations(espPath, []string{
+		filepath.Join("EFI", "systemd", "shimx64.efi"),
+		filepath.Join("EFI", "systemd", "grubx64.efi"),
+		filepath.Join("EFI", "systemd", "systemd-bootx64.efi"),
+		filepath.Join("EFI", "wootc", "deployer-vmlinuz"),
+		filepath.Join("EFI", "wootc", "deployer-initramfs.img"),
+	}); err != nil {
+		return err
+	}
+
 	sdEFI := filepath.Join(espPath, "EFI", "systemd")
 	if err := os.MkdirAll(sdEFI, 0o755); err != nil {
 		return err
@@ -725,25 +759,39 @@ func setupSystemdBoot(espPath string, cfg InstallConfig) error {
 		return err
 	}
 	installDir := filepath.Join(wootcDir(), "install")
-	bootFiles := map[string]string{
-		filepath.Join(installDir, "deployer-vmlinuz"):       filepath.Join(wootcEFI, "deployer-vmlinuz"),
-		filepath.Join(installDir, "deployer-initramfs.img"): filepath.Join(wootcEFI, "deployer-initramfs.img"),
+
+	// EFI\wootc is our own namespace — copy directly.
+	for _, name := range []string{"deployer-vmlinuz", "deployer-initramfs.img"} {
+		if err := copyFile(filepath.Join(installDir, name), filepath.Join(wootcEFI, name)); err != nil {
+			return fmt.Errorf("stage %s: %w", name, err)
+		}
 	}
+
+	// EFI\systemd is a shared vendor directory. Stage through the ownership
+	// guard so the manifest is written before the file (#52).
 	if asset.trustedChain {
-		bootFiles[asset.shim] = filepath.Join(sdEFI, "shimx64.efi")
 		// Debian shim's built-in next-stage filename is grubx64.efi. The
 		// Debian-signed systemd-boot binary is deliberately staged under that
 		// name so shim verifies it with its embedded Debian certificate.
-		bootFiles[asset.loader] = filepath.Join(sdEFI, "grubx64.efi")
+		for _, s := range []struct{ src, rel string }{
+			{asset.shim, filepath.Join("EFI", "systemd", "shimx64.efi")},
+			{asset.loader, filepath.Join("EFI", "systemd", "grubx64.efi")},
+		} {
+			if err := stageESPFile(espPath, s.rel, func() error {
+				return copyFile(s.src, filepath.Join(espPath, s.rel))
+			}); err != nil {
+				return err
+			}
+		}
 	} else {
-		bootFiles[asset.loader] = filepath.Join(sdEFI, "systemd-bootx64.efi")
-	}
-	for from, to := range bootFiles {
-		if err := copyFile(from, to); err != nil {
-			return fmt.Errorf("stage systemd-boot asset %s: %w", filepath.Base(from), err)
+		rel := filepath.Join("EFI", "systemd", "systemd-bootx64.efi")
+		if err := stageESPFile(espPath, rel, func() error {
+			return copyFile(asset.loader, filepath.Join(espPath, rel))
+		}); err != nil {
+			return err
 		}
 	}
-	if err := os.WriteFile(filepath.Join(espPath, "loader", "loader.conf"), []byte("default wootc-deployer.conf\ntimeout 5\nconsole-mode keep\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(espPath, "loader", "loader.conf"), []byte("# wootc\ndefault wootc-deployer.conf\ntimeout 5\nconsole-mode keep\n"), 0o644); err != nil {
 		return err
 	}
 	compose := ""
