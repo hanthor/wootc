@@ -146,18 +146,20 @@ teardown() {
 
 # ── plan / check are always safe ────────────────────────────────────────────
 
-@test "plan on loopback describes the graduate stages and touches nothing" {
-    WOOTC_GN_FORCE_LOOP=1 run bash "$GN" plan
+@test "migrate --dual-boot on loopback describes the graduate stages and touches nothing" {
+    # The graduate plan lives under migrate --dual-boot (plain `plan` prints
+    # the phase overview). Dry run must be read-only.
+    WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_DISK=/dev/sda WOOTC_GN_NTFS=/dev/sda2 WOOTC_GN_ESP=/dev/sda1 \
+        run bash "$GN" migrate --dual-boot
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Still on Windows NTFS  : yes"* ]]
-    [[ "$output" == *"Graduate root to native"* ]]
-    [[ "$output" == *"Remove Windows"* ]]
+    [[ "$output" == *"Graduate to native"* ]]
     [[ "$output" == *"NTFS shrink safety"* ]]
     [[ "$output" == *"Safe shrink default"* ]]
+    [[ "$output" == *"Dry run only"* ]]
     refute_disk_touched
 }
 
-@test "plan with shrink fixture shows available space and safe defaults" {
+@test "migrate --dual-boot with shrink fixture shows available space and safe defaults" {
     local info_fixture="$TMP/ntfsresize-info.txt"
     cat >"$info_fixture" <<'NTFSINFO'
 ntfsresize v2022.10.3 (libntfs-3g)
@@ -170,7 +172,7 @@ You might resize at 120000000000 bytes (120000 MB)
 NTFSINFO
     export WOOTC_GN_NTRESIZE_INFO="$info_fixture"
     WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_DISK=/dev/sda WOOTC_GN_NTFS=/dev/sda2 WOOTC_GN_ESP=/dev/sda1 \
-        run bash "$GN" plan
+        run bash "$GN" migrate --dual-boot
     [ "$status" -eq 0 ]
     [[ "$output" == *"NTFS shrink safety  : [ok]"* ]]
     [[ "$output" == *"GiB available"* ]]
@@ -178,20 +180,20 @@ NTFSINFO
     refute_disk_touched
 }
 
-@test "plan with dirty NTFS fixture shows the dirty-volume diagnostic" {
+@test "migrate --dual-boot with dirty NTFS fixture shows the dirty-volume diagnostic" {
     local info_fixture="$TMP/ntfsresize-dirty.txt"
     printf 'Volume is dirty.
 You must run chkdsk /f on Windows.
 ' >"$info_fixture"
     export WOOTC_GN_NTRESIZE_INFO="$info_fixture"
     WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_DISK=/dev/sda WOOTC_GN_NTFS=/dev/sda2 WOOTC_GN_ESP=/dev/sda1 \
-        run bash "$GN" plan
+        run bash "$GN" migrate --dual-boot
     [ "$status" -eq 0 ]
     [[ "$output" == *"NTFS shrink safety  : [dirty]"* ]]
     refute_disk_touched
 }
 
-@test "plan with no-space NTFS fixture shows the nospace diagnostic" {
+@test "migrate --dual-boot with no-space NTFS fixture shows the nospace diagnostic" {
     local info_fixture="$TMP/ntfsresize-nospace.txt"
     cat >"$info_fixture" <<'NTFSINFO'
 Current volume size: 100000000000 bytes
@@ -199,7 +201,7 @@ You might resize at 100000000000 bytes
 NTFSINFO
     export WOOTC_GN_NTRESIZE_INFO="$info_fixture"
     WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_DISK=/dev/sda WOOTC_GN_NTFS=/dev/sda2 WOOTC_GN_ESP=/dev/sda1 \
-        run bash "$GN" plan
+        run bash "$GN" migrate --dual-boot
     [ "$status" -eq 0 ]
     [[ "$output" == *"NTFS shrink safety  : [nospace]"* ]]
     refute_disk_touched
