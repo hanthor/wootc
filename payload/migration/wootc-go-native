@@ -132,6 +132,17 @@ cmd_check() {
     fi
     local conv; conv=$(converted_folders | wc -l)
     echo "[info] $conv user folder(s) already native"
+    # Non-destructive NTFS shrink verification (Phase 3-A gate).
+    if discover_layout; then
+        local shrink_result
+        shrink_result=$(check_shrinkable "$NTFS_DEV" 2>&1 || true)
+        if [[ "$shrink_result" == "[ok]"* ]]; then
+            echo "[ok]   NTFS shrink safety: $shrink_result"
+        else
+            echo "[warn] NTFS shrink check: $shrink_result"
+            # Not a hard gate — dual-boot to a spare disk is still available.
+        fi
+    fi
     return $ok
 }
 
@@ -162,16 +173,80 @@ next_partnum() {
     echo $(( ${n:-0} + 1 ))
 }
 
+# check_shrinkable — read-only NTFS shrink safety analysis (Phase 3-A gate).
+# Runs ntfsresize --info to verify the NTFS volume can be shrunk non-destructively
+# without a Windows chkdsk cycle. Returns 0 if shrinkable, prints the available
+# shrink space; returns 1 with a diagnostic if shrink is unsafe or the volume
+# needs a clean Windows shutdown first. Test hook: WOOTC_GN_NTRESIZE_INFO.
+check_shrinkable() {
+    local dev="${1:-$NTFS_DEV}" info_file="${WOOTC_GN_NTRESIZE_INFO:-}" info
+    if [[ -n "$info_file" ]]; then
+        # Fixture hook: supply a canned ntfsresize --info output.
+        # Allows tests to exercise the shrink logic without a real block device.
+        info=$(<"$info_file")
+    elif [[ ! -b "$dev" ]]; then
+        echo "[block] not a block device"; return 1
+    elif command -v ntfsresize >/dev/null 2>&1; then
+        info=$(ntfsresize --info "$dev" 2>&1 || true)
+    else
+        echo "[warn] ntfsresize not available — cannot verify shrink safety"
+        return 0  # not a hard gate; the plan will warn the user
+    fi
+    # Gate 1: the volume must not be flagged dirty (Windows hibernated / Fast Startup).
+    if echo "$info" | grep -qE 'Volume is dirty|has been run [0-9]+ times|must be checked|The volume is dirty'; then
+        echo "[dirty] NTFS volume is flagged dirty — boot Windows once and perform a full shutdown (not restart)"
+        return 1
+    fi
+    # Gate 2: the volume must have enough free space to shrink into.
+    # ntfsresize reports "You might resize at NNNN bytes" — the current
+    # data size plus slack, already rounded up to a cluster boundary.
+    # Below that, data loss is certain; a safe default adds headroom.
+    local curr_size new_min
+    curr_size=$(echo "$info" | grep -oP 'Current volume size:\s*\K[0-9]+' | head -1)
+    new_min=$(echo "$info"  | grep -oP 'You might resize at\s*\K[0-9]+' | head -1)
+    if [[ -z "$curr_size" || -z "$new_min" ]]; then
+        echo "[parse] could not parse ntfsresize output for $dev"
+        return 1
+    fi
+    local can_free=$(( (curr_size - new_min) / (1024*1024*1024) ))
+    if (( can_free <= 0 )); then
+        echo "[nospace] NTFS filesystem has no free space to shrink (current=${curr_size} min=${new_min})"
+        return 1
+    fi
+    echo "[ok] NTFS shrinkable: $can_free GiB available (current $(numfmt --to=iec $curr_size), min $(numfmt --to=iec $new_min))"
+    return 0
+}
+
 # graduate_plan — the exact command sequence to move onto a native partition
 # while keeping Windows (reversible). Printed for review; run only with execute.
 graduate_plan() {
     local shrink_gib="${WOOTC_GN_SHRINK_GIB:-0}" newpart localref
     newpart="${DISK}$(next_partnum)"
     localref="containers-storage:$(bootc_local_imgref)"
+
+    # Non-destructive NTFS shrink safety gate (Phase 3-A): verify before printing the plan.
+    local shrink_info=""
+    if discover_layout; then
+        shrink_info=$(check_shrinkable "$NTFS_DEV" 2>&1 || true)
+    fi
+    [[ -z "$shrink_info" ]] && shrink_info="[skip] layout not discoverable"
+
+    # Safe default for shrink size: use available space minus a 2 GiB headroom
+    # so Windows still has breathing room after the resize.
+    local safe_default_gib=0
+    if [[ "$shrink_info" == "[ok]"* ]]; then
+        safe_default_gib=$(echo "$shrink_info" | grep -oP '[0-9]+(?= GiB available)' | head -1)
+        safe_default_gib=$(( safe_default_gib > 4 ? safe_default_gib - 2 : safe_default_gib ))
+    fi
+    [[ "${WOOTC_GN_SHRINK_GIB:-0}" -gt 0 ]] || WOOTC_GN_SHRINK_GIB="$safe_default_gib"
+    shrink_gib="${WOOTC_GN_SHRINK_GIB:-0}"
+
     cat <<PLAN
 Graduate to native (dual-boot — Windows stays, fully reversible)
 Disk: $DISK   Windows NTFS: $NTFS_DEV   ESP: $ESP_DEV
 New native partition: $newpart
+NTFS shrink safety  : $shrink_info
+Safe shrink default : ${shrink_gib} GiB (override with WOOTC_GN_SHRINK_GIB=N)
 
 Commands (each verified before the next):
   1. Snapshot for rollback:
@@ -505,9 +580,23 @@ cmd_status() {
     local nconv; nconv=$(converted_folders | grep -c . || true)
     if [[ "$loop" == 0 && "${nconv:-0}" -gt 0 ]]; then reclaim_ok=1; else reclaim_ok=0; fi
 
+    # Non-destructive NTFS shrink analysis for the GUI (Phase 3-A).
+    local shrink_ok=0 shrink_gib=0 shrink_diag=""
+    if [[ "$loop" == 1 ]] && discover_layout; then
+        local shrink_result
+        shrink_result=$(check_shrinkable "$NTFS_DEV" 2>&1 || true)
+        if [[ "$shrink_result" == "[ok]"* ]]; then
+            shrink_ok=1
+            shrink_gib=$(echo "$shrink_result" | grep -oP '[0-9]+(?= GiB available)' | head -1)
+            shrink_gib=$(( shrink_gib > 4 ? shrink_gib - 2 : shrink_gib ))
+        fi
+        shrink_diag="$shrink_result"
+    fi
+
     GN_SRC="$src" GN_LOOP="$loop" GN_UUID="$hostuuid" GN_BL="$bootloader" \
     GN_HOSTCONF="$hostconf" GN_SNAP="$snapshot" GN_RECLAIM="$reclaim_ok" \
     GN_FOLDERS="$(converted_folders | paste -sd, - 2>/dev/null || true)" \
+    GN_SHRINK_OK="$shrink_ok" GN_SHRINK_GIB="$shrink_gib" GN_SHRINK_DIAG="$shrink_diag" \
     python3 - <<'PY'
 import json, os
 folders = [f for f in os.environ.get("GN_FOLDERS", "").split(",") if f]
@@ -521,9 +610,15 @@ print(json.dumps({
         "hostLayoutRecorded": os.environ["GN_HOSTCONF"] == "1",
         "snapshotCapable":    os.environ["GN_SNAP"] == "1",
         "dataIsNative":       len(folders) > 0,
+        "ntfsShrinkable":     os.environ.get("GN_SHRINK_OK", "0") == "1",
     },
     "canGraduate": os.environ["GN_LOOP"] == "1",
     "canReclaim":  os.environ["GN_RECLAIM"] == "1",
+    "shrink": {
+        "safeGib":  int(os.environ.get("GN_SHRINK_GIB", "0") or "0"),
+        "ok":       os.environ.get("GN_SHRINK_OK", "0") == "1",
+        "diag":     os.environ.get("GN_SHRINK_DIAG", "") or None,
+    },
 }, indent=2))
 PY
 }

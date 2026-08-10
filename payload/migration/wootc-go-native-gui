@@ -188,6 +188,14 @@ def build_gui():
             grp.add(self._chip(True, f"Root filesystem: {st.get('rootSource') or 'unknown'}"))
             grp.add(self._chip(g.get("hostLayoutRecorded"), "Windows disk layout recorded"))
             grp.add(self._chip(g.get("snapshotCapable"), "Rollback snapshot available"))
+            # Non-destructive NTFS shrink gate (Phase 3-A): show available space.
+            shrink = st.get("shrink", {})
+            if st["onLoopback"] and shrink.get("ok"):
+                grp.add(self._chip(True,
+                    f"Windows drive can be shrunk: {shrink.get('safeGib', 0)} GiB free for Linux"))
+            elif st["onLoopback"]:
+                diag = shrink.get("diag") or "shrink not available"
+                grp.add(self._chip(False, f"Windows shrink check: {diag}"))
             folders = st.get("convertedFolders") or []
             grp.add(self._chip(bool(folders),
                                f"Folders made native: {', '.join(folders) or 'none yet'}"))

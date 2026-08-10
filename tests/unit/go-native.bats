@@ -113,6 +113,19 @@ STUB
     grep -Fq 'echo "EXIT=$rc" >> "$TMP"' "$DISPATCH"
 }
 
+@test "Phase-3 dispatcher runs NTFS shrink verification before migration" {
+    # The shrink check must appear BEFORE the destructive WOOTC_GN_ALLOW_DESTRUCTIVE gate
+    # and after the blank-target recheck — ordering matters for safety.
+    local shrink_line blank_line gate_line
+    shrink_line=$(grep -nm1 'NTFS shrink verification' "$DISPATCH" | cut -d: -f1)
+    blank_line=$(grep -nm1 'target is not blank' "$DISPATCH" | cut -d: -f1)
+    gate_line=$(grep -nm1 'WOOTC_GN_ALLOW_DESTRUCTIVE=1' "$DISPATCH" | cut -d: -f1)
+    [ -n "$shrink_line" ] && [ -n "$blank_line" ] && [ -n "$gate_line" ]
+    [ "$blank_line" -lt "$shrink_line" ]
+    [ "$shrink_line" -lt "$gate_line" ]
+    grep -Fq 'wootc-go-native check' "$DISPATCH"
+}
+
 # Assert no DESTRUCTIVE disk operation happened. Read-only probes are fine and
 # expected in a dry run — `bootc status --json` is how the plan discovers the
 # local image ref, and lsblk/blkid inspect layout. Only writes must never occur.
@@ -139,6 +152,56 @@ teardown() {
     [[ "$output" == *"Still on Windows NTFS  : yes"* ]]
     [[ "$output" == *"Graduate root to native"* ]]
     [[ "$output" == *"Remove Windows"* ]]
+    [[ "$output" == *"NTFS shrink safety"* ]]
+    [[ "$output" == *"Safe shrink default"* ]]
+    refute_disk_touched
+}
+
+@test "plan with shrink fixture shows available space and safe defaults" {
+    local info_fixture="$TMP/ntfsresize-info.txt"
+    cat >"$info_fixture" <<'NTFSINFO'
+ntfsresize v2022.10.3 (libntfs-3g)
+Device name        : /dev/sda2
+NTFS volume version: 3.1
+Cluster size       : 4096 bytes
+Current volume size: 268435456000 bytes (268436 MB)
+Current device size: 268435456512 bytes (268436 MB)
+You might resize at 120000000000 bytes (120000 MB)
+NTFSINFO
+    export WOOTC_GN_NTRESIZE_INFO="$info_fixture"
+    WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_DISK=/dev/sda WOOTC_GN_NTFS=/dev/sda2 WOOTC_GN_ESP=/dev/sda1 \
+        run bash "$GN" plan
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NTFS shrink safety  : [ok]"* ]]
+    [[ "$output" == *"GiB available"* ]]
+    [[ "$output" == *"Safe shrink default"* ]]
+    refute_disk_touched
+}
+
+@test "plan with dirty NTFS fixture shows the dirty-volume diagnostic" {
+    local info_fixture="$TMP/ntfsresize-dirty.txt"
+    printf 'Volume is dirty.
+You must run chkdsk /f on Windows.
+' >"$info_fixture"
+    export WOOTC_GN_NTRESIZE_INFO="$info_fixture"
+    WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_DISK=/dev/sda WOOTC_GN_NTFS=/dev/sda2 WOOTC_GN_ESP=/dev/sda1 \
+        run bash "$GN" plan
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NTFS shrink safety  : [dirty]"* ]]
+    refute_disk_touched
+}
+
+@test "plan with no-space NTFS fixture shows the nospace diagnostic" {
+    local info_fixture="$TMP/ntfsresize-nospace.txt"
+    cat >"$info_fixture" <<'NTFSINFO'
+Current volume size: 100000000000 bytes
+You might resize at 100000000000 bytes
+NTFSINFO
+    export WOOTC_GN_NTRESIZE_INFO="$info_fixture"
+    WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_DISK=/dev/sda WOOTC_GN_NTFS=/dev/sda2 WOOTC_GN_ESP=/dev/sda1 \
+        run bash "$GN" plan
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NTFS shrink safety  : [nospace]"* ]]
     refute_disk_touched
 }
 
@@ -155,6 +218,32 @@ teardown() {
     WOOTC_GN_FORCE_LOOP=1 run bash "$GN" check
     [[ "$output" == *"loopback"* ]]
     [[ "$output" == *"2 user folder(s) already native"* ]]
+    # Without layout fixtures, the NTFS shrink check is skipped (not a hard gate).
+    refute_disk_touched
+}
+
+@test "check verifies NTFS shrinkability when layout is discoverable" {
+    local info_fixture="$TMP/ntfsresize-info.txt"
+    cat >"$info_fixture" <<'NTFSINFO'
+Current volume size: 268435456000 bytes
+You might resize at 120000000000 bytes
+NTFSINFO
+    export WOOTC_GN_NTRESIZE_INFO="$info_fixture"
+    WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_DISK=/dev/sda WOOTC_GN_NTFS=/dev/sda2 WOOTC_GN_ESP=/dev/sda1 \
+        run bash "$GN" check
+    [[ "$output" == *"NTFS shrink safety"* ]]
+    [[ "$output" == *"GiB available"* ]]
+    refute_disk_touched
+}
+
+@test "check warns on dirty NTFS but does not hard-block" {
+    local info_fixture="$TMP/ntfsresize-dirty.txt"
+    printf 'Volume is dirty.\nYou must run chkdsk /f on Windows.\n' >"$info_fixture"
+    export WOOTC_GN_NTRESIZE_INFO="$info_fixture"
+    WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_DISK=/dev/sda WOOTC_GN_NTFS=/dev/sda2 WOOTC_GN_ESP=/dev/sda1 \
+        run bash "$GN" check
+    # Dirty NTFS is a soft gate — check still passes (spare-disk graduate is available).
+    [[ "$output" == *"[warn] NTFS shrink check"* ]]
     refute_disk_touched
 }
 
@@ -275,6 +364,22 @@ teardown() {
     WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_ROOT_SRC=/dev/nbd0p3 run bash "$GN" status
     [ "$status" -eq 0 ]
     echo "$output" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["onLoopback"] and d["canGraduate"] and not d["canReclaim"], d'
+    echo "$output" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert "shrink" in d, d'
+    refute_disk_touched
+}
+
+@test "status --json with shrink fixture reports ntfsShrinkable gate and safeGib" {
+    local info_fixture="$TMP/ntfsresize-info.txt"
+    cat >"$info_fixture" <<'NTFSINFO'
+Current volume size: 268435456000 bytes
+You might resize at 120000000000 bytes
+NTFSINFO
+    export WOOTC_GN_NTRESIZE_INFO="$info_fixture"
+    WOOTC_GN_FORCE_LOOP=1 WOOTC_GN_ROOT_SRC=/dev/nbd0p3 \
+        WOOTC_GN_DISK=/dev/sda WOOTC_GN_NTFS=/dev/sda2 WOOTC_GN_ESP=/dev/sda1 \
+        run bash "$GN" status
+    [ "$status" -eq 0 ]
+    echo "$output" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["gates"]["ntfsShrinkable"], d; assert d["shrink"]["ok"], d; assert d["shrink"]["safeGib"] > 0, d'
     refute_disk_touched
 }
 
