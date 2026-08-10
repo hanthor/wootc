@@ -10,9 +10,15 @@ import argparse
 import base64
 import json
 import os
+import random
 import socket
 import sys
 import time
+
+# Reserved exit code for transport/QGA protocol errors, distinct from guest
+# process exit codes so callers can retry connection failures without replaying
+# side-effecting guest commands (see #40).
+TRANSPORT_EXIT = 42
 
 SOCKET = "/run/shm/qga.sock"
 
@@ -23,6 +29,33 @@ class GuestAgent:
         self.sock.settimeout(timeout)
         self.sock.connect(path)
         self.file = self.sock.makefile("rwb")
+        self._sync()
+
+    def _sync(self):
+        """Synchronize with QGA using guest-sync-delimited.
+
+        Generates a random 64-bit ID, sends the 0xFF-delimited sync command,
+        and discards all input until the matching response is observed.
+        This ensures stale data from a previous timed-out client is never
+        attributed to this connection's requests (#41).
+        """
+        sync_id = random.randint(0, 2**63 - 1)
+        cmd = json.dumps(
+            {"execute": "guest-sync-delimited", "arguments": {"id": sync_id}}
+        )
+        self.file.write(b"\xff" + cmd.encode("utf-8") + b"\n")
+        self.file.flush()
+        while True:
+            raw = self.file.readline()
+            if not raw:
+                raise RuntimeError("QGA socket closed during sync")
+            if raw and raw[0:1] == b"\xff":
+                try:
+                    response = json.loads(raw[1:])
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if response.get("return") == sync_id:
+                    return
 
     def close(self):
         try:
@@ -198,7 +231,7 @@ def main():
         raise AssertionError(args.command)
     except (OSError, RuntimeError, ValueError) as error:
         print(f"QGA: {error}", file=sys.stderr)
-        return 1
+        return TRANSPORT_EXIT
     finally:
         agent.close()
 
