@@ -26,8 +26,9 @@ step() { echo -e "${CYAN}[STEP]${NC} $*"; }
 pass() { echo -e "${GREEN}[PASS]${NC} $*"; }
 fail() { echo -e "${RED}[FAIL]${NC} $*" >&2; exit 1; }
 
+QGA_CLIENT="$E2E_DIR/qga.py"
 qga() {
-    podman exec "$CONTAINER" python3 /qga.py --socket /run/shm/qga.sock powershell "$1"
+    timeout 120 podman exec "$CONTAINER" python3 /tmp/qga.py --socket /run/shm/qga.sock powershell "$1"
 }
 
 # ── 1. Build the real product ────────────────────────────────────────────────
@@ -60,7 +61,14 @@ else
     echo "[SKIP] lsinitrd unavailable or no local initramfs — migration payload check skipped"
 fi
 
-# ── 3. QGA reachable? ────────────────────────────────────────────────────────
+# ── 3. Stage the QGA client and verify the guest agent is reachable ─────────
+# The main runner copies qga.py into /tmp/qga.py inside the container during
+# bring-up. The Phase-1 harness is standalone and may run against a container
+# that was started externally, so copy it here to be hermetic (#44).
+step "Staging QGA client..."
+[ -f "$QGA_CLIENT" ] || fail "QGA client not found at $QGA_CLIENT"
+podman cp "$QGA_CLIENT" "$CONTAINER:/tmp/qga.py"
+
 step "Probing QGA..."
 qga "echo qga-ok" | grep -q qga-ok || fail "QGA not responsive in $CONTAINER"
 

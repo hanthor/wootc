@@ -51,7 +51,9 @@ class GuestAgent:
                     f"{error.get('class', 'QGA error')}: {error.get('desc', error)}"
                 )
 
-    def exec(self, path, args):
+    def exec(self, path, args, exec_timeout=None):
+        if exec_timeout is None:
+            exec_timeout = self.sock.gettimeout() or 60.0
         result = self.request(
             "guest-exec",
             {
@@ -61,7 +63,13 @@ class GuestAgent:
             },
         )
         pid = result["pid"]
+        deadline = time.monotonic() + exec_timeout
         while True:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "guest-exec timed out after %.0fs (pid=%d): process has not exited"
+                    % (exec_timeout, pid)
+                )
             status = self.request("guest-exec-status", {"pid": pid})
             if status.get("exited"):
                 stdout = base64.b64decode(status.get("out-data", ""))
