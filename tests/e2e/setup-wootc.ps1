@@ -25,7 +25,9 @@ param(
     # systemd). Passed through as wootc.bootloader=.
     [ValidateSet("grub2", "systemd", "auto")]
     [string]$Bootloader = "auto",
-    # composefs-backed images require systemd-boot; adds wootc.composefs=1.
+    # composefs native backend; adds wootc.composefs=1.
+    # composefs-sealed ostree images (e.g. yellowfin) do NOT need this —
+    # the deployer auto-detects the backend from the image.
     [switch]$ComposeFs,
     # Root filesystem axis (#35): "auto" (default) lets the deployer pick
     # (xfs unsealed / ext4 sealed); an explicit value is passed through as
@@ -55,7 +57,8 @@ if (-not $gotMutex) {
 }
 
 # Extra deployer kargs for the bootloader/composefs axes of the test matrix.
-# grub2 + no composefs reproduces the historical default exactly.
+# Both default to "auto": the deployer probes the image and picks the backend
+# definitively. An explicit override is an Advanced choice.
 $WootcKargs = "wootc.bootloader=$Bootloader"
 if ($ComposeFs) { $WootcKargs += " wootc.composefs=1" }
 if ($Filesystem -ne "auto") { $WootcKargs += " wootc.filesystem=$Filesystem" }

@@ -43,9 +43,10 @@ try {
     Write-E2ELog "Invoking setup-wootc payload"
     # Deployer config (image / bootloader / composefs) is written into C:\OEM by
     # run-e2e.sh so the test matrix can drive every bootc base and both
-    # bootloaders. Absent the file, fall back to the historical grub2 yellowfin
-    # default so a bare run is unchanged.
-    $cfg = @{ ImageRef = "ghcr.io/tuna-os/yellowfin:gnome"; Bootloader = "grub2"; ComposeFs = "0" }
+    # bootloaders. Absent the file, fall back to auto-detection defaults — the
+    # deployer probes the image and picks the backend + composefs mode
+    # definitively (the configuration that took dakota/composefs green).
+    $cfg = @{ ImageRef = "ghcr.io/tuna-os/yellowfin:gnome"; Bootloader = "auto"; ComposeFs = "auto" }
     $cfgPath = Join-Path $oemDir "wootc-config.txt"
     if (Test-Path $cfgPath) {
         foreach ($line in Get-Content $cfgPath) {
@@ -59,6 +60,8 @@ try {
         Bootloader = $cfg.Bootloader
         PayloadDir = "$oemDir\payload"
     }
+    # Only pass an explicit ComposeFs override; "auto"/absent lets the deployer
+    # auto-detect from the image's prepare-root.conf (issue #28).
     if ($cfg.ComposeFs -eq "1") { $setupArgs.ComposeFs = $true }
     # Filesystem axis (#35): only pass an explicit value through; "auto"/absent
     # keeps setup-wootc.ps1's default (the deployer decides).
