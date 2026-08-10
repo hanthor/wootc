@@ -188,3 +188,25 @@ observe_with() {
     [ "$status" -eq 0 ]
     [ "$output" = "would-reset" ]
 }
+
+@test "mutation: a reboot that does nothing must fail the final Windows-return assertion" {
+    # Non-vacuity for the new code: if the reboot request is a no-op and the
+    # Linux agent never goes down, qga_wait_windows must fail — it cannot pass
+    # on a guest that has never become Windows. This proves the assertion is
+    # actually testing something, not just printing a green line unconditionally.
+    run bash -c "
+        set -uo pipefail
+        deadline_in() { echo \$(( \$(date +%s) + \$1 )); }
+        past_deadline() { [ \"\$(date +%s)\" -ge \"\$1\" ]; }
+        step() { :; }
+        pass() { :; }
+        fail() { echo 'WOULD-FAIL'; exit 1; }
+        info() { :; }
+        qga_windows_probe() { return 1; }
+        qga_call() { :; }
+        $(extract_fn qga_wait_windows)
+        qga_wait_windows 1
+    "
+    [ "$status" -ne 0 ]
+    [[ "$output" =~ WOULD-FAIL ]]
+}
