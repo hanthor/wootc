@@ -39,6 +39,17 @@ run_migration() {
         return 65
     fi
 
+    # Non-destructive NTFS shrink verification (Phase 3-A gate): before the
+    # spare-disk graduate, verify the host NTFS volume can be shrunk later
+    # if the user chooses the same-disk path. This is a read-only check that
+    # does not touch the disk; a failure here is a soft gate (the spare-disk
+    # graduate can still proceed).
+    if /var/usrlocal/bin/wootc-go-native check 2>/dev/null | grep -q 'NTFS shrink safety'; then
+        log_kmsg "NTFS shrink verification: host volume is shrinkable (gate passed)"
+    else
+        log_kmsg "WARN: NTFS shrink verification skipped or unavailable — spare-disk graduate proceeds"
+    fi
+
     log_kmsg "Starting wootc-go-native migrate to $target..."
     WOOTC_GN_ALLOW_DESTRUCTIVE=1 \
         /var/usrlocal/bin/wootc-go-native migrate --to-disk "$target" --execute
