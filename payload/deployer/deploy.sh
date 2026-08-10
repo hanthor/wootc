@@ -1932,14 +1932,17 @@ if [[ -n "$VERIFY_ROOT" ]]; then
         # both modules' observable boot machinery.
         # nvmf/systemd-cryptsetup are auto-pulled but depend on the network/dm
         # modules we omit; omit them too so they don't error the run.
-        DRACUT_OMIT="plymouth lvm mdraid dm multipath iscsi nfs cifs fcoe fcoe-uefi resume rescue network network-legacy network-manager kernel-network-modules cellular qemu-net memstrack nvmf nvdimm"
+        DRACUT_OMIT="plymouth lvm mdraid multipath iscsi nfs cifs fcoe fcoe-uefi resume rescue network network-legacy network-manager kernel-network-modules cellular qemu-net memstrack nvmf nvdimm"
         # clevis (+ its pins) is a crypt dependent: images that ship it
         # (bonito) make dracut abort "Module 'clevis' depends on module
         # 'crypt', which can't be installed" the moment crypt is omitted
-        # (GH bonito repro 20260724T0709). Phase 2 loop-attaches an
+        # (GH bonito repro 20260724T0709). Likewise crypt depends on dm;
+        # omitting dm while crypt is still required (tpm2-luks / luks-passphrase)
+        # makes dracut exit 1 instantly with "Module 'crypt' depends on module
+        # 'dm', which can't be installed" (#33). Phase 2 loop-attaches an
         # unencrypted root — no network-bound encryption — so drop the whole
-        # clevis family alongside crypt.
-        [[ "$LUKS_TYPE" == "none" ]] && DRACUT_OMIT="$DRACUT_OMIT crypt systemd-cryptsetup clevis clevis-pin-null clevis-pin-sss clevis-pin-tang clevis-pin-tpm2"
+        # clevis family alongside crypt AND dm together.
+        [[ "$LUKS_TYPE" == "none" ]] && DRACUT_OMIT="$DRACUT_OMIT dm crypt systemd-cryptsetup clevis clevis-pin-null clevis-pin-sss clevis-pin-tang clevis-pin-tpm2"
         # Capture dracut's real exit + tail its output to the serial. The
         # module + hook land cleanly in a bare `podman run <img> dracut …`, so
         # any failure here is specific to the chroot-into-mounted-deployment
