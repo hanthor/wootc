@@ -170,7 +170,7 @@ ostree images that ship no `bootupd`.
 | Windows 10 Home / Enterprise / LTSC | 🔴 | Setup stops on its edition picker — the answer file's product key matches no image in the ISO for those editions — [#58](https://github.com/tuna-os/wootc/issues/58) |
 | Root filesystem: `xfs` (unsealed) | ✅ | mounted with explicit `-t` (a typeless mount tried ext4 on xfs) |
 | Root filesystem: `ext4` (sealed, fs-verity) | ✅ | proven sealed default |
-| Root filesystem: `btrfs` (sealed) | 🔴 | formats fine, but ostree Phase-2 `sysroot.mount` times out — [#35](https://github.com/tuna-os/wootc/issues/35); opt-in via `wootc.filesystem=btrfs` |
+| Root filesystem: `btrfs` (sealed) | 🟡 | works on Fedora-kernel images (bonito) via `wootc.filesystem=btrfs`; [#35](https://github.com/tuna-os/wootc/issues/35) fixed — blocked on EL10 kernels whose out-of-tree btrfs kmod is rejected under Secure Boot |
 | Encryption: none | ✅ | |
 | Encryption: `tpm2-luks` | 🔴 | Phase-2 dracut regen fails on the LUKS root — [#33](https://github.com/tuna-os/wootc/issues/33) |
 | BitLocker FDE (unencrypted-volume path) | ✅ | proven green — [#34](https://github.com/tuna-os/wootc/issues/34). Setup carves unencrypted volume E: for `root.disk` while C: stays encrypted; drive letter resolver dynamically discovers tree location. |

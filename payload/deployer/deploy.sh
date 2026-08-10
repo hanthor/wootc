@@ -982,16 +982,18 @@ fi
 # A composefs-SEALED rootfs (native OR traditional ostree) needs fs-verity,
 # which xfs lacks — so the deployer default cannot serve sealed images. ext4
 # (mkfs -O verity) is the PROVEN sealed fallback (bluefin:lts 29/29 green,
-# 2026-07-23). btrfs has native fs-verity and formats fine, but the ostree
-# Phase-2 boot cannot mount the btrfs deployment — sysroot.mount times out on
-# gpt-auto-root (GUI takes 9+10, 2026-07-24) — tracked as #35. Until that is
-# fixed ext4 is the sealed default; btrfs stays reachable via
-# wootc.filesystem=btrfs. Keyed off SEALED, NOT the backend — bonito-class
-# ostree images can be sealed too.
+# 2026-07-23). btrfs has native fs-verity; the ostree Phase-2 boot issue
+# (sysroot.mount timeout — udev 64-btrfs.rules SYSTEMD_READY=0 gate) is fixed
+# (#35): a modules-load.d entry loads btrfs.ko early, and the attach hook
+# re-registers partitions. Only available via opt-in wootc.filesystem=btrfs;
+# EL10 kernels (bluefin:lts) carry an out-of-tree btrfs kmod signed with an
+# untrusted key — the btrfs preflight below refuses those deploys at deploy
+# time. ext4 remains the sealed default as a product decision. Keyed off
+# SEALED, NOT the backend — bonito-class ostree images can be sealed too.
 if [[ "${ROOTFS_SEALED:-0}" == 1 || "$COMPOSEFS" == 1 ]] && \
    [[ "$FILESYSTEM" == xfs && -z "$(read_cmdline wootc.filesystem)" ]]; then
     FILESYSTEM=ext4
-    log "  composefs-sealed rootfs → ext4 (fs-verity, proven); btrfs blocked on #35"
+    log "  composefs-sealed rootfs → ext4 (fs-verity, proven); btrfs available via wootc.filesystem=btrfs on supported kernels"
 fi
 
 # ── btrfs preflight: can the TARGET kernel actually LOAD btrfs? ─────────────
