@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -51,6 +52,13 @@ func downloadFile(ctx context.Context, url, dest string, progress func(float64))
 		return err
 	}
 	defer resp.Body.Close()
+
+	// Reject every non-2xx response before creating/replacing the destination
+	// (#53). Boot artifacts become privileged kernel/initramfs/EFI files; an
+	// error body must never be accepted as a production boot input.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("download %s: HTTP %d %s", url, resp.StatusCode, resp.Status)
+	}
 
 	f, err := os.Create(dest + ".tmp")
 	if err != nil {

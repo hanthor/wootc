@@ -397,13 +397,23 @@ Write-Host "[wootc] Wrote wubildr.cfg"
 # load them (the signed GRUB cannot load unsigned ntfs.mod).
 Write-Host "[wootc] Setting up Secure Boot chain on ESP..."
 
-# Find the real EFI System Partition and assign a drive letter.
-$espPart = Get-Partition |
+# Find the EFI System Partition that actually backs Windows Boot Manager (#51).
+# The BCD entry is cloned from {bootmgr} and inherits ITS device, so staging
+# files on a different disk's ESP produces an install that looks complete and
+# boots to a path that does not exist — while possibly overwriting another OS's
+# boot partition. Resolve Windows' own system disk unambiguously from C:.
+$sysDisk = (Get-Partition -DriveLetter C -ErrorAction SilentlyContinue).DiskNumber
+if ($null -eq $sysDisk) {
+    throw "Could not determine which disk Windows starts from; refusing to guess"
+}
+$espPart = Get-Partition -DiskNumber $sysDisk -ErrorAction SilentlyContinue |
     Where-Object { $_.Type -eq "System" -or $_.GptType -eq "{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}" } |
     Select-Object -First 1
 
 if (-not $espPart) {
-    throw "Could not find the EFI System Partition; refusing to place EFI files on C:."
+    throw ("No EFI System Partition found on the disk Windows starts from. " +
+        "wootc will not write to another disk's boot partition, because the boot entry " +
+        "it creates always points at Windows' own disk")
 }
 
 if (-not $espPart.DriveLetter) {
