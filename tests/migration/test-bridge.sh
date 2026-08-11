@@ -381,3 +381,97 @@ INNER
 podman run --rm --privileged \
     -v "$REPO_ROOT/payload/migration:/scripts:ro,Z" \
     "$IMG" bash -c "$INNER64"
+
+# ── #66: Cloud-drive disclosure ─────────────────────────────────────────────
+# The Phase-1 installer writes cloud-drives.json; the bridge reads it and
+# states what providers were found in the journal. This proves the manifest
+# is ingested without crashing, that each provider shape parses, and that
+# the virtual-drive flag for Google Drive is surfaced.
+INNER66=$(cat <<'INNER'
+set -Eeuo pipefail
+PASS=0; FAIL=0
+ok()  { echo "[PASS] $*"; PASS=$((PASS+1)); }
+bad() { echo "[FAIL] $*"; FAIL=$((FAIL+1)); }
+check(){ if eval "$1"; then ok "$2"; else bad "$2"; fi; }
+
+dnf install -y -q util-linux python3 >/dev/null 2>&1 || true
+cp /scripts/wootc-* /usr/local/bin/ && chmod +x /usr/local/bin/wootc-*
+
+useradd -m -u 1000 alice
+mkdir -p /run/wootc/host/Users/alice/Documents
+echo "tax-return" > /run/wootc/host/Users/alice/Documents/taxes.txt
+mkdir -p /run/wootc/host/wootc
+
+# Fixture: OneDrive (real folder), Google Drive (virtual G:), Dropbox (real folder).
+cat > /run/wootc/host/wootc/cloud-drives.json <<'JSON'
+{
+  "drives": [
+    {
+      "provider": "onedrive",
+      "account": "Personal",
+      "rootPath": "C:\\Users\\alice\\OneDrive",
+      "virtualDrive": false,
+      "localBytes": 1048576,
+      "cloudOnly": 12
+    },
+    {
+      "provider": "googledrive",
+      "account": "Google Drive",
+      "rootPath": "G:",
+      "virtualDrive": true,
+      "localBytes": -1,
+      "cloudOnly": 0,
+      "note": "Virtual drive — content is only available while Drive for desktop is running. Requires sign-in on Linux."
+    },
+    {
+      "provider": "dropbox",
+      "account": "personal",
+      "rootPath": "C:\\Users\\alice\\Dropbox",
+      "virtualDrive": false,
+      "localBytes": 524288,
+      "cloudOnly": 0
+    }
+  ]
+}
+JSON
+mount --bind /run/wootc/host /run/wootc/host
+
+out=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
+echo "$out" | sed 's/^/    /'
+
+check 'echo "$out" | grep -q "cloud providers detected"' \
+    "#66: cloud-drives.json is found and ingested"
+check 'echo "$out" | grep -q "onedrive.*OneDrive.*folder"' \
+    "#66: OneDrive shown as a real folder path"
+check 'echo "$out" | grep -q "googledrive.*G:.*virtual"' \
+    "#66: Google Drive shown with its virtual drive letter"
+check 'echo "$out" | grep -q "dropbox.*Dropbox.*folder"' \
+    "#66: Dropbox shown as a real folder path"
+check 'echo "$out" | grep -q "Requires sign-in on Linux"' \
+    "#66: Google Drive virtual-drive note is surfaced for the user"
+
+# An empty manifest (no cloud drives found) must not crash.
+cat > /run/wootc/host/wootc/cloud-drives.json <<'JSON'
+{"drives": []}
+JSON
+out2=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
+check 'echo "$out2" | grep -q "cloud providers detected"' \
+    "#66: empty manifest still ingested (so the journal shows the scan ran)"
+check 'echo "$out2" | grep -q "summary:"' \
+    "#66: empty cloud-drives does not abort the bridge"
+
+# A missing manifest must not crash or log a cloud-drive section.
+out3=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
+check '! echo "$out3" | grep -q "cloud providers"' \
+    "#66: no manifest at all is cleanly silent (not an error)"
+check 'echo "$out3" | grep -q "summary:"' \
+    "#66: missing manifest does not abort the bridge"
+
+echo "RESULT: $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ]
+INNER
+)
+
+podman run --rm --privileged \
+    -v "$REPO_ROOT/payload/migration:/scripts:ro,Z" \
+    "$IMG" bash -c "$INNER66"
