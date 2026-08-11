@@ -622,6 +622,16 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 		{"Setting up ESP", 65, func() error { return setupESP(cfg) }},
 		{"Configuring BCD", 80, func() error { return configureBCD(cfg.Bootloader) }},
 		{"Writing vault.json", 85, func() error { return writeVault(cfg) }},
+		{"Collecting installed programs", 88, func() error {
+			// Registry-based program inventory (§4.3): enumerate HKLM/HKCU
+			// uninstall keys before Windows goes away, so the migration
+			// dashboard can show the complete picture — not just apps with
+			// an AppData footprint. Best-effort: never fail install.
+			if err := collectPrograms(); err != nil {
+				fmt.Fprintf(os.Stderr, "[wootc] program collection skipped: %v\n", err)
+			}
+			return nil
+		}},
 		{"Collecting your look", 90, func() error {
 			// Windows-Style Mode is opt-in (SPEC §4.4). When the user does not
 			// tick it, we collect nothing and the deployed system keeps the
@@ -677,7 +687,8 @@ func (a *App) runPreviewInstall(ctx context.Context) {
 	}{
 		{"Checking system", 5}, {"Creating root.vhdx", 15},
 		{"Downloading deployer", 50}, {"Setting up ESP", 65},
-		{"Configuring BCD", 80}, {"Collecting your look", 90},
+		{"Configuring BCD", 80}, {"Collecting installed programs", 85},
+		{"Collecting your look", 90},
 	}
 	for _, s := range steps {
 		select {

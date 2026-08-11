@@ -1478,7 +1478,7 @@ sed "s#<Key>[^<]*</Key>#<Key>${WIN_KEY}</Key>#" autounattend.xml > "$RENDERED_AN
 # we return nothing and let Setup decide. "Windows 11 Pro" must never match
 # "Windows 11 Pro N" or "Windows 11 Pro Education".
 pick_win_image_name() {
-    local edition="$1" want="" line matches=0 chosen=""
+    local edition="$1" want="" line matches=0 chosen="" eval_matches=0 eval_chosen=""
     case "$(printf '%s' "$edition" | tr '[:upper:]' '[:lower:]')" in
         pro)        want="pro" ;;
         home)       want="home" ;;
@@ -1497,8 +1497,21 @@ pick_win_image_name() {
                 case "$lower" in *ltsc*) ;; *) continue ;; esac ;;
             enterprise)
                 # Plain Enterprise, NOT the LTSC or N variants.
-                case "$lower" in *ltsc*|*" n"|*" n "*|*evaluation*) continue ;; esac
-                case "$lower" in *enterprise*) ;; *) continue ;; esac ;;
+                # On multi-edition ISOs the evaluation exclusion disambiguates
+                # "Windows 10 Enterprise" from "Windows 10 Enterprise Evaluation".
+                # But single-edition eval ISOs (Dockur VERSION=10e) ONLY contain
+                # the Evaluation image — excluding it produces no match and the
+                # harness burns its whole budget on the edition picker (#58).
+                # Track both: prefer non-eval, but accept eval as fallback.
+                case "$lower" in *ltsc*|*" n"|*" n "*) continue ;; esac
+                case "$lower" in *enterprise*) ;; *) continue ;; esac
+                case "$lower" in
+                    *evaluation*)
+                        eval_matches=$((eval_matches + 1))
+                        eval_chosen="$line"
+                        continue ;;
+                esac
+                ;;
             pro)
                 case "$lower" in *" n"|*" n "*|*education*|*workstation*) continue ;; esac
                 case "$lower" in *pro*) ;; *) continue ;; esac ;;
@@ -1511,7 +1524,12 @@ pick_win_image_name() {
     done
     # Ambiguity is the failure mode this exists to avoid: a name matching two
     # images is no better than a wrong one.
-    [ "$matches" -eq 1 ] && printf '%s' "$chosen"
+    if [ "$matches" -eq 1 ]; then printf '%s' "$chosen"; return 0; fi
+    # Enterprise fallback: if no non-eval enterprise image was found, accept
+    # a solitary eval image (the case for Dockur VERSION=10e/11e eval ISOs).
+    if [ "$want" = enterprise ] && [ "$matches" -eq 0 ] && [ "$eval_matches" -eq 1 ]; then
+        printf '%s' "$eval_chosen"
+    fi
     return 0
 }
 
@@ -1604,11 +1622,33 @@ heal_image_name_from_downloaded_iso() {
     done
     [ -n "$iso" ] && [ "$size" -gt 0 ] || return 0
 
+    # Determine whether the tools for reading the ISO are available. If not,
+    # we can't name the edition at all, and Setup WILL park on the picker.
+    # Fail fast rather than burning the entire install budget (#58).
+    if ! command -v wiminfo >/dev/null 2>&1 || ! command -v 7z >/dev/null 2>&1; then
+        warn "Cannot read Windows edition names from the downloaded ISO: wiminfo/7z not available"
+        warn "  Install wimtools + p7zip-full (or p7zip) so the harness can select the edition by name."
+        warn "  Without them, Setup will park on the edition picker for this case."
+    fi
+
     local derived
     derived=$(list_win_image_names "$iso" | pick_win_image_name "${WOOTC_E2E_WIN_EDITION:-pro}")
     if [ -z "$derived" ]; then
-        info "Downloaded ISO gave no unambiguous image name — leaving Setup to choose (#58)"
-        return 0
+        # This ISO genuinely does not contain an image matching the requested
+        # edition. Setup will park on the picker with "No images are available"
+        # and the harness WILL time out 90 minutes later. Fail fast so the
+        # verdict names the actual condition rather than "QGA did not arrive".
+        local all_names
+        all_names=$(list_win_image_names "$iso" | paste -sd'|' - 2>/dev/null || echo "<could not read>")
+        fail "Windows edition '${WOOTC_E2E_WIN_EDITION:-pro}' NOT FOUND in the downloaded ISO"
+        fail "  ISO images: $all_names"
+        fail "  The answer file will resolve NO image and Setup hangs on the edition picker (#58)."
+        if [ "${WOOTC_E2E_WIN_EDITION:-pro}" = home ]; then
+            fail "  The Win10 consumer ISO does not contain a Home WIM image for unattended setup."
+            fail "  Drop this cell or map it to a Dockur version that provides a Home image."
+        fi
+        capture_vm_diagnostics
+        exit 1
     fi
 
     step "Naming the Windows edition from the downloaded media and restarting Setup (#58)..."

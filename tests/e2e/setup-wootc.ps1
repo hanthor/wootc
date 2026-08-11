@@ -491,34 +491,65 @@ Write-Host "[wootc] Wrote deployer grub.cfg to ESP:EFI/{fedora,redhat,wootc}/gru
 
 # ── Step 8: Configure BCD ───────────────────────────────────────────────────
 # Add a one-shot UEFI firmware entry pointing to the signed shim → GRUB chain.
+# Every native bcdedit call is exit-code-checked; every observable must be proven
+# before the setup-complete marker is written (#50).
 
 Write-Host "[wootc] Configuring BCD..."
 
 # Create a new BCD entry by cloning the Windows Boot Manager.
 $bcdCreateOutput = (& bcdedit /copy "{bootmgr}" /d "wootc Deployer" 2>&1) | Out-String
+if ($LASTEXITCODE -ne 0) {
+    throw "bcdedit /copy exited with code $LASTEXITCODE: $bcdCreateOutput"
+}
 Write-Host "[wootc] bcdedit copy: $bcdCreateOutput"
 
 if ($bcdCreateOutput -match '\{([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\}') {
     $newGuid = "{$($Matches[1])}"
-    Write-Host "[wootc] New BCD entry GUID: $newGuid"
-
-    # Persist the GUID so the E2E runner can re-arm the one-shot for Phase 2.
-    Set-Content -Force -Path "$installDir\bcd-guid.txt" -Value $newGuid -Encoding ASCII
-
-    # Point to the shim (Microsoft-signed, Fedora build). Shim verifies
-    # grubx64.efi (Fedora-signed), which loads grub.cfg from EFI/fedora/.
-    & bcdedit /set $newGuid path "\EFI\fedora\shimx64.efi"
-    Write-Host "[wootc] BCD path set to \EFI\fedora\shimx64.efi"
-
-    # One-time boot: boot the deployer on the very next restart only.
-    & bcdedit /set "{fwbootmgr}" bootsequence $newGuid /addfirst
-    Write-Host "[wootc] Set one-time bootsequence to $newGuid"
-
-    Write-Host "[wootc] BCD configured successfully."
 } else {
-    Write-Host "[wootc] ERROR: Could not parse GUID from bcdedit output:"
-    Write-Host $bcdCreateOutput
+    throw "Could not parse GUID from bcdedit /copy output: $bcdCreateOutput"
 }
+Write-Host "[wootc] New BCD entry GUID: $newGuid"
+
+# Persist the GUID so the E2E runner can re-arm the one-shot for Phase 2.
+Set-Content -Force -Path "$installDir\bcd-guid.txt" -Value $newGuid -Encoding ASCII
+
+# Point to the shim (Microsoft-signed, Fedora build). Shim verifies
+# grubx64.efi (Fedora-signed), which loads grub.cfg from EFI/fedora/.
+$setPathOutput = & bcdedit /set $newGuid path "\EFI\fedora\shimx64.efi" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "bcdedit /set path exited with code $LASTEXITCODE: $setPathOutput"
+}
+Write-Host "[wootc] BCD path set to \EFI\fedora\shimx64.efi"
+
+# One-time boot: boot the deployer on the very next restart only.
+$setBootSeqOutput = & bcdedit /set "{fwbootmgr}" bootsequence $newGuid /addfirst 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "bcdedit /set bootsequence exited with code $LASTEXITCODE: $setBootSeqOutput"
+}
+Write-Host "[wootc] Set one-time bootsequence to $newGuid"
+
+# ── Observable verification (#50): prove the BCD state is correct ──────
+# Query the new entry and {fwbootmgr} to confirm the EFI path and that
+# bootsequence contains the new GUID.
+$verifyGuidOut = & bcdedit /enum $newGuid 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "bcdedit /enum $newGuid exited with code $LASTEXITCODE: $verifyGuidOut"
+}
+if ($verifyGuidOut -notmatch 'path.*shimx64\.efi') {
+    throw "Verification failed: new BCD entry does not point to shimx64.efi`n$verifyGuidOut"
+}
+Write-Host "[wootc] Verified: BCD entry path points to shimx64.efi"
+
+$verifyFwbmOut = & bcdedit /enum "{fwbootmgr}" 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "bcdedit /enum {fwbootmgr} exited with code $LASTEXITCODE: $verifyFwbmOut"
+}
+if ($verifyFwbmOut -notmatch [regex]::Escape($newGuid)) {
+    throw "Verification failed: {fwbootmgr} bootsequence does not contain $newGuid`n$verifyFwbmOut"
+}
+Write-Host "[wootc] Verified: {fwbootmgr} bootsequence contains $newGuid"
+
+Write-Host "[wootc] BCD configured and verified successfully."
 
 # ── Step 9: Disable Windows Fast Startup ────────────────────────────────────
 Write-Host "[wootc] Disabling Fast Startup..."
