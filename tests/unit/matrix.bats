@@ -49,10 +49,12 @@ setup() {
 }
 
 @test "phase3=on translates to --phase3 on the remote invocation" {
-    grep -q 'phase3=on\*) EXTRA_ARGS="--phase3"' "$RUNNER"
-    # --instance= joined the invocation with per-host slots; EXTRA_ARGS must
-    # still be expanded ON THE REMOTE (escaped \$) and not by the local shell.
-    grep -q 'run-e2e.sh "\$image" --keep --instance=\$inst \\\$EXTRA_ARGS' "$RUNNER"
+    # The remote invocation passes --phase3 via a case subshell inside the
+    # systemd-run command line (replaces the old nohup + EXTRA_ARGS pattern).
+    grep -q 'phase3=on\*) echo .--phase3.' "$RUNNER"
+    # The run-e2e.sh call must still expand per-case variables ON THE REMOTE
+    # (escaped \$) and not by the local shell.
+    grep -q 'run-e2e.sh "\$image" --keep --instance=\$inst' "$RUNNER"
 }
 
 @test "himachal has a hard ceiling of one concurrent VM" {
@@ -96,6 +98,26 @@ setup() {
     snap_line=$(grep -n 'exec bash "\$_snap"' "$RUNNER" | head -1 | cut -d: -f1)
     here_line=$(grep -n '^HERE=' "$RUNNER" | head -1 | cut -d: -f1)
     [ "$snap_line" -lt "$here_line" ]
+}
+
+@test "remote cases are launched as systemd user units, not nohup" {
+    # AGENTS.md:202-218: manual launches must be systemd-run --user with
+    # XDG_RUNTIME_DIR and HOME set, or rootless podman resolves root paths.
+    # docs/agent-lessons.md:126-131: runs died after disconnect without this.
+    # nohup proves only that the shell started; a systemd unit survives.
+    grep -q 'systemd-run --user' "$RUNNER"
+    # The old nohup pattern must not be present.
+    run grep -c 'nohup bash run-e2e.sh' "$RUNNER"
+    [ "$output" -eq 0 ]
+    # Unit state is verified after launch.
+    grep -q 'systemctl --user is-active' "$RUNNER"
+}
+
+@test "the poll reads systemd unit terminal state on abnormal death" {
+    # A unit that dies without stage=exited (OOM, sigkill) must be detected
+    # via systemctl show and its exit cause recorded.
+    grep -q 'systemctl --user show.*-p Result -p ExecMainStatus' "$RUNNER"
+    grep -q 'DEAD:' "$RUNNER"
 }
 
 @test "--grep is a regex so an iteration loop can name distinct code paths" {

@@ -70,9 +70,10 @@ run_fast() {
             echo "   (created placeholder app/frontend/dist for the go:embed)"
         fi
         # app/: only the non-windows-tagged code compiles here (status mutex,
-        # embedded catalog). fisherman TUI is fully cross-platform.
+        # embedded catalog). fisherman TUI and core are fully cross-platform.
         ( cd app && go test ./... ) || rc=1
         ( cd fisherman/tui && go test ./... ) || rc=1
+        ( cd fisherman/fisherman && go test ./... ) || rc=1
     else
         echo "!! go not installed — skipping Go tests" >&2
     fi
