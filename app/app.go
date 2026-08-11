@@ -641,7 +641,7 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			}
 			return nil
 		}},
-		{"Collecting installed programs", 88, func() error {
+		{"Collecting installed programs", 82, func() error {
 			// Registry-based program inventory (§4.3): enumerate HKLM/HKCU
 			// uninstall keys before Windows goes away, so the migration
 			// dashboard can show the complete picture — not just apps with
@@ -651,7 +651,17 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			}
 			return nil
 		}},
-		{"Collecting your look", 90, func() error {
+		{"Detecting cloud drives", 88, func() error {
+			// Cloud-storage detection (#66): OneDrive, Google Drive and
+			// Dropbox. Google Drive lives at a virtual drive letter (G:)
+			// produced by DriveFS at runtime — from Linux, reading the
+			// physical disk, it does not exist. The manifest tells the
+			// Phase-2 bridge which rclone remotes to provision.
+			// Best-effort: never fail install.
+			recordCloudDrives()
+			return nil
+		}},
+		{"Collecting your look", 92, func() error {
 			// Windows-Style Mode is opt-in (SPEC §4.4). When the user does not
 			// tick it, we collect nothing and the deployed system keeps the
 			// image maker's desktop defaults — no slurp data means apply-look
@@ -670,7 +680,7 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			}
 			return nil
 		}},
-		{"Finalizing", 95, func() error {
+		{"Finalizing", 96, func() error {
 			// Small deliberate pause so the user sees "done"
 			time.Sleep(500 * time.Millisecond)
 			return nil
