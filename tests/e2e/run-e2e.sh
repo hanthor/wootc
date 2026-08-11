@@ -2535,9 +2535,21 @@ if ($left.Count -ne 1) { Write-Output ("SINGLE-INSTANCE-UNPROVEN: " + $left.Coun
     # when reads come back empty, probe QGA liveness and say which one broke.
     local drive_deadline drive_state="" driven=false
     local last_good="" last_screen="" empty_reads=0 total_empty=0 blocked_reads=0
+    local dead_app_checks=0
+    local WOOTC_DRIVE_APP_DEAD_THRESHOLD="${WOOTC_DRIVE_APP_DEAD_THRESHOLD:-12}"
     drive_deadline=$(deadline_in 1800)
     while ! past_deadline "$drive_deadline"; do
-        drive_state=$(qga_read 'C:\wootc\e2e-drive-state.json' 2>/dev/null || true)
+        # Retry a single transient QGA read failure: a hosted runner's container
+        # can briefly stall under I/O contention, and one empty read would then
+        # discard the app's real output (see #71, Mode B — the channel was
+        # alive but reads came back empty, and the loop treated each as proof
+        # the app had died, never recovering when reads resumed).
+        drive_state=""
+        for _try in 1 2 3; do
+            drive_state=$(qga_read 'C:\wootc\e2e-drive-state.json' 2>/dev/null || true)
+            [ -n "$drive_state" ] && break
+            sleep 2
+        done
 
         if [ -z "$drive_state" ]; then
             empty_reads=$((empty_reads + 1))
@@ -2553,6 +2565,28 @@ if ($left.Count -ne 1) { Write-Output ("SINGLE-INSTANCE-UNPROVEN: " + $left.Coun
             if [ "$empty_reads" -eq 3 ]; then
                 if qga_probe; then
                     warn "  drive state unreadable but QGA answers ping — the app stopped writing e2e-drive-state.json"
+                    # If the app WAS writing state (last_good is non-empty) and
+                    # then stopped, it has CRASHED. Do not burn the remaining
+                    # 30 minutes waiting for a dead process. Check whether
+                    # wootc.exe is still alive to confirm, then fail fast.
+                    if [ -n "$last_good" ]; then
+                        dead_app_checks=$((dead_app_checks + 1))
+                        local wootc_alive
+                        wootc_alive=$(qga_powershell 'if (Get-Process wootc -ErrorAction SilentlyContinue) { "alive" } else { "dead" }' 2>/dev/null | tr -d '\r\n' || echo "unknown")
+                        info "  app-crash check #${dead_app_checks}: wootc.exe process is '${wootc_alive}'"
+                        if [ "$dead_app_checks" -ge "$WOOTC_DRIVE_APP_DEAD_THRESHOLD" ]; then
+                            fail "wootc.exe GUI has STOPPED responding — the drive state was being written but is now unreadable for ${dead_app_checks} consecutive samples (~$((dead_app_checks * 12))s)"
+                            if [ "$wootc_alive" = "dead" ]; then
+                                fail "  wootc.exe process is DEAD — the app crashed mid-install"
+                            else
+                                fail "  wootc.exe process is still running but stopped writing e2e-drive-state.json"
+                                fail "  the app may be hung on a blocking operation or its JS bridge has disconnected"
+                            fi
+                            fail "  last screen reached: ${last_screen:-<none>}"
+                            capture_vm_diagnostics
+                            exit 1
+                        fi
+                    fi
                 else
                     warn "  drive state unreadable AND QGA does not answer ping — lost the channel to the guest"
                 fi
@@ -2561,6 +2595,7 @@ if ($left.Count -ne 1) { Write-Output ("SINGLE-INSTANCE-UNPROVEN: " + $left.Coun
             continue
         fi
         empty_reads=0
+        dead_app_checks=0
         last_good="$drive_state"
 
         # Narrate progress: a 30-minute silent wait that ends in one verdict is
@@ -2663,6 +2698,49 @@ if (Test-Path $cfg) { Write-Output "grub.cfg first line:"; Write-Output ("  " + 
 {"action":"reboot"}
 "@ | Set-Content -Path C:\wootc\e2e-drive.json -Encoding ascii' >/dev/null
     pass "Reboot directive issued — deployer takes over"
+
+    # Verify the reboot ACTUALLY took effect before handing control to the
+    # deployer monitor. On a hosted runner the app's reboot handler can stall
+    # (e.g., if the WebView2 host process is wedged), leaving the VM sitting
+    # at the Windows desktop forever while Step 7 waits for a deployer that
+    # can never appear — the exact Mode-B signature (#71).
+    #
+    # Wait for Windows QGA to go DOWN, proving the guest is rebooting. If
+    # Windows keeps answering after a generous grace period, the reboot
+    # directive was consumed but did not take effect, and the deployer will
+    # never boot. Fail early with a clear signal instead of burning the
+    # 90-minute deploy budget on an impossible wait.
+    step "Waiting for Windows to reboot after GUI install..."
+    local reboot_deadline reboot_ok=false
+    reboot_deadline=$(deadline_in 180)
+    while ! past_deadline "$reboot_deadline"; do
+        if ! qga_probe; then
+            info "  Windows QGA is gone — reboot is underway"
+            reboot_ok=true
+            break
+        fi
+        if ! qga_windows_probe; then
+            info "  Windows agent no longer answers — reboot is underway"
+            reboot_ok=true
+            break
+        fi
+        sleep 10
+    done
+    if [ "$reboot_ok" = false ]; then
+        fail "Windows did NOT reboot within 3 minutes of the reboot directive"
+        fail "  The GUI app received the directive but the VM is still running Windows."
+        fail "  The deployer will never boot. Last screen reached: ${last_screen:-<none>}"
+        fail "  This is the Mode-B signature (#71): Phase 1 never handed over."
+        info "  Checking wootc.exe state for post-mortem:"
+        qga_powershell '
+$p = Get-Process wootc -ErrorAction SilentlyContinue
+Write-Output ("wootc.exe: " + $(if ($p) { "alive pid=" + $p.Id + " cpu=" + $p.CPU } else { "dead" }))
+Write-Output ("shutdown pending: " + (Get-WinEvent -LogName System -MaxEvents 20 -FilterXPath "*[System[EventID=1074 or EventID=6006 or EventID=6008]]" | Select-Object -First 3 | ForEach-Object { $_.TimeCreated.ToString("HH:mm:ss") + " " + $_.Message }) -join " | ")
+' 2>&1 | sed 's/^/    /' || true
+        capture_vm_diagnostics
+        exit 1
+    fi
+    pass "Windows reboot confirmed — deployer handover in progress"
 }
 
 if [ "$GUI_INSTALL" = true ]; then
@@ -2809,12 +2887,30 @@ PTY="$STORAGE_DIR/qemu.pty"
 # runs on --skip-install, so the common path was unprotected.
 rm -f "$PTY"
 
-for i in $(seq 1 30); do
+# In the GUI path the reboot was already confirmed (Windows QGA went down),
+# so the deployer is booting NOW. Poll faster — a 150s wait here when the
+# deployer kernel has already written [wootc] markers is pure dead time.
+_serial_poll_s="${WOOTC_E2E_SERIAL_POLL_S:-5}"
+_serial_poll_max=30
+if [ "$GUI_INSTALL" = true ]; then
+    _serial_poll_s=2
+    _serial_poll_max=40
+fi
+for i in $(seq 1 $_serial_poll_max); do
     snapshot_serial && [ -f "$PTY" ] && break
-    sleep 5
+    sleep "$_serial_poll_s"
 done
 
-[ -f "$PTY" ] || { fail "QEMU PTY not found at $PTY (no serial feed from $CONTAINER_NAME:$SERIAL_SOURCE)"; exit 1; }
+if [ ! -f "$PTY" ]; then
+    if [ "$GUI_INSTALL" = true ]; then
+        # The GUI reboot was confirmed but serial never appeared — the
+        # deployer kernel may have panicked before reaching userspace.
+        warn "  serial PTY not found after GUI reboot — checking container state"
+        $DOCKER inspect "$CONTAINER_NAME" --format '{{.State.Status}} {{.State.StartedAt}}' 2>/dev/null | sed 's/^/  container: /' || true
+    fi
+    fail "QEMU PTY not found at $PTY (no serial feed from $CONTAINER_NAME:$SERIAL_SOURCE)"
+    exit 1
+fi
 LAST_BYTE=$(stat -c%s "$PTY" 2>/dev/null || echo 0)
 DEPLOYER_STARTED=false
 if [ -f "$PTY" ] && grep -q '\[wootc\]' "$PTY" 2>/dev/null; then
@@ -2967,6 +3063,45 @@ while ! past_deadline "$DEPLOY_DEADLINE"; do
     if [ "$NOW_MIN" -gt "$LAST_PROGRESS_MIN" ]; then
         LAST_PROGRESS_MIN=$NOW_MIN
         info "Deploying... (${NOW_MIN}m of $((TIMEOUT/60))m)"
+
+        # ── deployer-startup guard ──────────────────────────────────────
+        # In the GUI path the reboot was confirmed — if the deployer still
+        # has not appeared after 10 minutes, the boot is not merely slow:
+        # the BCD one-shot was consumed, the deployer kernel started, but
+        # either it panicked or the serial feed was lost. Waiting the full
+        # 90 minutes burns the runner for no gain (#71, Mode B).
+        if [ "$GUI_INSTALL" = true ] && [ "$DEPLOYER_STARTED" = false ] && [ "$NOW_MIN" -ge 10 ]; then
+            fail "Deployer did NOT start within 10 minutes of a confirmed GUI reboot"
+            fail "  Windows was observed rebooting, so the BCD one-shot should have fired."
+            fail "  The deployer kernel either panicked before writing [wootc], or the"
+            fail "  serial feed disconnected during the handover."
+            info "  Last 20 lines of serial (may show a kernel panic or firmware messages):"
+            tail -c 4000 "$PTY" 2>/dev/null | tr -d '\000' | tail -20 | sed 's/^/    /' || true
+            capture_vm_diagnostics
+            exit 1
+        fi
+
+        # ── mid-run disk check ──────────────────────────────────────────
+        # The preflight measures disk at t=0. A qcow2 can grow 20+ GiB
+        # during the deploy; checking only once is a bet that nothing will
+        # change. On a hosted runner with tight budgets (#71), running out
+        # of space mid-deploy silently starves the VM's I/O and the harness
+        # reports a generic timeout — indistinguishable from a real hang.
+        # Check every progress minute and fail fast with the actual free
+        # number so the next run can set WOOTC_E2E_MIN_FREE_GIB.
+        _mid_disk_kib=$(df -Pk "$STORAGE_DIR" | awk 'NR == 2 { print $4 }')
+        _mid_free_gib=$(( _mid_disk_kib / 1024 / 1024 ))
+        if [ "$_mid_free_gib" -lt 3 ]; then
+            fail "Runner disk is FULL: only ${_mid_free_gib} GiB free under $STORAGE_DIR"
+            fail "  The qcow2 expanded past the host budget mid-deploy; the VM's I/O is starved."
+            fail "  This is a provisioning error, not a product failure — raise WOOTC_E2E_MIN_FREE_GIB"
+            fail "  or reduce WOOTC_E2E_KEEP_RUNS so old artifacts are pruned sooner."
+            capture_vm_diagnostics
+            exit 1
+        fi
+        if [ "$_mid_free_gib" -lt 10 ]; then
+            warn "  disk is tight: ${_mid_free_gib} GiB free — if the qcow2 expands further the deploy may stall"
+        fi
 
         # Distinguish "working quietly" from "wedged".
         #
