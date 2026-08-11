@@ -35,16 +35,13 @@ say() {
     echo "<27>wootc: $*" > /dev/kmsg 2>/dev/null || true
 }
 
-# Every early return below is a distinct diagnosis. Previously they were all
-# silent `return 0`, which made "hook absent", "hook exited early" and "hook ran
-# but its output was filtered" indistinguishable from the serial log — each
-# costing a full VM run to tell apart. Announce entry and every exit reason.
 say "attach-loop hook entered (initqueue)"
 
 [ -e /run/wootc-loop-attached ] && exit 0
 
 LOOP_PATH=$(getarg loop= 2>/dev/null || true)
 HOST_UUID=$(getarg wootc.host_uuid= 2>/dev/null || true)
+ROOT_SPEC=$(getarg root= 2>/dev/null || true)
 
 # Fallback directly to /proc/cmdline if getarg failed
 if [ -z "$LOOP_PATH" ] && [ -f /proc/cmdline ]; then
@@ -53,10 +50,29 @@ fi
 if [ -z "$HOST_UUID" ] && [ -f /proc/cmdline ]; then
     HOST_UUID=$(sed -n 's/.*wootc\.host_uuid=\([^ ]*\).*/\1/p' /proc/cmdline)
 fi
+if [ -z "$ROOT_SPEC" ] && [ -f /proc/cmdline ]; then
+    ROOT_SPEC=$(sed -n 's/.*root=\([^ ]*\).*/\1/p' /proc/cmdline)
+fi
 
+# Extract the requested root UUID from root=UUID=<uuid> or root=PARTUUID=<uuid>.
+# This is the observable that Phase-2 depends on: sysroot.mount waits for
+# dev-disk-by-uuid-<uuid>.device, which udev creates only when the loop
+# partition with that UUID appears. Success is NOT losetup returning; it is
+# THAT device unit activating. We check the UUID existence before declaring
+# the attach complete.
+ROOT_UUID=""
+if [[ "$ROOT_SPEC" =~ ^UUID=([a-fA-F0-9-]+)$ ]]; then
+    ROOT_UUID="${BASH_REMATCH[1],,}"
+elif [[ "$ROOT_SPEC" =~ ^PARTUUID=([a-fA-F0-9-]+)$ ]]; then
+    ROOT_UUID="${BASH_REMATCH[1],,}"
+fi
+
+# Permanent failures: this is a oneshot service — no initqueue retries.
+# Missing kernel args means the BLS entry is malformed; we will never succeed.
+# Exit non-zero so systemd records the service as failed.
 if [ -z "$LOOP_PATH" ] || [ -z "$HOST_UUID" ]; then
     say "EXIT: missing kernel args (loop='${LOOP_PATH}' wootc.host_uuid='${HOST_UUID}') — the BLS entry/grub.cfg did not carry them"
-    exit 0
+    exit 1
 fi
 
 # NOTE: Do NOT call modprobe for storage drivers here. The OSTree-built base
@@ -126,7 +142,7 @@ if [ ! -b "$HOST_DEV" ]; then
     present_devs="$*"
     shopt -u nullglob
     say "EXIT: host NTFS $HOST_DEV (raw UUID $HOST_UUID) never appeared after ${_waited:-0}s (wall). Present devices: ${present_devs:-none}"
-    exit 0
+    exit 1
 fi
 say "host NTFS $HOST_DEV present after ${_waited:-0}s"
 
@@ -168,7 +184,7 @@ mount_host() {
 if ! mountpoint -q "$HOST_MNT"; then
     if ! mount_host; then
         say "EXIT: cannot mount host NTFS rw (no ntfs3, no ntfs-3g). Dirty volume? Boot Windows once and full-shutdown; and ensure the image has an NTFS driver. /proc/filesystems ntfs3=$(grep -cw ntfs3 /proc/filesystems 2>/dev/null) ntfs-3g=$(command -v ntfs-3g >/dev/null 2>&1 && echo yes || echo no)"
-        exit 0
+        exit 1
     fi
 fi
 say "host NTFS mounted via ${NTFS_DRIVER:-unknown}"
@@ -176,7 +192,7 @@ say "host NTFS mounted via ${NTFS_DRIVER:-unknown}"
 FULL_LOOP_PATH="$HOST_MNT/${LOOP_PATH#/}"
 if [ ! -f "$FULL_LOOP_PATH" ]; then
     say "EXIT: root.disk not found at $FULL_LOOP_PATH (host NTFS mounted OK, so the path or the deploy is wrong)"
-    exit 0
+    exit 1
 fi
 
 # losetup, not qemu-nbd. root.disk is a raw image, so the kernel loop driver
@@ -190,7 +206,7 @@ fi
 LOOP_DEV=$(losetup --find --show --partscan "$FULL_LOOP_PATH" 2>/dev/null)
 if [ -z "$LOOP_DEV" ]; then
     say "EXIT: losetup failed to attach $FULL_LOOP_PATH (loop module loaded=$(grep -cw loop /proc/modules 2>/dev/null), losetup=$(command -v losetup >/dev/null 2>&1 && echo yes || echo no))"
-    exit 0
+    exit 1
 fi
 blockdev --setra 2048 "$LOOP_DEV" 2>/dev/null
 
@@ -244,11 +260,33 @@ if blkid "${LOOP_DEV}"p* 2>/dev/null | grep -q 'TYPE="btrfs"'; then
     done
 fi
 
-: > /run/wootc-loop-attached
 say "attached raw root.disk $FULL_LOOP_PATH as $LOOP_DEV"
 # The whole point of the attach: the root partition's UUID must now appear to
 # udev, or sysroot.mount still fails and we land in the emergency shell with the
 # attach looking successful. Report what actually showed up.
 say "post-attach partitions: $(ls ${LOOP_DEV}p* 2>/dev/null | tr '\n' ' ')"
 say "post-attach by-uuid: $(ls /dev/disk/by-uuid/ 2>/dev/null | tr '\n' ' ')"
-exit 0
+
+# Verify the requested root UUID exists BEFORE declaring success.
+# /run/wootc-loop-attached + exit 0 tell systemd this oneshot succeeded;
+# RemainAfterExit=yes means it stays "active" — and a "successful" attach
+# with no root device is the exact silent wedge: sysroot.mount waits forever
+# and the only clue is a later emergency-shell timeout.
+if [ -n "$ROOT_UUID" ]; then
+    ROOT_BY_UUID="/dev/disk/by-uuid/$ROOT_UUID"
+    if [ -b "$ROOT_BY_UUID" ]; then
+        say "requested root UUID $ROOT_UUID confirmed present at $ROOT_BY_UUID"
+        : > /run/wootc-loop-attached
+        exit 0
+    else
+        say "EXIT: requested root UUID $ROOT_UUID NOT found in /dev/disk/by-uuid after attach — loop attached but no root device for sysroot.mount"
+        exit 1
+    fi
+else
+    # No root=UUID on cmdline — the attach itself is fine, but Phase 2 can't
+    # mount sysroot without knowing which partition. Still declare success
+    # (the loop IS attached) and let the emergency shell surface it.
+    say "WARNING: no root=UUID on kernel cmdline; loop attached but sysroot.mount has no target"
+    : > /run/wootc-loop-attached
+    exit 0
+fi

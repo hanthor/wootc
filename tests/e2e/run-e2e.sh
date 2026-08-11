@@ -433,7 +433,7 @@ capture_vm_diagnostics() {
     $DOCKER cp "$CONTAINER_NAME:$SERIAL_SOURCE" "$ARTIFACT_DIR/qemu.pty" >/dev/null 2>&1 || true
     if qga_probe; then
         info "QGA guest-info:"
-        qga_call info | tee "$ARTIFACT_DIR/qga-info.json" || true
+        qga_call_retry info | tee "$ARTIFACT_DIR/qga-info.json" || true
         # Save the full markers to artifacts AND echo them inline: on a hosted
         # runner the 4+ GiB evidence bundle is impractical to pull, so a setup
         # failure that only lives in the artifact file is effectively invisible.
@@ -448,7 +448,7 @@ capture_vm_diagnostics() {
         sed 's/^/  ! /' "$ARTIFACT_DIR/oem-setup-failed.txt" 2>/dev/null || true
         # Cached value only — never probe from the diagnostics path. This runs
         # on the failure path, often with QGA already dead, and a probe there
-        # would burn qga_call's full retry budget (3 x 60s) twice before
+        # would burn qga_call_retry's full retry budget (3 x 60s) twice before
         # falling back to the same C: it starts with.
         qga_read "${WOOTC_GUEST_ROOT:-C:}\wootc\logs\deployer.log" > "$ARTIFACT_DIR/deployer.log" 2>&1 || true
         qga_read "${WOOTC_GUEST_ROOT:-C:}\wootc\logs\live-journal.log" > "$ARTIFACT_DIR/deployer-live-journal.log" 2>&1 || true
@@ -529,27 +529,53 @@ $COMPOSE -f "$SCRIPT_DIR/compose.yml" config > "$ARTIFACT_DIR/compose-rendered.y
 # progress line frozen at "Waiting for QGA (5m of 45m)" while pgrep showed the
 # script running. A wall-clock deadline cannot help a loop that never iterates,
 # so the bound has to be here, on the blocking call itself.
+
+# qga_call — single attempt, no automatic retry. Use for side-effecting
+# commands (powershell, write, freeze) where a timeout (124) or guest exit
+# code must never replay the operation. Idempotent probes/reads should use
+# qga_call_retry instead (#40).
 qga_call() {
     local timeout_s="${WOOTC_QGA_CALL_TIMEOUT:-60}"
-    local tries=3
+    local rc=0
+    # `else rc=$?` is load-bearing (#39). Assigning rc AFTER the `fi`
+    # captures the exit status of the IF STATEMENT, not of the command —
+    # and an `if` whose condition failed with no else branch is itself
+    # status 0. So the old form returned SUCCESS once every retry had
+    # failed:
+    #     f(){ for i in 1 2; do if false; then return 0; fi; rc=$?; done; return $rc; }
+    #     f; echo $?   # -> 0
+    # That made qga_probe/qga_wait able to print "[PASS] QGA available"
+    # with no agent answering, and let failed PowerShell/file-write/exec
+    # requests look successful — the project's dominant failure class,
+    # status taken from a proxy instead of the real observable.
+    if timeout "$timeout_s" $DOCKER exec "$CONTAINER_NAME" python3 /tmp/qga.py "$@"; then
+        return 0
+    else
+        rc=$?
+    fi
+    return $rc
+}
+
+# qga_call_retry — idempotent operations only (ping, info, read, thaw).
+# Retries on transport errors (exit 42 from qga.py) and timeouts (124),
+# but NEVER replays a returned guest exit code (#40).
+WOOTC_QGA_TRANSPORT_EXIT=42
+qga_call_retry() {
+    local timeout_s="${WOOTC_QGA_CALL_TIMEOUT:-60}"
+    local tries=3 rc=0 try
     if [ "$timeout_s" -le 5 ]; then tries=1; fi
-    local rc=0 try
     for try in $(seq 1 $tries); do
-        # `else rc=$?` is load-bearing (#39). Assigning rc AFTER the `fi`
-        # captures the exit status of the IF STATEMENT, not of the command —
-        # and an `if` whose condition failed with no else branch is itself
-        # status 0. So the old form returned SUCCESS once every retry had
-        # failed:
-        #     f(){ for i in 1 2; do if false; then return 0; fi; rc=$?; done; return $rc; }
-        #     f; echo $?   # -> 0
-        # That made qga_probe/qga_wait able to print "[PASS] QGA available"
-        # with no agent answering, and let failed PowerShell/file-write/exec
-        # requests look successful — the project's dominant failure class,
-        # status taken from a proxy instead of the real observable.
         if timeout "$timeout_s" $DOCKER exec "$CONTAINER_NAME" python3 /tmp/qga.py "$@"; then
             return 0
         else
             rc=$?
+        fi
+        # Only retry transport errors (QGA never received the request) and
+        # timeouts (ambiguous). Never retry a guest exit code — doing so
+        # would replay side-effecting commands like shutdown, reboot, or
+        # BCD mutation (#40).
+        if [ "$rc" -ne "$WOOTC_QGA_TRANSPORT_EXIT" ] && [ "$rc" -ne 124 ]; then
+            return $rc
         fi
         sleep 1
     done
@@ -557,7 +583,7 @@ qga_call() {
 }
 
 qga_probe() {
-    WOOTC_QGA_CALL_TIMEOUT=5 qga_call ping >/dev/null 2>&1 || return 1
+    WOOTC_QGA_CALL_TIMEOUT=5 qga_call_retry ping >/dev/null 2>&1 || return 1
 }
 
 qga_wait() {
@@ -710,7 +736,7 @@ qga_powershell() {
 }
 
 qga_read() {
-    qga_call read "$1" || return $?
+    qga_call_retry read "$1" || return $?
 }
 
 # Which drive holds the guest's \wootc tree. NOT always C:.
@@ -2096,7 +2122,7 @@ fi
 
 qga_is_deployer() {
     local res
-    res=$(qga_call exec /bin/sh -c 'test -f /usr/bin/wootc-deploy && echo YES' 2>/dev/null | tr -d '\r\n' || true)
+    res=$(qga_call_retry exec /bin/sh -c 'test -f /usr/bin/wootc-deploy && echo YES' 2>/dev/null | tr -d '\r\n' || true)
     [[ "$res" =~ YES ]]
 }
 
@@ -2124,7 +2150,7 @@ fi
 heal_image_name_from_downloaded_iso
 
 qga_wait_windows "${WOOTC_E2E_WINDOWS_QGA_TIMEOUT:-2700}"
-qga_call info || true
+qga_call_retry info || true
 
 # Preflight: inspect Windows C: filesystem dirty status via QGA
 DIRTY_CHECK=$(qga_powershell 'fsutil dirty query C:' 2>/dev/null | tr -d '\r\n' || true)
@@ -3419,10 +3445,9 @@ fi
 # ── Step 10: boot the result, not merely its installer ─────────────────────
 if [ "${RUN_PHASE3:-false}" = true ]; then
     step "Rebooting Phase 2 into the one-shot Phase 3 native install..."
-    # NEVER send this reboot through QGA. qga_call retries on timeout, and any
-    # attempt the dying Phase 2 fails to consume stays queued in the
-    # virtio-serial channel until the next guest agent opens it — which is the
-    # freshly booted NATIVE system. Run 20260723T0423: the native install came
+    # NEVER send this reboot through QGA. Any attempt the dying Phase 2
+    # fails to consume stays queued in the virtio-serial channel until the
+    # next guest agent opens it — which is the freshly booted NATIVE system. Run 20260723T0423: the native install came
     # up in 17s with guest-exec enabled, and its first act was executing the
     # stale "systemctl reboot" (native journal, qemu-ga pid 1100); BootNext
     # was already consumed, so the VM fell back to Windows and the run
@@ -3491,14 +3516,13 @@ else
     # monitor write drains the HMP banner first (record-video.sh's proven
     # pattern) rather than a blind sendall.
     #
-    # BOUND THE REQUEST. qga_call polls guest-exec-status until the process
-    # exits, then retries the whole call three times on timeout — up to ~3
-    # minutes against a guest that is busy dying. Run 30710282779 spent 110
+    # BOUND THE REQUEST. qga.py's exec() polls guest-exec-status until the
+    # process exits. Run 30710282779 spent 110
     # blind seconds right here: Phase 2 took the request and was through
     # "reboot: machine restart" two seconds later (serial, t=75.97), Windows
     # came back, and the observation below opened its eyes on the WINDOWS
-    # agent. A timeout of 5s or less collapses qga_call's retry budget to a
-    # single try, and guest-exec spawns asynchronously, so the request lands
+    # agent. A timeout of 5s or less keeps the request to a single attempt,
+    # and guest-exec spawns asynchronously, so the request lands
     # whether or not we linger for an exit status we never read.
     WOOTC_QGA_CALL_TIMEOUT=5 qga_call exec /bin/sh -c 'systemctl reboot || systemctl reboot -ff' 2>/dev/null || true
     # "An agent answers" is NOT "Phase 2 is still up" — guest-ping answers for

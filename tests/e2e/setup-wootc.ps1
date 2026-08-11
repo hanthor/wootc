@@ -474,9 +474,18 @@ $grubCfgLines = @(
     '}'
 )
 $grubVendorDirs = @("$espPath\EFI\fedora", "$espPath\EFI\redhat", "$espPath\EFI\wootc")
+# D1/D1c guard (#52): refuse to overwrite a grub.cfg that belongs to another
+# OS. Only proceed if the file is absent or already wootc-owned (reinstall).
 foreach ($gd in $grubVendorDirs) {
+    $grubCfgPath = "$gd\grub.cfg"
+    if (Test-Path $grubCfgPath) {
+        $existing = Get-Content -Raw -Path $grubCfgPath -Encoding ASCII -ErrorAction SilentlyContinue
+        if ($existing -and $existing -notmatch '# wootc') {
+            throw "This PC already has a Linux bootloader at $grubCfgPath — installing wootc would break it. Dual-boot is not supported yet"
+        }
+    }
     New-Item -ItemType Directory -Force -Path $gd | Out-Null
-    Set-Content -Force -Path "$gd\grub.cfg" -Value $grubCfgLines -Encoding ASCII
+    Set-Content -Force -Path $grubCfgPath -Value $grubCfgLines -Encoding ASCII
 }
 Write-Host "[wootc] Wrote deployer grub.cfg to ESP:EFI/{fedora,redhat,wootc}/grub.cfg"
 

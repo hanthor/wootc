@@ -35,8 +35,13 @@ KillMode=process
 # The script is re-entrant (returns 0 once /run/wootc-loop-attached exists) and
 # self-diagnosing (writes every exit reason to /dev/console and kmsg).
 ExecStart=/usr/bin/bash /usr/lib/wootc/wootc-attach-loop.sh
-# Never let a hiccup here wedge the boot; the script reports its own failures.
-TimeoutStartSec=90
+# The script's inner wall-clock budget: 60s host-NTFS discovery + 30s loop
+# partition udev settle + 15s btrfs readiness settle + ~10s mount/losetup/retriggers
+# ≈ 115s worst case. The service deadline must be STRICTLY above that with
+# headroom so systemd never SIGKILLs a healthy slow-device attach near its
+# final settle (observed: deadline expired before the script's documented path
+# completed, producing intermittent emergency boots, #47).
+TimeoutStartSec=180
 
 [Install]
 WantedBy=initrd-root-device.target
