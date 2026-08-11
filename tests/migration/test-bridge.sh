@@ -382,12 +382,13 @@ podman run --rm --privileged \
     -v "$REPO_ROOT/payload/migration:/scripts:ro,Z" \
     "$IMG" bash -c "$INNER64"
 
+# ── #62: bridge handles missing home directory gracefully ───────────────────
 # ── #66: Cloud-drive disclosure ─────────────────────────────────────────────
-# The Phase-1 installer writes cloud-drives.json; the bridge reads it and
-# states what providers were found in the journal. This proves the manifest
-# is ingested without crashing, that each provider shape parses, and that
-# the virtual-drive flag for Google Drive is surfaced.
-INNER66=$(cat <<'INNER'
+# Combined regression block: the bridge must (a) detect a matching user with
+# no home directory and continue (not silently exit 0), and (b) ingest the
+# Phase-1 cloud-drives.json manifest and surface each provider's shape —
+# including Google Drive's virtual-drive letter — in the journal.
+INNER=$(cat <<'INNER'
 set -Eeuo pipefail
 PASS=0; FAIL=0
 ok()  { echo "[PASS] $*"; PASS=$((PASS+1)); }
@@ -397,12 +398,20 @@ check(){ if eval "$1"; then ok "$2"; else bad "$2"; fi; }
 dnf install -y -q util-linux python3 >/dev/null 2>&1 || true
 cp /scripts/wootc-* /usr/local/bin/ && chmod +x /usr/local/bin/wootc-*
 
+# #62 fixture: a matching user with NO home directory at the path passwd
+# advertises (deployment bug from run 20260723T0423 where fisherman's useradd
+# put home in the wrong var/).
+useradd -M -u 1000 brokenuser
+mkdir -p /run/wootc/host/Users/brokenuser/{Documents,Pictures}
+echo "tax-return" > /run/wootc/host/Users/brokenuser/Documents/taxes.txt
+
+# #66 fixture: a normal user whose profile lives on the host, plus a
+# cloud-drives.json manifest (OneDrive real folder, Google Drive virtual G:,
+# Dropbox real folder).
 useradd -m -u 1000 alice
 mkdir -p /run/wootc/host/Users/alice/Documents
 echo "tax-return" > /run/wootc/host/Users/alice/Documents/taxes.txt
 mkdir -p /run/wootc/host/wootc
-
-# Fixture: OneDrive (real folder), Google Drive (virtual G:), Dropbox (real folder).
 cat > /run/wootc/host/wootc/cloud-drives.json <<'JSON'
 {
   "drives": [
@@ -439,6 +448,15 @@ mount --bind /run/wootc/host /run/wootc/host
 out=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
 echo "$out" | sed 's/^/    /'
 
+# ── #62 checks ──
+check 'echo "$out" | grep -q "has no home directory"' \
+    "#62: bridge detects missing home for matching user instead of exiting silently"
+check 'echo "$out" | grep -q "summary:"' \
+    "#62: bridge still produces a summary after encountering a missing home"
+check '! mountpoint -q /home/brokenuser/Documents 2>/dev/null' \
+    "#62: folders are NOT bound when the home directory does not exist"
+
+# ── #66 checks ──
 check 'echo "$out" | grep -q "cloud providers detected"' \
     "#66: cloud-drives.json is found and ingested"
 check 'echo "$out" | grep -q "onedrive.*OneDrive.*folder"' \
@@ -474,4 +492,4 @@ INNER
 
 podman run --rm --privileged \
     -v "$REPO_ROOT/payload/migration:/scripts:ro,Z" \
-    "$IMG" bash -c "$INNER66"
+    "$IMG" bash -c "$INNER"
