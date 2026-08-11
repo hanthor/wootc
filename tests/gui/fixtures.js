@@ -11,6 +11,7 @@ export const IMAGES = [
 export const SYSINFO = {
   osVersion: 'Windows 11.0.22631', freeDiskGB: 214, totalDiskGB: 512,
   bitLockerOn: false, fastStartupOn: true, isUefi: true, secureBootOn: true, secureBootKnown: true,
+  bitLockerRecoveryKeyWarning: false,
 };
 
 export const INSTALL_STEPS = [

@@ -46,6 +46,25 @@ func TestPendingRebootNamesItsSignal(t *testing.T) {
 	}
 }
 
+// BitLocker recovery-key check is honest disclosure (#63): when
+// ProtectionStatus is On the user should record their key before any
+// migration step, independent of whether we unlock C: or carve a
+// separate volume (#61). The warning must be reportable separately from
+// the on/off state so the GUI knows to show the recovery-key prompt.
+func TestBitLockerRecoveryKeyWarningIsIndependent(t *testing.T) {
+	info := SystemInfo{BitLockerOn: true, BitLockerState: "on", BitLockerRecoveryKeyWarning: true}
+	if info.BitLockerOn && !info.BitLockerRecoveryKeyWarning {
+		t.Fatal("BitLocker recovery-key warning must be reportable when BitLocker is on")
+	}
+	// "encrypting" / "decrypting" are transient states where the key is
+	// not yet established or is being removed — only "on" should trigger
+	// the recovery-key warning.
+	info2 := SystemInfo{BitLockerOn: true, BitLockerState: "encrypting", BitLockerRecoveryKeyWarning: false}
+	if info2.BitLockerRecoveryKeyWarning {
+		t.Fatal("BitLocker recovery-key warning must not fire during encryption")
+	}
+}
+
 func TestDevStubIsNeverBlocking(t *testing.T) {
 	// `wails dev` on Linux/macOS must not be gated by checks that describe a
 	// real Windows machine.
@@ -67,5 +86,8 @@ func TestDevStubIsNeverBlocking(t *testing.T) {
 	}
 	if info.RAMGB > 0 && info.RAMGB < 3.5 {
 		t.Errorf("dev stub reports %.1f GB RAM, below the gate", info.RAMGB)
+	}
+	if info.BitLockerRecoveryKeyWarning {
+		t.Error("dev stub must not trigger the BitLocker recovery-key warning")
 	}
 }

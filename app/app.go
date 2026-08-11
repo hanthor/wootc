@@ -130,6 +130,10 @@ type SystemInfo struct {
 	// DataPartitions lists unencrypted fixed volumes (other than C:) that
 	// could hold root.disk when C: is BitLocker-protected.
 	DataPartitions []DataPartition `json:"dataPartitions"`
+	// BitLockerRecoveryKeyWarning is true when BitLocker ProtectionStatus is
+	// On and the user should record their recovery key before proceeding (#63).
+	// This is honest disclosure, independent of whether we unlock C: (#61).
+	BitLockerRecoveryKeyWarning bool `json:"bitLockerRecoveryKeyWarning"`
 }
 
 // DataPartition is a candidate unencrypted volume for root.disk.
