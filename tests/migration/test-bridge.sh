@@ -479,6 +479,7 @@ check 'echo "$out2" | grep -q "summary:"' \
     "#66: empty cloud-drives does not abort the bridge"
 
 # A missing manifest must not crash or log a cloud-drive section.
+rm -f /run/wootc/host/wootc/cloud-drives.json   # out3 must run with NO manifest
 out3=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
 check '! echo "$out3" | grep -q "cloud providers"' \
     "#66: no manifest at all is cleanly silent (not an error)"
