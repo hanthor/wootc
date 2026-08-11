@@ -135,6 +135,21 @@ func convertCategory(id string, progress func(MigrationProgress)) error {
 		return fmt.Errorf("category %q cannot be converted this way", id)
 	}
 
+	// Pre-flight: refuse to convert a category that has already been
+	// migrated to native storage, or one whose source is not present.
+	// This catches the name-mismatch #73 case where the constructed
+	// path doesn't exist but the bind mount does (wootc-convert-dir
+	// handles that fallback internally; this is the fast fail).
+	stateDir := filepath.Join(u.HomeDir, ".config", "wootc")
+	if fileExists(filepath.Join(stateDir, "converted-"+id)) {
+		return fmt.Errorf("%s has already been converted to native storage", id)
+	}
+	src := filepath.Join("/run/wootc/host/Users", u.Username, id)
+	dst := filepath.Join(u.HomeDir, id)
+	if !dirExists(src) && !isMounted(dst) {
+		return fmt.Errorf("%s source not found — nothing to convert", id)
+	}
+
 	// pkexec prompts the desktop user for authorization; the helper emits
 	// "PROGRESS <n>" lines we forward to the UI.
 	cmd := exec.Command("pkexec", "/var/usrlocal/bin/wootc-convert-dir", u.Username, id)
