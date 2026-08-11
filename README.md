@@ -273,3 +273,4 @@ are **GPL-2.0**; the deployer initramfs and GRUB configuration are **MIT**.
 fisherman, bootc, bootupd, podman, and skopeo are separate binaries under their
 own (Apache-2.0) licenses, invoked over a process boundary. See
 [docs/SPEC.md](docs/SPEC.md#7-license) for details.
+# test
