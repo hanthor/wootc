@@ -198,6 +198,119 @@ if [[ -d "$OBS" ]]; then
     add obs com.obsproject.Studio portable true "Scenes and profiles moved."
 fi
 
+# ── Registry union (SPEC §4.3) ─────────────────────────────────────────────
+# wootc.exe (Phase 1) writes C:\wootc\install\programs.json from the
+# Windows uninstall registry keys. Merge it here so the dashboard reflects
+# the complete installed-program inventory, not just what happens to have
+# an AppData footprint. Registry-discovered apps get "signin" portability:
+# they exist on the machine and get a Flatpak, but we make no claim about
+# portable data unless the AppData scan already handled them.
+
+# nameFromRegistry maps a registry DisplayName to our app key. The
+# matching is case-insensitive substring: the DisplayName is lowercased
+# and we search for the substring. The table is wootc's own, grown against
+# the field (public Flathub IDs), not lifted from any AGPL code.
+declare -A DISPLAYNAME_TO_APP=(
+    # Browsers
+    ["mozilla firefox"]="firefox|org.mozilla.firefox|signin|true|Installed on Windows. Your full Firefox profile moved if it was in the expected location."
+    ["firefox"]="firefox|org.mozilla.firefox|signin|true|Installed on Windows. Your full Firefox profile moved if it was in the expected location."
+    ["google chrome"]="chrome|com.google.Chrome|signin|true|Installed on Windows. Bookmarks and history moved; sign in to sync."
+    ["microsoft edge"]="edge|com.google.Chrome|signin|true|Installed on Windows. Bookmarks and history move into Chrome; sign in fresh."
+    ["brave"]="brave|com.brave.Browser|signin|false|Installed on Windows. Sign in to Brave Sync."
+    ["vivaldi"]="vivaldi|com.vivaldi.Vivaldi|signin|false|Installed on Windows. Sign in to Vivaldi to sync."
+    ["opera"]="opera|com.opera.Opera|signin|false|Installed on Windows. Sign in to Opera to sync."
+
+    # Creative / media
+    ["gimp"]="gimp|org.gimp.GIMP|portable|false|Installed on Windows. Brushes and settings can be copied from AppData."
+    ["krita"]="krita|org.kde.krita|portable|false|Installed on Windows. Brushes and configs are plain files."
+    ["inkscape"]="inkscape|org.inkscape.Inkscape|portable|false|Installed on Windows. Preferences are plain files."
+    ["blender"]="blender|org.blender.Blender|portable|false|Installed on Windows. Config folder copies straight over."
+    ["audacity"]="audacity|org.audacityteam.Audacity|portable|false|Installed on Windows. Settings are plain files."
+    ["vlc media player"]="vlc|org.videolan.VLC|portable|false|Installed on Windows. Playlists and settings can be copied."
+    ["handbrake"]="handbrake|fr.handbrake.ghb|portable|false|Installed on Windows. Presets can be exported."
+    ["obs studio"]="obs|com.obsproject.Studio|portable|false|Installed on Windows. Scenes and profiles can be copied."
+    ["qbittorrent"]="qbittorrent|org.qbittorrent.qBittorrent|portable|false|Installed on Windows. Settings are plain files."
+
+    # Comms
+    ["discord"]="discord|com.discordapp.Discord|signin|false|Servers and messages live in your account."
+    ["slack"]="slack|com.slack.Slack|signin|false|Workspaces return on sign-in."
+    ["spotify"]="spotify|com.spotify.Client|signin|false|Playlists and library are in your account."
+    ["telegram desktop"]="telegram|org.telegram.desktop|portable|false|Installed on Windows. Session data can be copied."
+    ["signal"]="signal|org.signal.Signal|signin|false|Installed on Windows. Re-link with your phone."
+    ["zoom"]="zoom|us.zoom.Zoom|signin|false|Meetings and settings are account-side."
+    ["element"]="element|im.riot.Riot|signin|false|Installed on Windows. Sign in and rooms are back."
+    ["teams"]="teams|com.microsoft.Teams|signin|false|Installed on Windows. Sign in once."
+    ["bitwarden"]="bitwarden|com.bitwarden.desktop|signin|false|Vault is server-side."
+
+    # Dev
+    ["visual studio code"]="vscode|com.visualstudio.code|portable|false|Installed on Windows. Settings and keybindings can be copied."
+    ["notepad++"]="notepad++|com.notepadqq.Notepadqq|none|false|Notepad++ has no native Linux port; Notepadqq is the closest equivalent."
+    ["sublime text"]="sublime|com.sublimetext.three|portable|false|Installed on Windows. Settings are plain files."
+    ["git"]="git|org.gnome.gitg|none|false|git is built into Linux; Gitg is a graphical client."
+
+    # Gaming
+    ["steam"]="steam|com.valvesoftware.Steam|signin|false|Game files are bridged — sign in once."
+    ["epic games launcher"]="epic|com.heroicgameslauncher.hgl|signin|false|Use Heroic Games Launcher to access your Epic library on Linux."
+    ["minecraft"]="minecraft|com.mojang.Minecraft|signin|false|Sign in and your Minecraft account is back."
+
+    # Office / productivity
+    ["mozilla thunderbird"]="thunderbird|org.mozilla.Thunderbird|portable|false|Installed on Windows. Mail accounts can be copied."
+    ["libreoffice"]="libreoffice|org.libreoffice.LibreOffice|portable|false|Installed on Windows. Documents are plain files."
+    ["adobe acrobat"]="acrobat|org.gnome.Evince|none|false|Adobe Acrobat has no Linux version. Evince opens PDFs."
+    ["adobe reader"]="acrobat|org.gnome.Evince|none|false|Adobe Reader has no Linux version. Evince opens PDFs."
+    ["7-zip"]="7zip|org.gnome.FileRoller|none|false|Built into Linux; File Roller handles archives."
+    ["winrar"]="7zip|org.gnome.FileRoller|none|false|Built into Linux; File Roller handles archives."
+    ["putty"]="putty|org.gnome.Ptyxis|none|false|Linux terminals are built in; Ptyxis is a modern graphical terminal."
+)
+
+# Read the Phase-1 registry manifest, if present.
+REGJSON="/run/wootc/host/wootc/install/programs.json"
+if [[ -f "$REGJSON" ]]; then
+    # Track which apps we already found via AppData so we don't double-add.
+    # We parse the app key out of each JSON entry with a simple sed cut.
+    declare -A already_have
+    for entry in "${entries[@]}"; do
+        app_name=$(echo "$entry" | sed -n 's/.*"app":"\([^"]*\)".*/\1/p')
+        [[ -n "$app_name" ]] && already_have["$app_name"]=1
+    done
+
+    # Parse DisplayName values from programs.json and match against our table.
+    # We use python3 to parse JSON (more reliable than sed/jq guessing);
+    # python3 is available on the deployed system (wootc-import also uses it).
+    while IFS= read -r display_name; do
+        [[ -z "$display_name" ]] && continue
+        dnorm=$(echo "$display_name" | tr '[:upper:]' '[:lower:]')
+
+        matched=""
+        for key in "${!DISPLAYNAME_TO_APP[@]}"; do
+            if [[ "$dnorm" == *"$key"* ]]; then
+                matched="$key"
+                break
+            fi
+        done
+
+        if [[ -n "$matched" ]]; then
+            IFS='|' read -r app_key flatpak session copied note <<< "${DISPLAYNAME_TO_APP[$matched]}"
+            if [[ -z "${already_have[$app_key]:-}" ]]; then
+                add "$app_key" "$flatpak" "$session" "$copied" "$note"
+                already_have["$app_key"]=1
+                log "registry: $display_name → $app_key ($flatpak)"
+            fi
+        fi
+    done < <(python3 -c "
+import json, sys
+try:
+    with open('$REGJSON') as f:
+        data = json.load(f)
+    for app in data.get('apps', []):
+        name = app.get('displayName', '').strip()
+        if name:
+            print(name)
+except Exception:
+    pass
+" 2>/dev/null)
+fi
+
 # ── Output ──────────────────────────────────────────────────────────────────
 state_dir="$home/.config/wootc"
 mkdir -p "$state_dir"
