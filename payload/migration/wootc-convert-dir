@@ -23,11 +23,32 @@ esac
 
 home=$(getent passwd "$name" | cut -d: -f6)
 [[ -d "$home" ]] || { log "ERROR: no home for $name"; exit 1; }
-src="/run/wootc/host/Users/$name/$folder"
 dst="$home/$folder"
 staging="$home/.wootc-convert-$folder.partial"
 
-[[ -d "$src" ]] || { log "ERROR: $src not found"; exit 1; }
+# Resolve the real Windows source path. The default below assumes the
+# Linux username matches the Windows profile name, but the single-user
+# fallback in wootc-mount-user-dirs may have bridged a profile with a
+# different name. When $dst is already a bind mount, trust the kernel's
+# mount table over the constructed path (#73).
+src="/run/wootc/host/Users/$name/$folder"
+if [[ ! -d "$src" ]] && mountpoint -q "$dst" 2>/dev/null; then
+    resolved=$(findmnt -n -o SOURCE "$dst" 2>/dev/null || true)
+    if [[ -n "$resolved" && -d "$resolved" ]]; then
+        log "$src not found; using bind-mount source $resolved (#73 fallback)"
+        src="$resolved"
+    fi
+fi
+
+[[ -d "$src" ]] || { log "ERROR: source $src not found"; exit 1; }
+
+# 0. Guard: refuse to convert an empty source — silent no-op migrations
+#    mislead the user into believing their data arrived (#73).
+file_count=$(find "$src" -maxdepth 1 -mindepth 1 ! -name 'desktop.ini' ! -name 'Thumbs.db' 2>/dev/null | wc -l)
+if [[ "$file_count" -eq 0 ]]; then
+    log "ERROR: $src exists but is empty (no files to migrate) — nothing to convert"
+    exit 2
+fi
 
 # 1. Copy Windows → native staging (resumable on re-run).
 #
