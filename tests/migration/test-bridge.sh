@@ -408,7 +408,7 @@ echo "tax-return" > /run/wootc/host/Users/brokenuser/Documents/taxes.txt
 # #66 fixture: a normal user whose profile lives on the host, plus a
 # cloud-drives.json manifest (OneDrive real folder, Google Drive virtual G:,
 # Dropbox real folder).
-useradd -m -u 1000 alice
+useradd -m -u 1001 alice
 mkdir -p /run/wootc/host/Users/alice/Documents
 echo "tax-return" > /run/wootc/host/Users/alice/Documents/taxes.txt
 mkdir -p /run/wootc/host/wootc
