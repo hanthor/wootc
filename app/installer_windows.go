@@ -941,13 +941,19 @@ func configureBCD(bootloader string) error {
 	//     "Illegal operation attempted on a registry key marked for deletion"
 	//     "The data area passed to a system call is too small"
 	// The first reads as a transient BCD-store state; the second is what
-	// bcdedit reports when the firmware boot entry list has grown large. A
-	// bounded retry addresses the first, re-sweeping stale entries between
-	// attempts addresses the second, and the enum dump tells us which one we
-	// actually hit instead of leaving it a guess.
+	// bcdedit reports when the firmware boot entry list has grown large.
+	//
+	// deleteWootcBCDEntries above removes stale entries by GUID but does not
+	// repair the display order — leaving dangling references that cause
+	// /copy to fail when it internally reads or touches the display order.
+	// Repairing the display order before the copy (idempotent /addfirst of
+	// {bootmgr}) plus a bounded retry with sweep covers both failure modes.
 	var out string
 	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
+		// Repair the display order before each attempt: deleteWootcBCDEntries
+		// above (and between attempts below) can leave dangling GUID refs.
+		runCmd("bcdedit", "/displayorder", "{bootmgr}", "/addfirst") //nolint:errcheck
 		out, err = runCmd("bcdedit", "/copy", "{bootmgr}", "/d", "wootc")
 		if err == nil {
 			break
