@@ -149,6 +149,7 @@ test('installer — supported family custom OCI reference is accepted', async ({
 
 test('installer — BitLocker offers unencrypted-partition path (no forced decrypt)', async ({ page }) => {
   const sysinfo = { ...SYSINFO, bitLockerOn: true, bitLockerState: 'on',
+    bitLockerRecoveryKeyWarning: true,
     dataPartitions: [{ letter: 'E', label: 'Backup', freeGB: 200, encrypted: false }] };
   await boot(page, { mode: 'installer', images: IMAGES, sysinfo });
   // The chooser must NOT mention decrypting C:.

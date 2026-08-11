@@ -66,6 +66,12 @@ func getSystemInfo() SystemInfo {
 	info.RAMGB = totalRAMGB()
 	info.Is64Bit = runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
 
+	// BitLocker recovery-key warning: honest disclosure (#63). When C: is
+	// BitLocker-protected, the user should record their recovery key before
+	// any migration step, regardless of whether we unlock C: or carve a
+	// separate volume (#61).
+	info.BitLockerRecoveryKeyWarning = info.BitLockerState == "on"
+
 	return info
 }
 

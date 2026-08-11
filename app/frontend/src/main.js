@@ -253,6 +253,18 @@ function renderLaunchpad() {
   // BitLocker: never force decryption — offer an unencrypted home for Linux.
   if (state.sysinfo?.bitLockerOn) {
     screen.appendChild(renderBitlockerChooser());
+    // Recovery-key warning (#63): tell the user to record their key before
+    // proceeding, regardless of whether we unlock C: or carve a separate
+    // volume. This is honest disclosure — independent of #61.
+    if (state.sysinfo?.bitLockerRecoveryKeyWarning) {
+      screen.appendChild(warningBanner(
+        '<b>⚠ Before you continue:</b> Make sure you have your BitLocker recovery key. ' +
+        'Your PC uses BitLocker to protect drive C:. If the migration encounters trouble, ' +
+        'you need that key to get back into Windows. You can find it at ' +
+        '<b>Control Panel → BitLocker Drive Encryption → Back up recovery key</b>, ' +
+        'or in your Microsoft account under Devices.'
+      ));
+    }
   }
 
   if (state.sysinfo?.defragRecommended) {
