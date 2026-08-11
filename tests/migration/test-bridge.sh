@@ -381,3 +381,46 @@ INNER
 podman run --rm --privileged \
     -v "$REPO_ROOT/payload/migration:/scripts:ro,Z" \
     "$IMG" bash -c "$INNER64"
+
+# ── #62: bridge handles missing home directory gracefully ───────────────────
+# The bridge must not silently exit 0 when a matching user has no home
+# directory — it must log an error and continue (so the summary still runs).
+# This was the silent-success root cause suspected in #62 before the QGA-agent
+# explanation surfaced: a deployment where /home/wootc was missing could
+# "succeed" with 0 binds while logging nothing.
+INNER62=$(cat <<'INNER'
+set -Eeuo pipefail
+PASS=0; FAIL=0
+ok()  { echo "[PASS] $*"; PASS=$((PASS+1)); }
+bad() { echo "[FAIL] $*"; FAIL=$((FAIL+1)); }
+check(){ if eval "$1"; then ok "$2"; else bad "$2"; fi; }
+
+dnf install -y -q util-linux >/dev/null 2>&1 || true
+cp /scripts/wootc-* /usr/local/bin/ && chmod +x /usr/local/bin/wootc-*
+
+# Create a user with NO home directory at the path passwd advertises.
+# This simulates the deployment bug from run 20260723T0423 where
+# fisherman's useradd put home in the wrong var/.
+useradd -M -u 1000 brokenuser
+mkdir -p /run/wootc/host/Users/brokenuser/{Documents,Pictures}
+echo "tax-return" > /run/wootc/host/Users/brokenuser/Documents/taxes.txt
+mount --bind /run/wootc/host /run/wootc/host
+
+out=$(bash /usr/local/bin/wootc-mount-user-dirs 2>&1 || true)
+echo "$out" | sed 's/^/    /'
+
+check 'echo "$out" | grep -q "has no home directory"' \
+    "#62: bridge detects missing home for matching user instead of exiting silently"
+check 'echo "$out" | grep -q "summary:"' \
+    "#62: bridge still produces a summary after encountering a missing home"
+check '! mountpoint -q /home/brokenuser/Documents 2>/dev/null' \
+    "#62: folders are NOT bound when the home directory does not exist"
+
+echo "RESULT: $PASS passed, $FAIL failed"
+[ "$FAIL" -eq 0 ]
+INNER
+)
+
+podman run --rm --privileged \
+    -v "$REPO_ROOT/payload/migration:/scripts:ro,Z" \
+    "$IMG" bash -c "$INNER62"
