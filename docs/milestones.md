@@ -59,9 +59,10 @@ native disk — passed **29/29** (`just remote-e2e-phase3`, wootc bd11049
 green** in a container
 (passthrough + write-through, Steam registration, browser import,
 reversible folder conversion + marker, DE look mapping GNOME/KDE, ESP
-sync on BLS *and* classic layouts, MS Office→LibreOffice). Live proof
-(binds actually appearing in a booted Phase-2 $HOME) still waits on
-rung 2. Session token migration is split out to GitHub issues #1
+sync on BLS *and* classic layouts, MS Office→LibreOffice). Live proof —
+binds actually appearing in a booted Phase-2 `$HOME` — is part of the
+29/29 run, measured over the Phase-2 QGA channel. Session token migration
+is split out to GitHub issues #1
 (DPAPI rewrap) and #2 (guided re-link) — needs real per-service testing,
 not automation now; #3 tracks dashboard integration.
 
@@ -85,12 +86,14 @@ hands off to the deployer. The GUI pipeline must match setup-wootc.ps1
 
 **Harness:** `run-e2e.sh --gui-install` (`just remote-e2e-gui`).
 
-**Status (2026-07-23): drive mode proven through the done screen.**
-Real findings already fixed by this rung: custom-OCI refs guessed
-systemd-boot (backend-contract violation), the Go installer still made a
-VHDX Phase 2 can no longer attach, missing bcd-guid.txt, missing
-elevation, missing console=ttyS0. CDP is impossible in stock wails
-(both WebView2 loaders discard the env var once the framework passes
-its own browser args) — hence drive mode. Open: the app's BCD one-shot
-was absent at reboot time in run 20260723T1144 (instrumented, in
-progress).
+**Status (2026-08-11): GREEN end-to-end.** Drive mode (the app drives its
+own live form, `WOOTC_E2E_DRIVE=1`) arms and completes the full
+Phase-1 → 2 → 3 chain on `bluefin:lts`; the timelapse at the top of the
+README is that run (`pages/e2e/latest`). Real findings already fixed by
+this rung: custom-OCI refs guessed systemd-boot (backend-contract
+violation), the Go installer still made a VHDX Phase 2 can no longer
+attach, missing bcd-guid.txt, missing elevation, missing console=ttyS0,
+and the missing BCD one-shot seen at reboot in run 20260723T1144 (the Go
+pipeline was aligned with setup-wootc.ps1 in `6961461`). CDP is
+impossible in stock wails (both WebView2 loaders discard the env var once
+the framework passes its own browser args) — hence drive mode.

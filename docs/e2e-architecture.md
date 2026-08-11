@@ -34,13 +34,24 @@ Two control planes, one per OS:
 
 | Guest state | Control plane | Direction |
 |---|---|---|
-| Windows | QGA (`guest-exec` PowerShell, `guest-file-read`) | bidirectional |
-| Deployer (Linux initramfs) | Serial console only | **read-only** |
+| Windows | QGA (`guest-exec` PowerShell as SYSTEM, `guest-file-read`) | bidirectional |
+| Deployer / Phase-2 Linux | QGA (`guest-exec` `/bin/sh`, `guest-file-read`) + serial console | bidirectional (QGA) · read-only (serial) |
 
-The deployer has no input path (container stdin is closed), which drives two
-design rules: every failure must **reboot back to Windows** on its own, and
-every diagnostic must be **pushed out** (serial kmsg markers + journal
-persisted to NTFS) rather than pulled interactively.
+Both guests run the QEMU Guest Agent on the same virtio-serial port:
+`deploy-hook.sh` starts `qemu-ga` inside the deployer initramfs, and the
+deployed system is given a control channel via the `qemu-guest-agent`
+kernel argument (`MGMT_KARG` in `deploy.sh`). The runner uses that channel
+for live inspection of the Phase-2 system and drives the Phase-3 graduate
+through it. The deployer's *first* run still has no interactive input and
+keeps its design rules: every failure must **reboot back to Windows** on
+its own, and every diagnostic must be **pushed out** (serial kmsg markers +
+journal persisted to NTFS) rather than pulled interactively.
+
+**Liveness vs identity.** `guest-ping` proves only that *some* guest agent
+is answering — it cannot tell Windows apart from the deployer/Phase-2
+Linux. Every OS transition therefore asserts identity positively before
+action: `$env:OS` must match `Windows_NT` (`qga_windows_probe`) or
+`uname -s` must say Linux (`qga_linux_probe`) in `tests/e2e/run-e2e.sh`.
 
 ## Secure Boot chain (validated)
 

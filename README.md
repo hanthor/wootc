@@ -128,8 +128,10 @@ issue) · ⚪ not yet run.
 marked ✅ once the whole chain passes (Windows seed → deploy → Phase-2 boot →
 seeded file readable from Linux).
 
-> ⚠️ **Every ✅ below predates 2026-07-27 and is currently UNVERIFIED.** Until
-> commit `3d7f9e2`, `fail()` only printed — a failed check that did not itself
+> ⚠️ **The ✅s below predating 2026-07-27 are currently UNVERIFIED** (per-row
+> exceptions are called out — e.g. the `dakota` composefs cell was re-proven on
+> the failure-ledger harness on 2026-08-02). Until commit
+> `3d7f9e2`, `fail()` only printed — a failed check that did not itself
 > abort could not stop the run reaching "ALL TESTS PASSED". A real BitLocker run
 > was recorded PASS with `[FAIL] User data NOT visible in Phase 2 $HOME` in its
 > own log, which is the North Star assertion itself. The harness now records
@@ -151,12 +153,13 @@ seeded file readable from Linux).
 | `yellowfin:gnome` (EL10) | ostree · ext4-sealed | ✅ | ✅ | ✅ | ✅ | ⚪ |
 | `yellowfin:kde` / `:xfce` (EL10) | ostree · ext4-sealed | ✅ | ✅ | ✅ | ⚪ | ⚪ |
 | `bonito:gnome` / `:kde` / `:niri` (Fedora) | ostree · **xfs** (unsealed) | ✅ | ✅ | ✅ | ⚪ | ⚪ |
-| `dakota` | composefs-native | ✅ | 🔴 | ⚪ | ⚪ | ⚪ |
+| `dakota` | composefs-native | ✅ | ✅ | ✅ | ⚪ | ⚪ |
 | `marlin` (Arch) / `flounder` (Debian) | ostree · xfs (unsealed) | ✅ | 🔴 | ⚪ | ⚪ | ⚪ |
 
-`dakota` (composefs-native) reaches Phase-2 staging after eight layout fixes —
-the remaining failure is a silent CPU-bound grind under interactive debug
-([#28](https://github.com/tuna-os/wootc/issues/28)). `marlin`/`flounder` fail in
+`dakota` (composefs-native) went green on the failure-ledger harness —
+composefs full chain, run `30710282014` (2026-08-02);
+[#28](https://github.com/tuna-os/wootc/issues/28) is closed. Phase-3
+graduation for composefs is a follow-on rung. `marlin`/`flounder` fail in
 `bootc install` with *"bootupd is required for ostree-based installs"*: they are
 ostree images that ship no `bootupd`.
 
@@ -172,7 +175,7 @@ ostree images that ship no `bootupd`.
 | Root filesystem: `ext4` (sealed, fs-verity) | ✅ | proven sealed default |
 | Root filesystem: `btrfs` (sealed) | 🟡 | works on Fedora-kernel images (bonito) via `wootc.filesystem=btrfs`; [#35](https://github.com/tuna-os/wootc/issues/35) fixed — blocked on EL10 kernels whose out-of-tree btrfs kmod is rejected under Secure Boot |
 | Encryption: none | ✅ | |
-| Encryption: `tpm2-luks` | 🔴 | Phase-2 dracut regen fails on the LUKS root — [#33](https://github.com/tuna-os/wootc/issues/33) |
+| Encryption: `tpm2-luks` | 🟡 | [#33](https://github.com/tuna-os/wootc/issues/33) fixed (`bffd284`, 2026-08-10) — Phase-2 dracut regen works; green cell re-verification pending under the failure-ledger harness |
 | BitLocker FDE (unencrypted-volume path) | ✅ | proven green — [#34](https://github.com/tuna-os/wootc/issues/34). Setup carves unencrypted volume E: for `root.disk` while C: stays encrypted; drive letter resolver dynamically discovers tree location. |
 
 The full three-phase chain (Windows seed → deploy → Phase-2 bridge →

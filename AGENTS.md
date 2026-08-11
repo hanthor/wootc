@@ -2,10 +2,18 @@
 
 ## Start here
 
+- **`README.md#buildtest-matrix`** — the one current status/roadmap source.
+  Green/red per image family × phase and per axis, from the E2E rig and the
+  hosted matrix; a cell is only green once the hosted E2E passed it
+  end-to-end (see `docs/RELEASING.md`). Open work is tracked on the org
+  **TunaOS GA Roadmap** project (Tier 1 = silent-failure class, Tier 2 =
+  user-facing correctness, Tier 3 = harness + process).
+- **`docs/milestones.md`** — the verification ladder the matrix rolls up.
 - **`docs/agent-lessons.md`** — traps that have each cost a 60–90 minute VM run.
   Read before touching the E2E harness, the deployer, or the runners.
-- **`docs/phase2-debug-plan.md`** — live hypotheses for the Phase-2 boot, kept
-  strictly separated into what is *established* vs merely *claimed*.
+- **`docs/phase2-debug-plan.md`** — *historical* (2026-07-18): its Phase-2
+  hypotheses were resolved; the debugging story is in
+  `docs/phase2-attach-postmortem.md`.
 
 The single most useful heuristic in this codebase: **status derived from a proxy
 rather than an observable is the dominant bug class here.** When adding a check,
@@ -37,12 +45,22 @@ The QGA client (`tests/e2e/qga.py`, 131-line stdlib Python) talks
 JSON-lines over a virtio-serial Unix socket at `/run/shm/qga.sock`.
 
 QGA provides:
-- `guest-ping` for readiness (no credentials needed)
-- `guest-exec` for running PowerShell as SYSTEM
-- `guest-file-read` for reading OEM logs
+- `guest-ping` for **generic liveness** (no credentials needed) — but it
+  answers for whichever agent is up, Windows or Linux, so it cannot tell
+  them apart on its own
+- `guest-exec` for running PowerShell as SYSTEM (Windows) or `/bin/sh`
+  (deployer / Phase-2 Linux)
+- `guest-file-read` for reading OEM logs and the deployer journal
 - Reboot detection via guest-ping down/up cycle
 
-See `HANDOFF.md` for the full design rationale.
+**Liveness ≠ identity.** Before every OS transition the runner asserts
+identity positively: `$env:OS` must match `Windows_NT`
+(`qga_windows_probe`) or `uname -s` must say Linux (`qga_linux_probe`) in
+`tests/e2e/run-e2e.sh`. Relying on `guest-ping` alone has cost runs by
+answering for the wrong guest.
+
+See `docs/e2e-architecture.md` for the current control-plane topology;
+`HANDOFF.md` is the historical (2026-07-15) design rationale.
 
 ### E2E Testing — autounattend.xml v3 Fixed (commit 0779d8d)
 The critical fix: autounattend.xml was missing a `DiskConfiguration` block.
@@ -151,7 +169,14 @@ quirks are documented in the `wootc-e2e` skill and the e2e-runner agent:
 - Stale `rootlessport` processes hold port 3389 across runs — kill them
 - Container name is always `wootc-e2e-windows`
 
-### Phase 2 target (not yet green)
+### Phase 2 target — green end-to-end
+
+**Green** since 2026-07-23 (rung 2 of `docs/milestones.md`): the full cycle
+passes repeatably via `run-e2e.sh` on himachal, including the BitLocker
+cell (`el10-gnome-win11pro-bitlocker`, full cycle green 2026-07-28), and
+the same chain is green GUI-driven on `bluefin:lts` (README matrix,
+`pages/e2e/latest`). The acceptance criteria below are the definition of
+that target:
 
 1. Fresh Windows 11 install under KVM + TPM 2.0 + Secure Boot.
 2. Windows creates `root.disk`, copies the deployer, installs `wubildr.efi`,
@@ -163,7 +188,8 @@ quirks are documented in the `wootc-e2e` skill and the e2e-runner agent:
 
 ### Key artifacts
 - `CONTEXT.md` — Domain glossary (Phases 1-3, root.disk, User Data Bridge)
-- `HANDOFF.md` — QGA migration design rationale and decision record
+- `HANDOFF.md` — QGA migration design rationale (historical, 2026-07-15;
+  superseded by `docs/e2e-architecture.md`)
 - `docs/adr/0001-phase1-first-architecture.md` — Phase 1 VM-first architecture
 - `tests/e2e/wootc-files/wubildr.efi` — Custom GRUB image (1.3MB)
 - `tests/e2e/qga.py` — QGA JSON-lines client (stdlib only)

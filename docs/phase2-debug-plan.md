@@ -3,6 +3,14 @@
 Status as of 2026-07-18. Written after four consecutive failed E2E runs, none of
 which produced enough evidence to attribute the failure.
 
+> **Historical (2026-08-11).** The open hypotheses here were resolved: the
+> qemu-nbd closure (A3) was root-caused, the attach chain was rebuilt around
+> a raw `root.disk` (`8136ae6`), and Phase-2 boot has been green since
+> 2026-07-23 (rung 2, `docs/milestones.md`). The full debugging story is in
+> `docs/phase2-attach-postmortem.md`; current status lives in the README
+> build/test matrix. Keep this file for its observability lessons — its
+> hypotheses are not live.
+
 ## What we actually know
 
 Stated precisely, because this session has already burned time on three
