@@ -33,11 +33,13 @@ if command -v apt-get &>/dev/null; then
     sudo apt-get update -qq
     sudo apt-get install -y -qq \
         podman python3 python3-pip curl jq \
-        shellcheck yamllint qemu-utils
+        shellcheck yamllint qemu-utils \
+        wimtools p7zip-full
 elif command -v dnf &>/dev/null; then
     sudo dnf install -y \
         podman python3 python3-pip curl jq \
-        ShellCheck yamllint qemu-img
+        ShellCheck yamllint qemu-img \
+        wimlib-utils p7zip
 else
     err "Unsupported package manager. Install podman, python3, jq manually."
 fi
