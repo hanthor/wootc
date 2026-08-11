@@ -2,6 +2,17 @@
 
 Updated: 2026-07-15 UTC
 
+> **Historical (2026-08-11).** The QGA migration this document proposes is
+> implemented and is now the standard E2E control plane: `tests/e2e/qga.py`,
+> the QGA wiring in `tests/e2e/compose.yml` / `run-e2e.sh`, with the
+> deployer and Phase-2 Linux running the agent on the same virtio-serial
+> port. The "Phase 2 target is not yet green" line below is obsolete —
+> Phase 2 has been green end-to-end since 2026-07-23 (rung 2,
+> `docs/milestones.md`) and the GUI-driven full run is green on
+> `bluefin:lts`. For current status read the README build/test matrix; for
+> the current control-plane topology read `docs/e2e-architecture.md`. This
+> file remains the record of the WinRM→QGA decision and its rationale.
+
 ## Decision
 
 Stop treating WinRM, Podman host-port forwarding, and screen automation as the

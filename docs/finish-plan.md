@@ -4,6 +4,15 @@
 and btrfs green. Windows 10 Home/Enterprise/LTSC (#58) is explicitly
 deprioritized ("pretty rare").*
 
+> **Historical (2026-08-11).** The plan's main rungs are done: dakota
+> (composefs full chain, run `30710282014`) and bonito/btrfs (green twice,
+> runs `30713490009` / `30714683108`) passed on the failure-ledger harness,
+> and #28/#35/#33 are closed with their fixes in `main` (`7d99c45`,
+> `8d964f4`, `2166d09`, `6b7c412`, `bffd284`). Remaining: one non-dakota
+> composefs family (marlin/flounder), `tpm2-luks` cell re-verification, and
+> the full matrix re-sweep — tracked in the README build/test matrix and
+> open issues. Read the README matrix for current status.
+
 The project's green core is done: `bluefin:lts` (ostree/grub2/ext4-sealed)
 passes the full Phase 1 → 2 → 3 chain, GUI-driven, 29/29. What separates
 "working demo for one image family" from "finished installer" is the red
