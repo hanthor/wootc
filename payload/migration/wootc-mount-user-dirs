@@ -289,7 +289,7 @@ fi
 # the user knows what to expect. Google Drive in particular lives at a
 # virtual drive letter (G:) produced by DriveFS at runtime — there is
 # nothing on the physical disk to bridge, and a mount is the only route
-to content.
+# to content.
 CLOUD_DRIVES=""
 for candidate in /run/wootc/host/wootc/cloud-drives.json /run/wootc/host/*/wootc/cloud-drives.json; do
     [[ -f "$candidate" ]] && { CLOUD_DRIVES="$candidate"; break; }
