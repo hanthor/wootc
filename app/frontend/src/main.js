@@ -1,6 +1,8 @@
 import '../src/style.css';
 import { GetImages, GetSystemInfo, StartInstall, CancelInstall, GetStatus, Reboot, ExistingInstallFound, GetMode, GetMigrationCategories, ConvertCategory, ImportBrowserData, GetAppMigrations, GetOfficeMigration, GetBranding, CreateDataPartition, GetUninstallInfo, UninstallWith, GetVMCapability, BootInVM, DefragDrive, GetFreshVMCapability, TryInVMFresh, InstallPreviewForReal, E2EDriveDirective, E2EDriveReport, GetSupportPolicy } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
+import { fmtSize } from './lib/format.js';
+import { el, btn, chip, warningBanner, inputField } from './lib/ui.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -956,12 +958,6 @@ async function runBrowserImport() {
   }
 }
 
-function fmtSize(bytes) {
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(0)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
-}
-
 async function confirmUninstall() {
   const o = state.uninstallOpts || {};
   let msg = 'Remove TunaOS?\n\nThis removes the boot entry, the ESP files, and the deployer files.';
@@ -1076,25 +1072,6 @@ async function startInstall() {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function el(tag, className = '') {
-  const e = document.createElement(tag);
-  if (className) e.className = className;
-  return e;
-}
-
-function btn(label, className, onClick) {
-  const b = el('button', className);
-  b.textContent = label;
-  b.onclick = onClick;
-  return b;
-}
-
-function chip(label, isWarn) {
-  const c = el('div', 'chip' + (isWarn ? ' warn' : ' ok'));
-  c.textContent = label;
-  return c;
-}
-
 // BitLocker chooser: keep C: encrypted, put Linux on an unencrypted
 // volume — either an existing one or a new partition carved from C:.
 function renderBitlockerChooser() {
@@ -1134,26 +1111,6 @@ function renderBitlockerChooser() {
   wrap.appendChild(box);
   if (!state.config.bitlockerMode) state.config.bitlockerMode = existing.length ? 'use:' + existing[0].letter : 'create';
   return wrap;
-}
-
-function warningBanner(text) {
-  const d = el('div', 'warning-banner');
-  d.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm.75 10.5h-1.5v-1.5h1.5v1.5zm0-3h-1.5V4.5h1.5V8.5z"/></svg><span>${text}</span>`;
-  return d;
-}
-
-function inputField(label, type, value, onChange, placeholder) {
-  const f = el('div', 'field');
-  const lbl = el('label');
-  lbl.textContent = label;
-  const inp = document.createElement('input');
-  inp.type = type;
-  inp.value = value;
-  inp.placeholder = placeholder;
-  inp.oninput = () => onChange(inp.value);
-  f.appendChild(lbl);
-  f.appendChild(inp);
-  return f;
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
