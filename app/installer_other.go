@@ -76,6 +76,12 @@ func writeVault(cfg InstallConfig) error {
 	return marshalJSONToFile("/tmp/wootc/install/vault.json", vault)
 }
 
+// captureBitLockerRecoveryKey is Windows-only; the dev stub returns "".
+func captureBitLockerRecoveryKey(vol string) string { return "" }
+
+// writeBitLockerKey is Windows-only; the dev stub is a no-op.
+func writeBitLockerKey(key string) error { return nil }
+
 func collectLook() error                                          { return nil }
 func collectWifi() error                                          { return nil }
 func collectPrograms() error                                      { return nil }
