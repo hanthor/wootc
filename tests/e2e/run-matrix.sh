@@ -206,6 +206,7 @@ run_case() {
     # (poll treats a missing log as still-starting) and echoes a nonce that
     # proves the case actually launched; three attempts before giving up.
     local remote_script launched=false attempt
+    local unit="wootc-e2e-${inst}"
     remote_script=$(cat <<REMOTE
 set +e
 cd ~/wootc/tests/e2e
@@ -215,7 +216,12 @@ cd ~/wootc/tests/e2e
 # before its cause had been read, and the relaunch's pkill also pre-empted the
 # old run's artifact collection. One generation of history costs nothing.
 mv -f "$log" "$log.prev" 2>/dev/null || rm -f "$log"
-pkill -9 -f "run-e2e.sh.*--instance=$inst" 2>/dev/null; sleep 1
+# Stop any previous run for this slot. Kill legacy nohup processes
+# (backward-compatible) and stop the systemd user unit.
+pkill -9 -f "run-e2e.sh.*--instance=$inst" 2>/dev/null
+systemctl --user stop "$unit" 2>/dev/null
+systemctl --user reset-failed "$unit" 2>/dev/null
+sleep 1
 podman rm -f "$ctr" 2>/dev/null
 # dockur's PID-1 supervisor can leave qemu orphaned past podman rm -f; an
 # unwatched 6G VM writing to disk melted the host (load 95, sshd starved,
@@ -229,19 +235,37 @@ rm -f "$stordir/.run-e2e.lock"
 # finished the moment polling starts. A missing file reads as still-starting;
 # run-e2e.sh rewrites it with stage=started within seconds of launching.
 rm -f "$stordir/run-e2e.current"
-export WOOTC_E2E_WIN_VERSION="$ver" WOOTC_E2E_WIN_EDITION="$ed" WOOTC_E2E_WIN_KEY="$key"
-export WOOTC_E2E_RAM_SIZE="${vm_ram}G"
-export WOOTC_E2E_RAM_CHECK=N
-# Concurrent slots share the disk; the single-run 90 GiB preflight would
-# refuse a healthy second slot. ~35 GiB/case is the measured fresh-run need.
-export WOOTC_E2E_MIN_FREE_GIB="\${WOOTC_E2E_MIN_FREE_GIB:-45}"
-# optional per-case knobs, e.g. bitlocker=on (SPEC 3.5 FDE axis),
-# phase3=on (rung-3 graduate onto a blank second disk)
-case "$opts" in *bitlocker=on*) export WOOTC_E2E_BITLOCKER=on ;; *) export WOOTC_E2E_BITLOCKER=off ;; esac
-EXTRA_ARGS=""
-case "$opts" in *phase3=on*) EXTRA_ARGS="--phase3" ;; esac
-nohup bash run-e2e.sh "$image" --keep --instance=$inst \$EXTRA_ARGS > "$log" 2>&1 &
-echo "LAUNCHED-$name"
+# Resolve the user's runtime identity ON THE REMOTE. Rootless podman needs
+# XDG_RUNTIME_DIR and HOME set explicitly, or it resolves root storage paths
+# and fails with "permission denied" on /run/containers/storage.
+# The matrix is precisely the long-running multi-host path where this
+# matters most: a lost SSH session kills a nohup child, but a systemd user
+# unit survives (AGENTS.md:202-218, docs/agent-lessons.md:126-131).
+_uid=\$(id -u)
+_home="\$HOME"
+systemd-run --user --unit="$unit" --collect \
+    --setenv=XDG_RUNTIME_DIR=/run/user/"\$_uid" \
+    --setenv=HOME="\$_home" \
+    --setenv=WOOTC_E2E_WIN_VERSION="$ver" \
+    --setenv=WOOTC_E2E_WIN_EDITION="$ed" \
+    --setenv=WOOTC_E2E_WIN_KEY="$key" \
+    --setenv=WOOTC_E2E_RAM_SIZE="${vm_ram}G" \
+    --setenv=WOOTC_E2E_RAM_CHECK=N \
+    --setenv=WOOTC_E2E_MIN_FREE_GIB="\${WOOTC_E2E_MIN_FREE_GIB:-45}" \
+    \$(case "$opts" in *bitlocker=on*) echo '--setenv=WOOTC_E2E_BITLOCKER=on' ;; *) echo '--setenv=WOOTC_E2E_BITLOCKER=off' ;; esac) \
+    -p StandardOutput=append:"$log" \
+    -p StandardError=append:"$log" \
+    -p WorkingDirectory="\$_home/wootc/tests/e2e" \
+    -- bash run-e2e.sh "$image" --keep --instance=$inst \$(case "$opts" in *phase3=on*) echo '--phase3' ;; esac)
+# Verify the unit is actually running: a nonce alone is insufficient —
+# nohup proves only that the shell started, not that the durable unit
+# remains alive (AGENTS.md rule). The unit must be active.
+if systemctl --user is-active "$unit" >/dev/null 2>&1; then
+    echo "LAUNCHED-$name"
+else
+    echo "UNIT-DEAD-$name"
+    systemctl --user status "$unit" 2>&1 || true
+fi
 REMOTE
 )
     # Do not pile onto a host that is already struggling. himachal reached LOAD
@@ -291,11 +315,18 @@ REMOTE
             elif grep -qa 'stage=exited' ~/wootc/tests/e2e/$stordir/run-e2e.current 2>/dev/null; then
                 if echo \"\$L\" | grep -qaE '\[FAIL\]'; then echo \"FAIL:\$(echo \"\$L\"|grep -aE '\[FAIL\]'|tail -1|cut -c1-80)\"
                 else echo 'EXIT'; fi
-            else echo RUN; fi" 2>/dev/null | head -1)
+            # A dead systemd unit with no stage=exited is an abnormal death
+            # (OOM, sigkill, host reboot). Record the unit's exit cause.
+            elif systemctl --user is-active '$unit' >/dev/null 2>&1; then echo RUN
+            else
+                _cause=\$(systemctl --user show '$unit' -p Result -p ExecMainStatus 2>/dev/null || echo 'unknown')
+                echo \"DEAD:\$_cause\"
+            fi" 2>/dev/null | head -1)
         case "$s" in
             PASS)  result="PASS"; break ;;
             FAIL*) result="$s"; break ;;
             EXIT)  result="EXITED"; break ;;
+            DEAD*) result="$s"; break ;;
         esac
         sleep 60
     done
