@@ -14,3 +14,13 @@ for home in /home/*/; do
         mountpoint -q "$dst" 2>/dev/null && umount "$dst" 2>/dev/null || true
     done
 done
+
+# BitLocker cleanup (#61): unmount and lock the temporary BitLocker volume
+# that wootc-mount-user-dirs unlocked. Runs AFTER all home binds are released
+# so the underlying NTFS mount is no longer busy.
+for mnt in /run/wootc/bitlk-tmp; do
+    mountpoint -q "$mnt" 2>/dev/null && umount "$mnt" 2>/dev/null || true
+done
+for mapper in /dev/mapper/wootc-bitlk-*; do
+    [[ -b "$mapper" ]] && cryptsetup close "$(basename "$mapper")" 2>/dev/null || true
+done

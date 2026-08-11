@@ -626,6 +626,21 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 		{"Setting up ESP", 65, func() error { return setupESP(cfg) }},
 		{"Configuring BCD", 80, func() error { return configureBCD(cfg.Bootloader) }},
 		{"Writing vault.json", 85, func() error { return writeVault(cfg) }},
+		{"Storing BitLocker recovery key", 87, func() error {
+			// When C: is BitLocker-protected, capture the numerical recovery
+			// password so Phase 2 (Linux) can unlock C: and the User Data
+			// Bridge can find the user profiles that live there (#61).
+			// This is a best-effort step: if the key cannot be extracted
+			// the install still proceeds, but the bridge will report that
+			// profiles are on an encrypted volume and could not be reached.
+			key := captureBitLockerRecoveryKey("C:")
+			if key != "" {
+				if err := writeBitLockerKey(key); err != nil {
+					fmt.Fprintf(os.Stderr, "[wootc] warning: could not store BitLocker recovery key: %v\n", err)
+				}
+			}
+			return nil
+		}},
 		{"Collecting installed programs", 88, func() error {
 			// Registry-based program inventory (§4.3): enumerate HKLM/HKCU
 			// uninstall keys before Windows goes away, so the migration

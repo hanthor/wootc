@@ -22,6 +22,7 @@
 set -Eeuo pipefail
 
 log() { printf '[wootc-passthrough] %s\n' "$*"; }
+warn() { printf '[wootc-passthrough] WARNING: %s\n' "$*" >&2; }
 
 FOLDERS=(Documents Pictures Downloads Music Videos Desktop)
 
@@ -29,6 +30,98 @@ if ! mountpoint -q /run/wootc/host; then
     log "ERROR: /run/wootc/host is not mounted (wootc-host-bind.service did not run first)"
     exit 1
 fi
+
+# ── BitLocker: encrypted C: unlock (#61) ───────────────────────────────────
+# On a BitLocker-protected machine the host mount is the UNENCRYPTED data
+# volume (E:), which holds root.disk but NOT the user profiles. Those live on
+# the encrypted C:, which the Phase-2 boot does not unlock by default.
+#
+# When the normal profile search finds nothing, look for a BitLocker recovery
+# key file (left by Phase 1 under \wootc\install\bitlocker-key.txt on the
+# same unencrypted volume) and attempt to unlock C: with cryptsetup bitlkOpen.
+# On success the bridge reads profiles from the unlocked volume; on failure
+# (missing key, no cryptsetup, wrong key) it logs a clear diagnostic so the
+# user knows WHY their data did not arrive.
+BITLOCKER_PROFILES=""
+find_bitlocker_profiles() {
+    # Only proceed if the host mount itself has no Users/ (the BitLocker
+    # signature). If Users exists, this is not the encrypted-C: path.
+    [[ -d /run/wootc/host/Users ]] && return 0
+
+    # cryptsetup with bitlk support is required.
+    command -v cryptsetup >/dev/null 2>&1 || { log "cryptsetup not available — cannot unlock BitLocker volumes"; return 0; }
+    cryptsetup --help 2>&1 | grep -q bitlkOpen || { log "cryptsetup lacks bitlk support — cannot unlock BitLocker volumes"; return 0; }
+
+    # Find the recovery key file on the host mount.
+    local key_file="" candidate
+    for candidate in /run/wootc/host/wootc/install/bitlocker-key.txt \
+                     /run/wootc/host/*/wootc/install/bitlocker-key.txt; do
+        [[ -f "$candidate" ]] && { key_file="$candidate"; break; }
+    done
+    if [[ -z "$key_file" ]]; then
+        log "no BitLocker recovery key file found (expected \\wootc\\install\\bitlocker-key.txt on the host mount)"
+        log "profiles are on an encrypted C: drive which cannot be unlocked without the recovery key"
+        return 0
+    fi
+    log "BitLocker recovery key found at ${key_file} — attempting encrypted C: unlock"
+
+    # Find BitLocker-encrypted volumes on the system.
+    local bl_vol="" dev fstype
+    for dev in /dev/sd*[0-9] /dev/nvme*n*p* /dev/vd*[0-9]; do
+        [[ -b "$dev" ]] || continue
+        fstype=$(blkid -o value -s TYPE "$dev" 2>/dev/null || true)
+        if [[ "$fstype" == "BitLocker" ]]; then
+            bl_vol="$dev"
+            break
+        fi
+    done
+    if [[ -z "$bl_vol" ]]; then
+        log "no BitLocker-encrypted volume found on the system — profiles are not here"
+        return 0
+    fi
+    log "found BitLocker-encrypted volume: ${bl_vol}"
+
+    # The numerical recovery password is 48 digits grouped as 8 blocks of 6.
+    # Read it from the key file, stripping whitespace and hyphens.
+    local recovery_key
+    recovery_key=$(tr -d '[:space:]-' < "$key_file" 2>/dev/null || true)
+    if [[ -z "$recovery_key" || "${#recovery_key}" -lt 48 ]]; then
+        warn "BitLocker recovery key file is empty or too short (${#recovery_key} chars, need at least 48)"
+        return 0
+    fi
+
+    # Unlock and mount the BitLocker volume.
+    local mapper="wootc-bitlk-$$"
+    local mnt="/run/wootc/bitlk-tmp"
+    mkdir -p "$mnt"
+    if ! printf '%s' "$recovery_key" | cryptsetup bitlkOpen "$bl_vol" "$mapper" --key-file=- 2>/dev/null; then
+        warn "cryptsetup bitlkOpen failed for ${bl_vol} — recovery key may be stale or volume is not BitLocker"
+        rmdir "$mnt" 2>/dev/null || true
+        return 0
+    fi
+    log "BitLocker volume ${bl_vol} unlocked as /dev/mapper/${mapper}"
+
+    # Mount read-only — we only need to read profiles, never write.
+    if ! mount -t ntfs3 -o ro "/dev/mapper/${mapper}" "$mnt" 2>/dev/null && \
+       ! mount -t ntfs-3g -o ro "/dev/mapper/${mapper}" "$mnt" 2>/dev/null; then
+        warn "could not mount unlocked BitLocker volume — NTFS driver issue"
+        cryptsetup close "$mapper" 2>/dev/null || true
+        rmdir "$mnt" 2>/dev/null || true
+        return 0
+    fi
+    log "unlocked BitLocker volume mounted at ${mnt}"
+
+    # Check if this volume actually contains user profiles.
+    if [[ -d "${mnt}/Users" ]]; then
+        BITLOCKER_PROFILES="$mnt"
+        log "BitLocker C: unlocked — user profiles found at ${mnt}/Users/"
+    else
+        warn "unlocked BitLocker volume does not contain Users/ — not the C: drive"
+        umount "$mnt" 2>/dev/null || true
+        cryptsetup close "$mapper" 2>/dev/null || true
+        rmdir "$mnt" 2>/dev/null || true
+    fi
+}
 
 # Honour the user's choices from the migration chooser (wootc-manifest-gui).
 # sel_on <user> <category> -> 0 when that category should be migrated.
@@ -123,9 +216,17 @@ bind_profile() {
     done
 }
 
+# Attempt BitLocker unlock before scanning for profiles when the host
+# mount has no Users/ directory (the encrypted-C: signature, #61).
+find_bitlocker_profiles
+
 shopt -s nullglob
 real_profiles=()
-for winprofile in /run/wootc/host/Users/*/ /run/wootc/host/*/Users/*/; do
+_profile_roots=()
+[[ -d /run/wootc/host/Users ]] && _profile_roots+=("/run/wootc/host")
+[[ -n "$BITLOCKER_PROFILES" ]] && _profile_roots+=("$BITLOCKER_PROFILES")
+for _root in "${_profile_roots[@]}"; do
+  for winprofile in "${_root}"/Users/*/ "${_root}"/*/Users/*/; do
     [[ -d "$winprofile" ]] || continue
     name=$(basename "$winprofile")
     case "$name" in
@@ -150,6 +251,7 @@ for winprofile in /run/wootc/host/Users/*/ /run/wootc/host/*/Users/*/; do
     fi
 
     bind_profile "$winprofile" "$name" "$home"
+  done
 done
 
 # Single-user fallback: one profile, one account, nothing matched by name.
@@ -202,4 +304,14 @@ if command -v wootc-detect-apps >/dev/null; then
             { wootc-identity apply "$uname" "$uname" >/dev/null || log "identity copy failed for $uname (non-fatal)"; }
     done
     shopt -u nullglob
+fi
+
+# ── BitLocker cleanup (#61) ──────────────────────────────────────────────
+# The encrypted C: was mounted temporarily for profile discovery. Unmount
+# and lock it now that the binds are established (bind mounts keep
+# individual file handles alive, so the profiles remain readable even after
+# the underlying NTFS mount is gone, but the binds point at the mount tree
+# so they must stay — just leave a note that cleanup happens at shutdown).
+if [[ -n "$BITLOCKER_PROFILES" ]]; then
+    log "BitLocker volume ${BITLOCKER_PROFILES} will be unmounted at shutdown (wootc-umount-user-dirs)"
 fi
