@@ -63,6 +63,9 @@ type InstallConfig struct {
 	// over on first login. Default false — we honor the image maker's desktop
 	// defaults unless the user asks to make it feel like Windows.
 	WindowsLook bool `json:"windowsLook"`
+	// SessionConsent is opt-in per app because it authorizes moving auth
+	// material. An absent or false entry never stages a session envelope.
+	SessionConsent map[string]bool `json:"sessionConsent,omitempty"`
 }
 
 // ProgressEvent is emitted during install for the frontend progress bar.
@@ -648,6 +651,22 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			// an AppData footprint. Best-effort: never fail install.
 			if err := collectPrograms(); err != nil {
 				fmt.Fprintf(os.Stderr, "[wootc] program collection skipped: %v\n", err)
+			}
+			return nil
+		}},
+		{"Checking app sessions", 90, func() error {
+			candidates, err := collectSessions()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[wootc] session collection skipped: %v\n", err)
+				return nil
+			}
+			for _, candidate := range candidates {
+				if !candidate.Portable || candidate.Recommend != "copy" || !cfg.SessionConsent[candidate.App] {
+					continue
+				}
+				if err := exportSession(candidate.App, cfg.Password, true); err != nil {
+					fmt.Fprintf(os.Stderr, "[wootc] %s session export skipped: %v\n", candidate.App, err)
+				}
 			}
 			return nil
 		}},

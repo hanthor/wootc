@@ -68,6 +68,12 @@ func (a *App) GetAppMigrations() ([]AppMigration, error) {
 	return appMigrations()
 }
 
+// GetSessionCandidates reports which Windows sessions were proven
+// decryptable. It never returns tokens or decrypted payloads.
+func (a *App) GetSessionCandidates() ([]SessionCandidate, error) {
+	return sessionCandidates()
+}
+
 // OfficeMigration summarizes what moved from MS Office to LibreOffice.
 type OfficeMigration struct {
 	Migrated []string `json:"migrated"`

@@ -95,6 +95,10 @@ export function GetAppMigrations() {
   return window['go']['main']['App']['GetAppMigrations']();
 }
 
+export function GetSessionCandidates() {
+  return window['go']['main']['App']['GetSessionCandidates']();
+}
+
 export function GetOfficeMigration() {
   return window['go']['main']['App']['GetOfficeMigration']();
 }
