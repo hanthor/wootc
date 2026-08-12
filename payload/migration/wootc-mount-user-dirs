@@ -194,6 +194,14 @@ bind_profile() {
         return 0
     fi
     for folder in "${FOLDERS[@]}"; do
+        if command -v wootc-selection >/dev/null 2>&1; then
+            local_item_rc=0
+            wootc-selection "$luser" files "$folder" >/dev/null 2>&1 || local_item_rc=$?
+            if [[ "$local_item_rc" -eq 1 ]]; then
+                log "files/$folder: skipped (turned off in the migration chooser)"
+                continue
+            fi
+        fi
         src="${winprofile}${folder}"
         # A redirected folder wins over the literal one — that is where the
         # user's files actually are. Only when it exists on this volume: a
@@ -360,8 +368,13 @@ if command -v wootc-detect-apps >/dev/null; then
             fi
         fi
         # Copy the account picture + full name over (never the password).
-        command -v wootc-identity >/dev/null && \
-            { wootc-identity apply "$winuser" "$uname" >/dev/null || log "identity copy failed for $winuser → $uname (non-fatal)"; }
+        if command -v wootc-identity >/dev/null; then
+            if sel_on "$uname" identity; then
+                wootc-identity apply "$winuser" "$uname" >/dev/null || log "identity copy failed for $winuser → $uname (non-fatal)"
+            else
+                log "identity: skipped for $uname (turned off in the migration chooser)"
+            fi
+        fi
     done
     shopt -u nullglob
 fi

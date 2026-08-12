@@ -46,6 +46,13 @@ def _dir_bytes(path, cap=50000):
     return total
 
 
+def _item(path, item_id, label, detail=""):
+    """Return one stable discovery descriptor without touching its contents."""
+    return {"id": item_id, "label": label, "detail": detail,
+            "fileCount": _count_files(path) if os.path.isdir(path) else 0,
+            "sizeBytes": _dir_bytes(path) if os.path.isdir(path) else 0}
+
+
 def _users():
     base = os.path.join(HOST, "Users")
     if not os.path.isdir(base):
@@ -65,7 +72,7 @@ def cat_files(user):
         p = os.path.join(root, folder)
         if os.path.isdir(p):
             n = _count_files(p)
-            items.append({"id": folder, "label": folder, "detail": f"{n} file(s)"})
+            items.append(_item(p, folder, folder, f"{n} file(s)"))
     return bool(items), items, f"{len(items)} folder(s)"
 
 
@@ -73,13 +80,13 @@ def cat_browsers(user):
     items = []
     ad = os.path.join(HOST, "Users", user, "AppData")
     if os.path.exists(os.path.join(ad, "Roaming", "Mozilla", "Firefox", "profiles.ini")):
-        items.append({"id": "firefox", "label": "Firefox", "detail": "profile + logins"})
+        items.append(_item(os.path.join(ad, "Roaming", "Mozilla", "Firefox"), "firefox", "Firefox", "profile + logins"))
     if os.path.exists(os.path.join(ad, "Local", "Google", "Chrome", "User Data",
                                     "Default", "Bookmarks")):
-        items.append({"id": "chrome", "label": "Chrome", "detail": "bookmarks + history"})
+        items.append(_item(os.path.join(ad, "Local", "Google", "Chrome", "User Data"), "chrome", "Chrome", "bookmarks + history"))
     if os.path.exists(os.path.join(ad, "Local", "Microsoft", "Edge", "User Data",
                                     "Default", "Bookmarks")):
-        items.append({"id": "edge", "label": "Edge", "detail": "bookmarks"})
+        items.append(_item(os.path.join(ad, "Local", "Microsoft", "Edge", "User Data"), "edge", "Edge", "bookmarks + history"))
     return bool(items), items, ", ".join(i["label"] for i in items)
 
 
@@ -87,12 +94,15 @@ def cat_office(user):
     items = []
     ms = os.path.join(HOST, "Users", user, "AppData", "Roaming", "Microsoft")
     if os.path.exists(os.path.join(ms, "UProof", "CUSTOM.DIC")):
-        items.append({"id": "dictionary", "label": "Custom dictionary", "detail": ""})
+        items.append(_item(os.path.join(ms, "UProof"), "dictionary", "Custom dictionary", "LibreOffice dictionary"))
     tpl = os.path.join(ms, "Templates")
     if os.path.isdir(tpl) and any(f.lower().endswith((".dotx", ".dotm", ".dot"))
                                   for f in os.listdir(tpl)):
-        items.append({"id": "templates", "label": "Word templates", "detail": ""})
-    return bool(items), items, "LibreOffice bridge"
+        items.append(_item(tpl, "templates", "Word templates", "LibreOffice templates"))
+    fonts = os.path.join(ms, "Fonts")
+    if os.path.isdir(fonts):
+        items.append(_item(fonts, "fonts", "Office fonts", "Fonts copied for document fidelity"))
+    return bool(items), items, "LibreOffice dictionary, templates, fonts, and format defaults"
 
 
 def cat_games(user):
@@ -100,7 +110,7 @@ def cat_games(user):
     for base in ("Program Files (x86)", "Program Files"):
         vdf = os.path.join(HOST, base, "Steam", "steamapps", "libraryfolders.vdf")
         if os.path.exists(vdf):
-            items.append({"id": "steam", "label": "Steam", "detail": "libraries + saves"})
+            items.append(_item(os.path.dirname(os.path.dirname(vdf)), "steam", "Steam", "libraries + saves"))
             break
     return bool(items), items, "Steam"
 
@@ -111,9 +121,27 @@ def cat_wifi(_user):
     if os.path.isdir(src):
         xmls = [f for f in os.listdir(src) if f.endswith(".xml")]
         if xmls:
-            items.append({"id": "wifi", "label": "Saved Wi-Fi networks",
-                          "detail": f"{len(xmls)} profile(s)"})
-    return bool(items), items, f"{len(items) and items[0]['detail'] or ''}"
+            import re
+            importable = enterprise = 0
+            for name in xmls:
+                try:
+                    text = open(os.path.join(src, name), errors="ignore").read()
+                except OSError:
+                    continue
+                auth = re.search(r"<authentication>([^<]+)", text, re.I)
+                if auth and auth.group(1).lower() in {"wpa2", "wpa3", "wpa2psk", "wpa3sae", "open", "shared"}:
+                    importable += 1
+                elif auth:
+                    enterprise += 1
+                else:
+                    importable += 1
+            if importable:
+                items.append({"id": "wifi-importable", "label": "Open / PSK / SAE networks",
+                              "detail": f"{importable} profile(s)", "fileCount": importable, "sizeBytes": 0})
+            if enterprise:
+                items.append({"id": "wifi-enterprise", "label": "Enterprise networks",
+                              "detail": f"{enterprise} detected; credentials are not copied", "fileCount": enterprise, "sizeBytes": 0})
+    return bool(items), items, ", ".join(i["detail"] for i in items)
 
 
 def cat_wsl(user):
@@ -128,8 +156,7 @@ def cat_wsl(user):
                 found = True
                 break
     if found:
-        items.append({"id": "wsl", "label": "WSL environment",
-                      "detail": "dotfiles + Brewfile"})
+        items.append(_item(local, "wsl", "WSL environment", "dotfiles + package/Brewfile inventory"))
     return bool(items), items, "dotfiles + packages"
 
 
@@ -137,9 +164,26 @@ def cat_look(_user):
     items = []
     if _exists("wootc", "install", "slurp", "slurp.json") or \
        _exists("wootc", "install", "slurp.json"):
-        items.append({"id": "look", "label": "Windows look",
-                      "detail": "wallpaper, accent, pins"})
+        slurp = os.path.join(HOST, "wootc", "install", "slurp", "slurp.json")
+        if not os.path.exists(slurp):
+            slurp = os.path.join(HOST, "wootc", "install", "slurp.json")
+        try:
+            keys = json.load(open(slurp)).keys()
+        except (OSError, ValueError):
+            keys = ("look",)
+        for key in keys:
+            items.append({"id": f"look-{key}", "label": key.replace("Apps", " apps"),
+                          "detail": "Windows-style setting", "fileCount": 1, "sizeBytes": 0})
     return bool(items), items, "wallpaper + theme"
+
+
+def cat_identity(user):
+    root = os.path.join(HOST, "Users", user)
+    if not os.path.isdir(root):
+        return False, [], ""
+    items = [{"id": "identity", "label": "Name, locale, and avatar",
+              "detail": "Non-secret account preferences only", "fileCount": 1, "sizeBytes": 0}]
+    return True, items, "Password is never migrated"
 
 
 CATEGORIES = [
@@ -150,6 +194,7 @@ CATEGORIES = [
     ("wifi",     "Wi-Fi networks",    cat_wifi),
     ("wsl",      "WSL / developer",   cat_wsl),
     ("look",     "Windows look",      cat_look),
+    ("identity", "Identity",           cat_identity),
 ]
 
 

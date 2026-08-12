@@ -54,12 +54,33 @@ def is_enabled(user, category):
     return True
 
 
+def is_item_enabled(user, category, item):
+    """Return whether an individual discovered item remains selected."""
+    path = selection_path(user)
+    if not path or not os.path.isfile(path):
+        return True
+    try:
+        data = json.load(open(path))
+    except Exception:
+        return True
+    for _winuser, cats in data.get("selection", {}).items():
+        entry = cats.get(category)
+        if not isinstance(entry, dict) or entry.get("on") is False:
+            continue
+        items = entry.get("items", {})
+        if items.get(item) is False:
+            return False
+    return True
+
+
 def main(argv):
     if len(argv) < 3:
-        print("usage: wootc-selection <linuxuser> <category>", file=sys.stderr)
+        print("usage: wootc-selection <linuxuser> <category> [item]", file=sys.stderr)
         print("categories: " + ", ".join(CATEGORIES), file=sys.stderr)
         return 2
-    return 0 if is_enabled(argv[1], argv[2]) else 1
+    if not is_enabled(argv[1], argv[2]):
+        return 1
+    return 0 if len(argv) < 4 or is_item_enabled(argv[1], argv[2], argv[3]) else 1
 
 
 if __name__ == "__main__":

@@ -30,6 +30,15 @@ class ManifestEngine:
             raise RuntimeError(out.stderr.strip() or "scan failed")
         return json.loads(out.stdout or "{}")
 
+    def load_selection(self, path=SELECTION_PATH):
+        """Read prior choices so reopening the GUI does not reset opt-outs."""
+        try:
+            with open(path) as fh:
+                data = json.load(fh)
+            return data.get("selection", {})
+        except (OSError, ValueError):
+            return {}
+
     @staticmethod
     def default_selection(manifest):
         """Everything discovered is ON by default (opt-out model)."""
@@ -45,6 +54,22 @@ class ManifestEngine:
                 }
             sel[u["winUser"]] = cats
         return sel
+
+    @staticmethod
+    def merge_selection(manifest, previous):
+        """Default new discoveries on while preserving explicit old opt-outs."""
+        selection = ManifestEngine.default_selection(manifest)
+        for user, cats in selection.items():
+            old_cats = previous.get(user, {})
+            for cid, entry in cats.items():
+                old = old_cats.get(cid, {})
+                if isinstance(old, dict) and old.get("on") is False:
+                    entry["on"] = False
+                old_items = old.get("items", {}) if isinstance(old, dict) else {}
+                for iid in entry["items"]:
+                    if old_items.get(iid) is False:
+                        entry["items"][iid] = False
+        return selection
 
     def write_selection(self, selection, path=SELECTION_PATH):
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -91,6 +116,7 @@ def build_gui():
             super().__init__(application=app, title="Bring over from Windows",
                              default_width=560, default_height=640)
             self.selection = {}
+            self.manifest = {}
             tb = Adw.ToolbarView()
             tb.add_top_bar(Adw.HeaderBar())
             self.body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
@@ -121,7 +147,8 @@ def build_gui():
                 man = eng.scan()
             except Exception as e:
                 self._msg("Couldn't scan", str(e)); return
-            self.selection = ManifestEngine.default_selection(man)
+            self.manifest = man
+            self.selection = ManifestEngine.merge_selection(man, eng.load_selection())
 
             for u in man.get("users", []):
                 if len(man["users"]) > 1:
@@ -134,12 +161,12 @@ def build_gui():
                         continue
                     any_present = True
                     exp = Adw.ExpanderRow(title=c["label"], subtitle=c["summary"])
-                    sw = Gtk.Switch(active=True, valign=Gtk.Align.CENTER)
+                    sw = Gtk.Switch(active=self.selection[u["winUser"]][c["id"]]["on"], valign=Gtk.Align.CENTER)
                     sw.connect("notify::active", self._on_cat, u["winUser"], c["id"])
                     exp.add_prefix(sw)
                     for it in c.get("items", []):
                         row = Adw.ActionRow(title=it["label"], subtitle=it.get("detail", ""))
-                        isw = Gtk.Switch(active=True, valign=Gtk.Align.CENTER)
+                        isw = Gtk.Switch(active=self.selection[u["winUser"]][c["id"]]["items"].get(it["id"], True), valign=Gtk.Align.CENTER)
                         isw.connect("notify::active", self._on_item,
                                     u["winUser"], c["id"], it["id"])
                         row.add_suffix(isw)
