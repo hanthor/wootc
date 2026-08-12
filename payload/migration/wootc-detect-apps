@@ -104,12 +104,12 @@ if [[ -d "$TG" ]]; then
         add telegram org.telegram.desktop portable true \
             "Your session and chats moved — Telegram opens signed in."
     else
-        add telegram org.telegram.desktop portable false "Linux Telegram already has data; not overwritten."
+        add telegram org.telegram.desktop relink false \
+            "Linux Telegram already exists. Scan the QR code or enter phone code to link."
     fi
 fi
 
-# Signal Desktop — portable ONLY if the db key is still plaintext in
-# config.json (older installs). New installs DPAPI-encrypt it.
+# Signal Desktop — phone-linked app; guided re-link flow.
 SG="$W/AppData/Roaming/Signal"
 if [[ -d "$SG" ]]; then
     if [[ -f "$SG/config.json" ]] && grep -q '"key"' "$SG/config.json" && ! grep -q 'encryptedKey' "$SG/config.json"; then
@@ -120,15 +120,15 @@ if [[ -d "$SG" ]]; then
             add signal org.signal.Signal portable true "Message history moved (legacy key format)."
         fi
     else
-        add signal org.signal.Signal signin false \
-            "Signal locks its database to Windows. Re-link with your phone (Settings > Linked Devices); history stays on the phone."
+        add signal org.signal.Signal relink false \
+            "Signal locks database to Windows. Re-link with your phone: Settings > Linked Devices > Scan QR."
     fi
 fi
 
-# WhatsApp — Store/UWP app; no official Linux client.
+# WhatsApp — Store/UWP app; guided web re-link flow.
 [[ -d "$W/AppData/Local/Packages" ]] && ls "$W/AppData/Local/Packages" 2>/dev/null | grep -qi whatsapp && \
-    add whatsapp "" signin false \
-        "No official Linux app. Use web.whatsapp.com — scan the QR with your phone and chats appear."
+    add whatsapp "" relink false \
+        "No official Linux app. Open web.whatsapp.com and scan the QR with Linked Devices."
 
 # Thunderbird — profiles are portable like Firefox's.
 TB="$W/AppData/Roaming/Thunderbird"
