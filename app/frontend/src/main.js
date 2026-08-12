@@ -870,6 +870,7 @@ const APP_ICONS = {
 const SESSION_BADGE = {
   portable: { label: '✓ Signed in', cls: 'ok' },
   signin:   { label: 'Sign in once', cls: '' },
+  relink:   { label: 'Re-link needed (2 steps)', cls: '' },
   none:     { label: 'Re-link needed', cls: '' },
 };
 
@@ -877,15 +878,85 @@ function renderAppRow(a) {
   const row = el('div');
   row.style.cssText = 'display:flex;align-items:center;gap:12px;background:var(--bg-card);border:1.5px solid var(--border);border-radius:8px;padding:10px 16px';
   const badge = SESSION_BADGE[a.session] || SESSION_BADGE.signin;
-  row.innerHTML = `
+  
+  const left = el('div');
+  left.style.cssText = 'display:flex;align-items:center;gap:12px;flex:1;min-width:0';
+  left.innerHTML = `
     <span style="font-size:18px">${APP_ICONS[a.app] || '📦'}</span>
     <div style="flex:1;min-width:0">
       <div style="font-weight:600;font-size:13px;text-transform:capitalize">${a.app}</div>
       <div style="font-size:11.5px;color:var(--text-muted);margin-top:1px">${a.note || ''}</div>
     </div>
-    <span class="chip ${badge.cls}" style="flex-shrink:0">${badge.label}</span>
   `;
+  row.appendChild(left);
+
+  if (a.session === 'relink') {
+    const relinkBtn = btn('Re-link Guide', 'btn btn-ghost', () => openRelinkModal(a));
+    relinkBtn.style.fontSize = '12px';
+    relinkBtn.style.flexShrink = '0';
+    row.appendChild(relinkBtn);
+  }
+  
+  const chipSpan = el('span', `chip ${badge.cls}`);
+  chipSpan.style.flexShrink = '0';
+  chipSpan.textContent = badge.label;
+  row.appendChild(chipSpan);
   return row;
+}
+
+function openRelinkModal(a) {
+  const modal = el('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  const content = el('div');
+  content.style.cssText = 'background:var(--bg-card);border:1.5px solid var(--border);border-radius:12px;padding:20px;max-width:480px;width:100%;box-shadow:0 10px 25px rgba(0,0,0,0.5)';
+  
+  let title = 'Re-link Phone App';
+  let stepsHtml = '';
+
+  if (a.app === 'signal') {
+    title = 'Signal: Phone Re-link Steps';
+    stepsHtml = `
+      <ol style="margin:12px 0;padding-left:20px;font-size:13px;color:var(--text-dim);display:flex;flex-direction:column;gap:8px">
+        <li>Open Signal on your phone.</li>
+        <li>Go to <strong>Settings → Linked Devices</strong>.</li>
+        <li>Tap <strong>Link New Device</strong> and scan the QR code displayed in Signal Desktop.</li>
+      </ol>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">Note: Message history stays on your phone by design.</div>
+    `;
+  } else if (a.app === 'whatsapp') {
+    title = 'WhatsApp: Web Re-link Steps';
+    stepsHtml = `
+      <ol style="margin:12px 0;padding-left:20px;font-size:13px;color:var(--text-dim);display:flex;flex-direction:column;gap:8px">
+        <li>Open <strong>web.whatsapp.com</strong> in your browser.</li>
+        <li>Open WhatsApp on your phone and go to <strong>Settings → Linked Devices</strong>.</li>
+        <li>Tap <strong>Link a Device</strong> and scan the QR code on screen.</li>
+      </ol>
+    `;
+  } else if (a.app === 'telegram') {
+    title = 'Telegram: Re-link / Fallback Steps';
+    stepsHtml = `
+      <ol style="margin:12px 0;padding-left:20px;font-size:13px;color:var(--text-dim);display:flex;flex-direction:column;gap:8px">
+        <li>Open Telegram Desktop on Linux.</li>
+        <li>Scan the displayed QR code using Telegram on your phone (<strong>Settings → Devices → Link Desktop Device</strong>).</li>
+        <li>Alternatively, enter your phone number to receive a login code.</li>
+      </ol>
+    `;
+  } else {
+    stepsHtml = `<div style="font-size:13px;color:var(--text-dim);margin:12px 0">${a.note || 'Follow phone app settings to link device.'}</div>`;
+  }
+
+  content.innerHTML = `
+    <div style="font-weight:600;font-size:16px;margin-bottom:8px">${title}</div>
+    ${stepsHtml}
+  `;
+
+  const footer = el('div');
+  footer.style.cssText = 'display:flex;justify-content:flex-end;margin-top:16px';
+  const closeBtn = btn('Done', 'btn btn-primary', () => document.body.removeChild(modal));
+  footer.appendChild(closeBtn);
+  content.appendChild(footer);
+  modal.appendChild(content);
+  document.body.appendChild(modal);
 }
 
 function migrateAction(c) {
