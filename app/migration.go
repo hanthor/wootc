@@ -70,6 +70,12 @@ func (a *App) GetAppMigrations() ([]AppMigration, error) {
 	return appMigrations()
 }
 
+// GetSessionCandidates reports which Windows sessions were proven
+// decryptable. It never returns tokens or decrypted payloads.
+func (a *App) GetSessionCandidates() ([]SessionCandidate, error) {
+	return sessionCandidates()
+}
+
 // SetSessionConsent records the user's explicit per-app choice. It does not
 // copy a token by itself; the Windows-online exporter consumes the same
 // decision when a supported install is staged.

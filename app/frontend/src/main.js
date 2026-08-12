@@ -1,5 +1,5 @@
 import '../src/style.css';
-import { GetImages, GetSystemInfo, StartInstall, CancelInstall, GetStatus, Reboot, ExistingInstallFound, GetMode, GetMigrationCategories, ConvertCategory, ImportBrowserData, GetAppMigrations, GetOfficeMigration, SetSessionConsent, ReinstallApps, GetMigrationProfile, SetMigrationProfile, GetLookMigration, GetBranding, CreateDataPartition, GetUninstallInfo, UninstallWith, GetVMCapability, BootInVM, DefragDrive, GetFreshVMCapability, TryInVMFresh, InstallPreviewForReal, E2EDriveDirective, E2EDriveReport, GetSupportPolicy } from '../wailsjs/go/main/App';
+import { GetImages, GetSystemInfo, StartInstall, CancelInstall, GetStatus, Reboot, ExistingInstallFound, GetMode, GetMigrationCategories, ConvertCategory, ImportBrowserData, GetAppMigrations, GetOfficeMigration, GetSessionCandidates, SetSessionConsent, ReinstallApps, GetMigrationProfile, SetMigrationProfile, GetLookMigration, GetBranding, CreateDataPartition, GetUninstallInfo, UninstallWith, GetVMCapability, BootInVM, DefragDrive, GetFreshVMCapability, TryInVMFresh, InstallPreviewForReal, E2EDriveDirective, E2EDriveReport, GetSupportPolicy } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { fmtSize } from './lib/format.js';
 import { el, btn, chip, warningBanner, inputField } from './lib/ui.js';
@@ -14,6 +14,7 @@ const state = {
   brand: null,         // partner/enterprise branding (themeable)
   categories: [],      // migration dashboard rows
   apps: [],            // detected app migrations
+  sessionCandidates: [], // Windows-online DPAPI findings; never tokens
   office: null,        // MS Office → LibreOffice summary
   migrationProfile: null,
   look: null,
@@ -31,6 +32,7 @@ const state = {
     encryption: 'tpm2-luks',
     luksPassphrase: '',
     windowsLook: false,
+    sessionConsent: {},
   },
   progress: {
     step: '',
@@ -127,16 +129,18 @@ async function init() {
     return;
   }
 
-  const [images, sysinfo, existing, policy] = await Promise.all([
+  const [images, sysinfo, existing, policy, sessionCandidates] = await Promise.all([
     GetImages(),
     GetSystemInfo(),
     ExistingInstallFound(),
     GetSupportPolicy().catch(() => ({ channel: 'alpha', experimentalImages: false, bitlockerSupported: false, customImageAllowed: false })),
+    GetSessionCandidates().catch(() => []),
   ]);
 
   state.policy = policy;
   state.images = images || [];
   state.sysinfo = sysinfo;
+  state.sessionCandidates = sessionCandidates || [];
   state.selected = state.images[0] || null;
   applyImageDefaults(state.selected);
 
@@ -431,6 +435,31 @@ function renderLaunchpad() {
   if (state.config.windowsLook) lookRow.style.borderColor = 'var(--primary)';
   fields.appendChild(lookRow);
 
+  // Auth-token migration is a separate, explicit opt-in from look/data
+  // migration. The backend defaults every app to off and still refuses
+  // Discord/Slack because those services prefer relinking.
+  const movableSessions = state.sessionCandidates.filter(c => c.portable && c.recommend === 'copy');
+  if (movableSessions.length) {
+    const sessionBox = el('div');
+    sessionBox.style.cssText = 'margin-top:8px;padding:8px;border:1.5px solid var(--border);border-radius:6px';
+    sessionBox.innerHTML = `<div style="font-size:12px;font-weight:600">Signed-in app sessions</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px">Optional: move these sessions while Windows is online. Off means you will sign in once on Linux.</div>`;
+    movableSessions.forEach(candidate => {
+      const row = el('label');
+      row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:12px;margin-top:7px';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = !!state.config.sessionConsent[candidate.app];
+      checkbox.style.marginTop = '1px';
+      checkbox.onchange = () => { state.config.sessionConsent[candidate.app] = checkbox.checked; };
+      const copy = el('span');
+      copy.innerHTML = `<b style="text-transform:capitalize">${candidate.app}</b><br><span style="color:var(--text-muted)">${candidate.note}</span>`;
+      row.appendChild(checkbox);
+      row.appendChild(copy);
+      sessionBox.appendChild(row);
+    });
+    fields.appendChild(sessionBox);
+  }
+
   const advanced = el('details');
   // Every control change re-renders the form; without persisting the open
   // state the panel snaps shut on each toggle — the user opens Advanced,
@@ -607,6 +636,7 @@ async function installPreviewForReal() {
       encryption: state.config.encryption,
       luksPassphrase: state.config.luksPassphrase,
       windowsLook: state.config.windowsLook,
+      sessionConsent: state.config.sessionConsent,
     });
     state.screen = 'done';
     render();
@@ -1223,6 +1253,7 @@ async function startInstall() {
       storageDrive,
       encryption:     state.config.encryption,
       luksPassphrase: state.config.luksPassphrase,
+      sessionConsent: state.config.sessionConsent,
     });
   } catch (e) {
     state.progress.error = String(e);
