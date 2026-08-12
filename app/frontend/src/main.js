@@ -1,5 +1,5 @@
 import '../src/style.css';
-import { GetImages, GetSystemInfo, StartInstall, CancelInstall, GetStatus, Reboot, ExistingInstallFound, GetMode, GetMigrationCategories, ConvertCategory, ImportBrowserData, GetAppMigrations, GetOfficeMigration, GetBranding, CreateDataPartition, GetUninstallInfo, UninstallWith, GetVMCapability, BootInVM, DefragDrive, GetFreshVMCapability, TryInVMFresh, InstallPreviewForReal, E2EDriveDirective, E2EDriveReport, GetSupportPolicy } from '../wailsjs/go/main/App';
+import { GetImages, GetSystemInfo, StartInstall, CancelInstall, GetStatus, Reboot, ExistingInstallFound, GetMode, GetMigrationCategories, ConvertCategory, ImportBrowserData, GetAppMigrations, GetOfficeMigration, SetSessionConsent, ReinstallApps, GetMigrationProfile, SetMigrationProfile, GetLookMigration, GetBranding, CreateDataPartition, GetUninstallInfo, UninstallWith, GetVMCapability, BootInVM, DefragDrive, GetFreshVMCapability, TryInVMFresh, InstallPreviewForReal, E2EDriveDirective, E2EDriveReport, GetSupportPolicy } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { fmtSize } from './lib/format.js';
 import { el, btn, chip, warningBanner, inputField } from './lib/ui.js';
@@ -15,6 +15,8 @@ const state = {
   categories: [],      // migration dashboard rows
   apps: [],            // detected app migrations
   office: null,        // MS Office → LibreOffice summary
+  migrationProfile: null,
+  look: null,
   converting: {},      // category id → percent while a conversion runs
   selected: null,      // selected Image
   config: {
@@ -155,14 +157,18 @@ async function init() {
 
 async function refreshCategories() {
   try {
-    const [cats, apps, office] = await Promise.all([
-      GetMigrationCategories(),
+    const [cats, apps, office, profile, look] = await Promise.all([
+      GetMigrationCategories().catch(() => []),
       GetAppMigrations().catch(() => []),
       GetOfficeMigration().catch(() => null),
+      GetMigrationProfile().catch(() => null),
+      GetLookMigration().catch(() => null),
     ]);
     state.categories = cats || [];
     state.apps = apps || [];
     state.office = office && office.present ? office : null;
+    state.migrationProfile = profile;
+    state.look = look;
   } catch (e) {
     console.error(e);
     state.categories = [];
@@ -785,7 +791,60 @@ function renderMigrateScreen() {
     al.style.cssText = 'display:flex;flex-direction:column;gap:8px';
     state.apps.forEach(a => al.appendChild(renderAppRow(a)));
     appsSection.appendChild(al);
+    const reinstall = btn('Reinstall detected apps', 'btn btn-ghost', async () => {
+      reinstall.disabled = true;
+      reinstall.textContent = 'Installing…';
+      try {
+        await ReinstallApps();
+        alert('The detected Flatpak apps were installed. App data and credentials were not copied.');
+      } catch (e) {
+        alert('Could not reinstall detected apps: ' + e);
+      } finally {
+        reinstall.disabled = false;
+        reinstall.textContent = 'Reinstall detected apps';
+      }
+    });
+    reinstall.style.cssText = 'font-size:12px;margin-top:8px';
+    appsSection.appendChild(reinstall);
     scroll.appendChild(appsSection);
+  }
+
+  if (state.migrationProfile) {
+    const profile = el('div');
+    profile.appendChild(sectionLabel('Windows profile mapping'));
+    const card = el('div');
+    card.style.cssText = 'background:var(--bg-card);border:1.5px solid var(--border);border-radius:8px;padding:12px 16px;display:flex;align-items:center;gap:10px';
+    const copy = el('div');
+    copy.style.flex = '1';
+    copy.innerHTML = `<div style="font-size:12.5px;font-weight:600">Linux <code>${state.migrationProfile.linuxUser || 'unknown'}</code> → Windows <code>${state.migrationProfile.windowsProfile || 'not mapped'}</code></div><div style="font-size:11.5px;color:var(--text-muted);margin-top:3px">${state.migrationProfile.note || ''}</div>`;
+    card.appendChild(copy);
+    const choose = btn('Choose', 'btn btn-ghost', async () => {
+      const value = prompt('Windows profile folder name:', state.migrationProfile.windowsProfile || '');
+      if (!value) return;
+      try { await SetMigrationProfile(value.trim()); await refreshCategories(); }
+      catch (e) { alert('Could not map that Windows profile: ' + e); }
+    });
+    choose.style.fontSize = '12px';
+    card.appendChild(choose);
+    profile.appendChild(card);
+    scroll.appendChild(profile);
+  }
+
+  if (state.look) {
+    const look = el('div');
+    look.appendChild(sectionLabel('Windows look'));
+    const card = el('div');
+    card.style.cssText = 'background:var(--bg-card);border:1.5px solid var(--border);border-radius:8px;padding:12px 16px';
+    const status = state.look.applied ? '✓ Applied to this Linux user' : state.look.available ? 'Ready to apply on first login' : 'Not collected';
+    card.innerHTML = `<div style="font-size:12.5px;font-weight:600">${status}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:3px">${state.look.note || ''}</div>`;
+    if (state.look.items?.length) {
+      const items = el('div');
+      items.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px';
+      state.look.items.forEach(item => items.appendChild(chip(item, false)));
+      card.appendChild(items);
+    }
+    look.appendChild(card);
+    scroll.appendChild(look);
   }
 
   if (state.office) {
@@ -890,13 +949,31 @@ function renderAppRow(a) {
   `;
   row.appendChild(left);
 
+  if (a.consentAvailable) {
+    const consent = el('label');
+    consent.style.cssText = 'display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);flex-shrink:0';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = !!a.consent;
+    checkbox.title = 'Allow session token copy when the Windows-online exporter supports this app';
+    checkbox.onchange = async () => {
+      checkbox.disabled = true;
+      try { await SetSessionConsent(a.app, checkbox.checked); a.consent = checkbox.checked; }
+      catch (e) { checkbox.checked = !checkbox.checked; alert('Could not save session consent: ' + e); }
+      finally { checkbox.disabled = false; }
+    };
+    consent.appendChild(checkbox);
+    consent.appendChild(document.createTextNode('Allow session copy'));
+    row.appendChild(consent);
+  }
+
   if (a.session === 'relink') {
     const relinkBtn = btn('Re-link Guide', 'btn btn-ghost', () => openRelinkModal(a));
     relinkBtn.style.fontSize = '12px';
     relinkBtn.style.flexShrink = '0';
     row.appendChild(relinkBtn);
   }
-  
+
   const chipSpan = el('span', `chip ${badge.cls}`);
   chipSpan.style.flexShrink = '0';
   chipSpan.textContent = badge.label;

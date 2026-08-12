@@ -57,10 +57,41 @@ export interface BridgeCategory {
   reversible: boolean;
 }
 
+export interface AppMigration {
+  app: string;
+  flatpak: string;
+  session: 'portable' | 'signin' | 'relink' | 'none';
+  copied: boolean;
+  note: string;
+  consentAvailable: boolean;
+  consent: boolean;
+}
+
+export interface MigrationProfile {
+  linuxUser: string;
+  windowsProfile: string;
+  matched: boolean;
+  note: string;
+}
+
+export interface LookMigration {
+  available: boolean;
+  applied: boolean;
+  items: string[];
+  note: string;
+}
+
 export function GetMode(): Promise<'installer' | 'migration'>;
 export function GetMigrationCategories(): Promise<BridgeCategory[]>;
 export function ConvertCategory(id: string): Promise<void>;
 export function ImportBrowserData(): Promise<string>;
+export function GetAppMigrations(): Promise<AppMigration[]>;
+export function GetOfficeMigration(): Promise<any>;
+export function SetSessionConsent(app: string, consent: boolean): Promise<void>;
+export function ReinstallApps(): Promise<void>;
+export function GetMigrationProfile(): Promise<MigrationProfile>;
+export function SetMigrationProfile(profile: string): Promise<void>;
+export function GetLookMigration(): Promise<LookMigration>;
 export function GetImages(): Promise<Image[]>;
 export function GetSystemInfo(): Promise<SystemInfo>;
 export function StartInstall(cfg: InstallConfig): Promise<void>;

@@ -30,6 +30,26 @@ func appMigrations() ([]AppMigration, error) {
 	return nil, fmt.Errorf("migration dashboard is only available on the installed Linux system")
 }
 
+func setSessionConsent(string, bool) error {
+	return fmt.Errorf("session consent is only available on the installed Linux system")
+}
+
+func reinstallApps() error {
+	return fmt.Errorf("app reinstall is only available on the installed Linux system")
+}
+
+func migrationProfile() (MigrationProfile, error) {
+	return MigrationProfile{}, fmt.Errorf("profile mapping is only available on the installed Linux system")
+}
+
+func setMigrationProfile(string) error {
+	return fmt.Errorf("profile mapping is only available on the installed Linux system")
+}
+
+func lookMigration() (LookMigration, error) {
+	return LookMigration{}, fmt.Errorf("look migration is only available on the installed Linux system")
+}
+
 func officeMigration() (OfficeMigration, error) {
 	return OfficeMigration{}, fmt.Errorf("migration dashboard is only available on the installed Linux system")
 }
