@@ -134,7 +134,10 @@ async function init() {
     GetSystemInfo(),
     ExistingInstallFound(),
     GetSupportPolicy().catch(() => ({ channel: 'alpha', experimentalImages: false, bitlockerSupported: false, customImageAllowed: false })),
-    GetSessionCandidates().catch(() => []),
+    // A missing binding throws synchronously, which would escape a plain
+    // .catch() on the call and blank the whole launchpad; session candidates
+    // are optional, so absorb that too.
+    Promise.resolve().then(GetSessionCandidates).catch(() => []),
   ]);
 
   state.policy = policy;
