@@ -79,12 +79,22 @@ PYEOF
         *) keymgmt="" ;;
     esac
     if [[ "$tier" == "ent" || -z "$keymgmt" ]]; then
+        if [[ -n "${_u:-}" ]] && command -v wootc-selection >/dev/null 2>&1; then
+            wootc-selection "$_u" wifi wifi-enterprise >/dev/null 2>&1 || {
+                [[ "$?" -eq 1 ]] && { skipped+=("$ssid"); log "item skipped by chooser: $ssid"; continue; }
+            }
+        fi
         skipped+=("$ssid"); log "detected (not copied — enterprise/unknown): $ssid"
         continue
     fi
     if [[ "$keymgmt" != "none" && -z "$key" ]]; then
         skipped+=("$ssid"); log "detected (no cleartext key): $ssid"; continue
     fi
+	if [[ -n "${_u:-}" ]] && command -v wootc-selection >/dev/null 2>&1; then
+		wootc-selection "$_u" wifi wifi-importable >/dev/null 2>&1 || {
+			[[ "$?" -eq 1 ]] && { skipped+=("$ssid"); log "item skipped by chooser: $ssid"; continue; }
+		}
+	fi
 
     # Write the NetworkManager keyfile connection.
     dst="$DST/${ssid}.nmconnection"

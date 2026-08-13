@@ -60,3 +60,16 @@ PY
         [ "$status" -eq 0 ]
     done
 }
+
+@test "an explicitly disabled item is skipped while sibling items stay on" {
+    python3 - "$WOOTC_SELECTION" <<'PY'
+import json, sys
+json.dump({"version": 1, "selection": {"Alex": {
+    "files": {"on": True, "items": {"Documents": False, "Pictures": True}}
+}}}, open(sys.argv[1], "w"))
+PY
+    run "$SEL" alex files Documents
+    [ "$status" -eq 1 ]
+    run "$SEL" alex files Pictures
+    [ "$status" -eq 0 ]
+}
