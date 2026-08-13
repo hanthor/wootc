@@ -35,6 +35,7 @@ function makeApp(mock) {
     Reboot: () => P(),
     Uninstall: () => P(),
     GetMigrationCategories: () => P(mock.categories || []),
+    GetSessionCandidates: () => P(mock.sessionCandidates || []),
     GetAppMigrations: () => P(mock.apps || []),
     GetOfficeMigration: () => P(mock.office || { present: false }),
     ConvertCategory: () => P(),
