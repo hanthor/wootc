@@ -10,3 +10,12 @@ type SessionCandidate struct {
 	Note            string `json:"note"`
 	ConsentRequired bool   `json:"consentRequired"`
 }
+
+// SessionExport records the honest state of the online half of a session
+// migration. "staged" means only that an authenticated envelope containing
+// the app key was written; it is not a claim that the Linux app is signed in.
+type SessionExport struct {
+	App    string `json:"app"`
+	State  string `json:"state"` // staged | skipped | failed
+	Reason string `json:"reason,omitempty"`
+}

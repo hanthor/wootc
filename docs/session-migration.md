@@ -47,7 +47,8 @@ contract. `collectSessions` writes only decryptability findings. The install
 configuration's `sessionConsent` map is opt-in per app; missing and false
 entries do nothing. For a consented Chrome, Edge, or Spotify entry, the
 installer decrypts the DPAPI-protected Chromium master key while the user is
-online and writes `install/slurp/session/<app>.enc`.
+online and writes `install/slurp/session/<app>.enc`. It also writes an
+`exports.json` ledger whose state is `staged`, never `imported`.
 
 That file is an authenticated AES-256-GCM envelope. Its key is derived with
 HKDF-SHA256 from the Linux vault secret and a random per-envelope salt; the
@@ -61,6 +62,10 @@ app's SQLite/LevelDB values, and re-encrypt them with the Linux keyring. That
 work is deliberately separate because Chrome, Edge, and Spotify differ in
 database layout and token invalidation behavior. Discord and Slack remain
 re-link-only even when DPAPI can read their key.
+
+Until that consumer completes and records `imported`, the dashboard must show
+re-link/sign-in guidance rather than a signed-in result. A staged key is an
+implementation artifact, not evidence that a token transplant succeeded.
 
 **Phone-linked apps → guided re-link, not token theft.** Signal, WhatsApp,
 and (when token copy is declined) any messenger: the safest, most durable
