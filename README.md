@@ -269,7 +269,8 @@ renders inline on GitHub even before Pages redeploys.
 ## License
 
 The Windows installer components derived from [WubiUEFI](https://github.com/hakuna-m/wubiuefi)
-are **GPL-2.0**; the deployer initramfs and GRUB configuration are **MIT**.
+are **GPL-2.0** ([LICENSE-GPL-2.0](LICENSE-GPL-2.0)); the deployer initramfs
+and GRUB configuration are **MIT** ([LICENSE-MIT](LICENSE-MIT)).
 fisherman, bootc, bootupd, podman, and skopeo are separate binaries under their
 own (Apache-2.0) licenses, invoked over a process boundary. See
 [docs/SPEC.md](docs/SPEC.md#7-license) for details.
