@@ -155,14 +155,26 @@ async function init() {
   render();
 }
 
+// A missing Wails binding makes its generated wrapper throw synchronously, so
+// a plain `.catch()` on the call never runs and one absent optional method
+// would blank the whole dashboard. Degrade that section instead.
+async function optional(call, fallback) {
+  try {
+    return (await call()) ?? fallback;
+  } catch (e) {
+    console.error(e);
+    return fallback;
+  }
+}
+
 async function refreshCategories() {
   try {
     const [cats, apps, office, profile, look] = await Promise.all([
-      GetMigrationCategories().catch(() => []),
-      GetAppMigrations().catch(() => []),
-      GetOfficeMigration().catch(() => null),
-      GetMigrationProfile().catch(() => null),
-      GetLookMigration().catch(() => null),
+      optional(GetMigrationCategories, []),
+      optional(GetAppMigrations, []),
+      optional(GetOfficeMigration, null),
+      optional(GetMigrationProfile, null),
+      optional(GetLookMigration, null),
     ]);
     state.categories = cats || [];
     state.apps = apps || [];
