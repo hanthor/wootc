@@ -50,12 +50,11 @@ installer decrypts the DPAPI-protected Chromium master key while the user is
 online and writes `install/slurp/session/<app>.enc`. It also writes an
 `exports.json` ledger whose state is `staged`, never `imported`.
 
-That file is an authenticated AES-256-GCM envelope. Its key is derived with
-HKDF-SHA256 from the Linux vault secret and a random per-envelope salt; the
-DPAPI key is never written in clear. The app name is authenticated as
-associated data, so an envelope cannot be relabeled for another app. Files
-are created with mode `0600` and the export is best-effort: a failed export
-does not fail installation or claim that the session moved.
+That file is a versioned, authenticated AES-256-GCM envelope. Its key is
+derived with HKDF-SHA256 from the Linux vault secret and scoped to the app;
+the envelope uses a fresh random nonce and the DPAPI key is never written in
+clear. Files are created with mode `0600` and the export is best-effort: a
+failed export does not fail installation or claim that the session moved.
 
 The target-side consumer still must decrypt the envelope, enumerate the
 app's SQLite/LevelDB values, and re-encrypt them with the Linux keyring. That
