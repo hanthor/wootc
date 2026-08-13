@@ -99,6 +99,26 @@ export function GetOfficeMigration() {
   return window['go']['main']['App']['GetOfficeMigration']();
 }
 
+export function SetSessionConsent(arg1, arg2) {
+  return window['go']['main']['App']['SetSessionConsent'](arg1, arg2);
+}
+
+export function ReinstallApps() {
+  return window['go']['main']['App']['ReinstallApps']();
+}
+
+export function GetMigrationProfile() {
+  return window['go']['main']['App']['GetMigrationProfile']();
+}
+
+export function SetMigrationProfile(arg1) {
+  return window['go']['main']['App']['SetMigrationProfile'](arg1);
+}
+
+export function GetLookMigration() {
+  return window['go']['main']['App']['GetLookMigration']();
+}
+
 export function E2EDriveDirective() {
   return window['go']['main']['App']['E2EDriveDirective']();
 }

@@ -22,6 +22,10 @@ import (
 
 var bridgeFolders = []string{"Documents", "Pictures", "Downloads", "Music", "Videos", "Desktop"}
 
+var tokenConsentApps = map[string]bool{
+	"chrome": true, "edge": true, "spotify": true,
+}
+
 func detectMode() string {
 	if isMounted("/run/wootc/host") {
 		return "migration"
@@ -46,7 +50,10 @@ func migrationCategories() ([]BridgeCategory, error) {
 	if err != nil {
 		return nil, err
 	}
-	winProfile := filepath.Join("/run/wootc/host/Users", u.Username)
+	winProfile, _, err := resolvedWindowsProfile(u)
+	if err != nil {
+		return nil, err
+	}
 	stateDir := filepath.Join(u.HomeDir, ".config", "wootc")
 
 	var cats []BridgeCategory
@@ -193,7 +200,98 @@ func appMigrations() ([]AppMigration, error) {
 	if err := unmarshalJSON(data, &parsed); err != nil {
 		return nil, err
 	}
+	consents := readSessionConsents(filepath.Join(u.HomeDir, ".config", "wootc", "session-consent.json"))
+	for i := range parsed.Apps {
+		parsed.Apps[i].ConsentAvailable = tokenConsentApps[parsed.Apps[i].App] && parsed.Apps[i].Session == "signin"
+		parsed.Apps[i].Consent = parsed.Apps[i].ConsentAvailable && consents[parsed.Apps[i].App]
+	}
 	return parsed.Apps, nil
+}
+
+func setSessionConsent(app string, consent bool) error {
+	u, err := currentUser()
+	if err != nil {
+		return err
+	}
+	apps, err := appMigrations()
+	if err != nil {
+		return err
+	}
+	allowed := false
+	for _, item := range apps {
+		if item.App == app && item.ConsentAvailable {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return fmt.Errorf("session consent is not available for %q", app)
+	}
+	path := filepath.Join(u.HomeDir, ".config", "wootc", "session-consent.json")
+	consents := readSessionConsents(path)
+	if consent {
+		consents[app] = true
+	} else {
+		delete(consents, app)
+	}
+	return marshalJSONToFile(path, consents)
+}
+
+func readSessionConsents(path string) map[string]bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]bool{}
+	}
+	var consents map[string]bool
+	if unmarshalJSON(data, &consents) != nil || consents == nil {
+		return map[string]bool{}
+	}
+	return consents
+}
+
+func reinstallApps() error {
+	u, err := currentUser()
+	if err != nil {
+		return err
+	}
+	apps, err := appMigrations()
+	if err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(apps))
+	seen := map[string]bool{}
+	for _, app := range apps {
+		if app.Flatpak == "" || seen[app.Flatpak] || !validFlatpakID(app.Flatpak) {
+			continue
+		}
+		seen[app.Flatpak] = true
+		ids = append(ids, app.Flatpak)
+	}
+	if len(ids) == 0 {
+		return fmt.Errorf("no reinstallable Flatpak apps were detected")
+	}
+	args := append([]string{"install", "--user", "-y", "flathub"}, ids...)
+	cmd := exec.Command("flatpak", args...)
+	cmd.Dir = u.HomeDir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("flatpak install: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+func validFlatpakID(id string) bool {
+	if id == "" {
+		return false
+	}
+	if strings.Contains(id, "..") || id[0] == '.' || id[len(id)-1] == '.' {
+		return false
+	}
+	for _, r := range id {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '.' && r != '-' && r != '_' {
+			return false
+		}
+	}
+	return strings.Contains(id, ".")
 }
 
 func officeMigration() (OfficeMigration, error) {
@@ -218,11 +316,126 @@ func importBrowserData() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out, err := exec.Command("/var/usrlocal/bin/wootc-import-browser", u.Username).CombinedOutput()
+	_, winProfile, err := resolvedWindowsProfile(u)
+	if err != nil {
+		return "", err
+	}
+	out, err := exec.Command("/var/usrlocal/bin/wootc-import-browser", winProfile, u.Username).CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("browser import: %w", err)
 	}
 	return string(out), nil
+}
+
+func migrationProfile() (MigrationProfile, error) {
+	u, err := currentUser()
+	if err != nil {
+		return MigrationProfile{}, err
+	}
+	_, profile, resolveErr := resolvedWindowsProfile(u)
+	if resolveErr != nil {
+		return MigrationProfile{LinuxUser: u.Username, Note: resolveErr.Error()}, nil
+	}
+	matched := strings.EqualFold(profile, u.Username)
+	note := "Windows profile is mapped automatically."
+	if !matched {
+		note = "Linux and Windows names differ; this profile is being used for the bridges."
+	}
+	return MigrationProfile{LinuxUser: u.Username, WindowsProfile: profile, Matched: matched, Note: note}, nil
+}
+
+func setMigrationProfile(profile string) error {
+	u, err := currentUser()
+	if err != nil {
+		return err
+	}
+	root := "/run/wootc/host/Users"
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return fmt.Errorf("list Windows profiles: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() && strings.EqualFold(entry.Name(), profile) {
+			path := filepath.Join(u.HomeDir, ".config", "wootc", "profile-map.json")
+			if err := marshalJSONToFile(path, map[string]string{"windowsProfile": entry.Name()}); err != nil {
+				return err
+			}
+			// Re-run the read-only app/Office collectors immediately so the
+			// dashboard reflects the newly selected profile without waiting for
+			// the next bridge-service restart.
+			if _, lookErr := exec.LookPath("wootc-detect-apps"); lookErr == nil {
+				if output, runErr := exec.Command("wootc-detect-apps", entry.Name(), u.Username).CombinedOutput(); runErr != nil {
+					return fmt.Errorf("refresh app bridge: %w: %s", runErr, strings.TrimSpace(string(output)))
+				}
+			}
+			if _, lookErr := exec.LookPath("wootc-office-bridge"); lookErr == nil {
+				if output, runErr := exec.Command("wootc-office-bridge", entry.Name(), u.Username).CombinedOutput(); runErr != nil {
+					return fmt.Errorf("refresh Office bridge: %w: %s", runErr, strings.TrimSpace(string(output)))
+				}
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("Windows profile %q was not found", profile)
+}
+
+func resolvedWindowsProfile(u *user.User) (path, profile string, err error) {
+	root := "/run/wootc/host/Users"
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", "", fmt.Errorf("Windows profiles are unavailable: %w", err)
+	}
+	var profiles []string
+	for _, entry := range entries {
+		if entry.IsDir() && entry.Name() != "Public" && entry.Name() != "Default" && entry.Name() != "Default User" && entry.Name() != "All Users" {
+			profiles = append(profiles, entry.Name())
+		}
+	}
+	mapPath := filepath.Join(u.HomeDir, ".config", "wootc", "profile-map.json")
+	var mapping struct {
+		WindowsProfile string `json:"windowsProfile"`
+	}
+	if data, readErr := os.ReadFile(mapPath); readErr == nil && unmarshalJSON(data, &mapping) == nil {
+		for _, candidate := range profiles {
+			if strings.EqualFold(candidate, mapping.WindowsProfile) {
+				return filepath.Join(root, candidate), candidate, nil
+			}
+		}
+	}
+	for _, candidate := range profiles {
+		if strings.EqualFold(candidate, u.Username) {
+			return filepath.Join(root, candidate), candidate, nil
+		}
+	}
+	if len(profiles) == 1 {
+		return filepath.Join(root, profiles[0]), profiles[0], nil
+	}
+	return "", "", fmt.Errorf("could not map Linux user %q to one Windows profile; choose a profile in Migration settings", u.Username)
+}
+
+func lookMigration() (LookMigration, error) {
+	u, err := currentUser()
+	if err != nil {
+		return LookMigration{}, err
+	}
+	path, _, resolveErr := resolvedWindowsProfile(u)
+	if resolveErr != nil {
+		return LookMigration{Note: resolveErr.Error()}, nil
+	}
+	slurp := filepath.Join(path, "..", "..", "wootc", "install", "slurp", "slurp.json")
+	data, err := os.ReadFile(slurp)
+	if err != nil {
+		return LookMigration{Note: "Windows look was not selected during install."}, nil
+	}
+	var raw map[string]any
+	if err := unmarshalJSON(data, &raw); err != nil {
+		return LookMigration{}, err
+	}
+	items := make([]string, 0, len(raw))
+	for key := range raw {
+		items = append(items, key)
+	}
+	return LookMigration{Available: true, Applied: fileExists(filepath.Join(u.HomeDir, ".config", "wootc", "look-applied")), Items: items, Note: "Windows look settings are applied once per Linux user and can be skipped from the migration chooser."}, nil
 }
 
 // ── small fs helpers ─────────────────────────────────────────────────────────

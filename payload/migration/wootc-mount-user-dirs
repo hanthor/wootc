@@ -317,22 +317,51 @@ fi
 
 # App-data bridge: per-user detection + portable-state copy (best-effort).
 if command -v wootc-detect-apps >/dev/null; then
+    # The Linux account name is not guaranteed to equal the Windows profile
+    # directory. Prefer an explicit dashboard mapping, then an exact match,
+    # then the sole discovered profile. This keeps app and Office bridges on
+    # the same profile mapping as the folder bridge.
+    profile_for_linux() {
+        local linuxuser="$1" home mapped candidate
+        home=$(getent passwd "$linuxuser" | cut -d: -f6)
+        mapped=""
+        if command -v jq >/dev/null && [[ -f "$home/.config/wootc/profile-map.json" ]]; then
+            mapped=$(jq -r '.windowsProfile // empty' "$home/.config/wootc/profile-map.json" 2>/dev/null || true)
+        fi
+        if [[ -n "$mapped" ]]; then
+            for candidate in "${real_profiles[@]}"; do
+                [[ "$(basename "$candidate")" == "$mapped" ]] && { basename "$candidate"; return 0; }
+            done
+        fi
+        for candidate in "${real_profiles[@]}"; do
+            [[ "$(basename "$candidate")" == "$linuxuser" ]] && { basename "$candidate"; return 0; }
+        done
+        if [[ "${#real_profiles[@]}" -eq 1 ]]; then
+            basename "${real_profiles[0]}"
+        fi
+    }
+
     shopt -s nullglob
     for userhome in /home/*/; do
         uname=$(basename "$userhome")
         uid=$(id -u "$uname" 2>/dev/null) || continue
         [[ "$uid" -ge 1000 ]] || continue
-        wootc-detect-apps "$uname" || log "app detection failed for $uname (non-fatal)"
+        winuser=$(profile_for_linux "$uname")
+        if [[ -z "$winuser" ]]; then
+            log "no Windows profile mapped for $uname; skipping app/Office bridge"
+            continue
+        fi
+        wootc-detect-apps "$winuser" "$uname" || log "app detection failed for $winuser → $uname (non-fatal)"
         if command -v wootc-office-bridge >/dev/null; then
             if sel_on "$uname" office; then
-                wootc-office-bridge "$uname" || log "office bridge failed for $uname (non-fatal)"
+                wootc-office-bridge "$winuser" "$uname" || log "office bridge failed for $winuser → $uname (non-fatal)"
             else
                 log "office: skipped for $uname (turned off in the migration chooser)"
             fi
         fi
         # Copy the account picture + full name over (never the password).
         command -v wootc-identity >/dev/null && \
-            { wootc-identity apply "$uname" "$uname" >/dev/null || log "identity copy failed for $uname (non-fatal)"; }
+            { wootc-identity apply "$winuser" "$uname" >/dev/null || log "identity copy failed for $winuser → $uname (non-fatal)"; }
     done
     shopt -u nullglob
 fi
