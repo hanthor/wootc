@@ -55,13 +55,9 @@ func TestDeriveRewrapKeyIsDeterministic(t *testing.T) {
 }
 
 func TestSealOpenRoundTrip(t *testing.T) {
-	key, err := deriveRewrapKey([]byte("vault-secret"), "spotify")
-	if err != nil {
-		t.Fatalf("derive: %v", err)
-	}
 	plaintext := []byte("super-secret-os_crypt-key-material")
 
-	blob, err := sealSessionPayload(key, plaintext)
+	blob, err := sealSessionPayload([]byte("vault-secret"), "spotify", plaintext)
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
@@ -69,7 +65,7 @@ func TestSealOpenRoundTrip(t *testing.T) {
 		t.Fatal("sealed blob must not contain the plaintext")
 	}
 
-	got, err := openSessionPayload(key, blob)
+	got, err := openSessionPayload([]byte("vault-secret"), "spotify", blob)
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
@@ -79,14 +75,13 @@ func TestSealOpenRoundTrip(t *testing.T) {
 }
 
 func TestSealProducesDistinctBlobsEachCall(t *testing.T) {
-	key, _ := deriveRewrapKey([]byte("vault-secret"), "chrome")
 	plaintext := []byte("same plaintext both times")
 
-	b1, err := sealSessionPayload(key, plaintext)
+	b1, err := sealSessionPayload([]byte("vault-secret"), "chrome", plaintext)
 	if err != nil {
 		t.Fatalf("seal 1: %v", err)
 	}
-	b2, err := sealSessionPayload(key, plaintext)
+	b2, err := sealSessionPayload([]byte("vault-secret"), "chrome", plaintext)
 	if err != nil {
 		t.Fatalf("seal 2: %v", err)
 	}
@@ -96,51 +91,55 @@ func TestSealProducesDistinctBlobsEachCall(t *testing.T) {
 }
 
 func TestOpenRejectsWrongKey(t *testing.T) {
-	key1, _ := deriveRewrapKey([]byte("vault-secret"), "chrome")
-	key2, _ := deriveRewrapKey([]byte("other-vault-secret"), "chrome")
-
-	blob, err := sealSessionPayload(key1, []byte("token"))
+	blob, err := sealSessionPayload([]byte("vault-secret"), "chrome", []byte("token"))
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
-	if _, err := openSessionPayload(key2, blob); err == nil {
+	if _, err := openSessionPayload([]byte("other-vault-secret"), "chrome", blob); err == nil {
 		t.Error("expected error opening with the wrong key")
 	}
 }
 
 func TestOpenRejectsTamperedCiphertext(t *testing.T) {
-	key, _ := deriveRewrapKey([]byte("vault-secret"), "chrome")
-	blob, err := sealSessionPayload(key, []byte("token"))
+	blob, err := sealSessionPayload([]byte("vault-secret"), "chrome", []byte("token"))
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
 	tampered := bytes.Clone(blob)
 	tampered[len(tampered)-1] ^= 0xFF // flip a byte in the GCM tag
 
-	if _, err := openSessionPayload(key, tampered); err == nil {
+	if _, err := openSessionPayload([]byte("vault-secret"), "chrome", tampered); err == nil {
 		t.Error("expected error opening tampered blob")
 	}
 }
 
 func TestOpenRejectsUnsupportedVersion(t *testing.T) {
-	key, _ := deriveRewrapKey([]byte("vault-secret"), "chrome")
-	blob, err := sealSessionPayload(key, []byte("token"))
+	blob, err := sealSessionPayload([]byte("vault-secret"), "chrome", []byte("token"))
 	if err != nil {
 		t.Fatalf("seal: %v", err)
 	}
 	blob[0] = 0xFF
 
-	if _, err := openSessionPayload(key, blob); err == nil {
+	if _, err := openSessionPayload([]byte("vault-secret"), "chrome", blob); err == nil {
 		t.Error("expected error opening a blob with an unsupported version byte")
 	}
 }
 
 func TestOpenRejectsTooShortBlob(t *testing.T) {
-	key, _ := deriveRewrapKey([]byte("vault-secret"), "chrome")
-	if _, err := openSessionPayload(key, []byte{sessionRewrapVersion}); err == nil {
+	if _, err := openSessionPayload([]byte("vault-secret"), "chrome", []byte{sessionRewrapVersion}); err == nil {
 		t.Error("expected error opening a blob with no room for a nonce")
 	}
-	if _, err := openSessionPayload(key, nil); err == nil {
+	if _, err := openSessionPayload([]byte("vault-secret"), "chrome", nil); err == nil {
 		t.Error("expected error opening an empty blob")
+	}
+}
+
+func TestOpenRejectsBlobRelabeledForAnotherApp(t *testing.T) {
+	blob, err := sealSessionPayload([]byte("vault-secret"), "chrome", []byte("token"))
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	if _, err := openSessionPayload([]byte("vault-secret"), "edge", blob); err == nil {
+		t.Error("expected app relabeling to fail authentication")
 	}
 }

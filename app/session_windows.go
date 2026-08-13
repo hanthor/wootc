@@ -116,11 +116,7 @@ func exportSession(app, vaultSecret string, consent bool) error {
 	if err != nil {
 		return err
 	}
-	rewrapKey, err := deriveRewrapKey([]byte(vaultSecret), app)
-	if err != nil {
-		return err
-	}
-	data, err := sealSessionPayload(rewrapKey, key)
+	data, err := sealSessionPayload([]byte(vaultSecret), app, key)
 	if err != nil {
 		return err
 	}
