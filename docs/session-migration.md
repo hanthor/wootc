@@ -64,6 +64,19 @@ work is deliberately separate because Chrome, Edge, and Spotify differ in
 database layout and token invalidation behavior. Discord and Slack remain
 re-link-only even when DPAPI can read their key.
 
+`decryptChromiumValue` (`app/session_chromium_value.go`) implements the one
+sub-step of that whose correctness doesn't depend on a live browser: given
+the os_crypt key recovered from the envelope, it decrypts a single Cookies
+`encrypted_value` (or Local Storage value) in Chromium's documented `v10`
+wire format — `"v10" | 12-byte nonce | ciphertext | GCM tag`, AES-256-GCM.
+Tested against synthetically-sealed fixtures, not a real browser. Still
+unclaimed: enumerating a real Cookies SQLite/Local Storage LevelDB file,
+`v11`-prefixed values (which add platform-specific associated data on some
+Chrome versions — not documented consistently enough to implement blind),
+and the actual libsecret/kwallet write on the target. Those need a real
+Chrome/Edge install and a Linux D-Bus session to verify against, neither
+of which this change had access to.
+
 Until that consumer completes and records `imported`, the dashboard must show
 re-link/sign-in guidance rather than a signed-in result. A staged key is an
 implementation artifact, not evidence that a token transplant succeeded.
