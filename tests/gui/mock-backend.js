@@ -37,6 +37,26 @@ function makeApp(mock) {
     GetMigrationCategories: () => P(mock.categories || []),
     GetAppMigrations: () => P(mock.apps || []),
     GetOfficeMigration: () => P(mock.office || { present: false }),
+    // Decryptability-only findings, never tokens. Empty by default so the
+    // consent block only renders in scenarios that ask for it.
+    GetSessionCandidates: () => P(mock.sessionCandidates || []),
+    // Session consent is a recorded opt-in only — the mock just remembers it.
+    SetSessionConsent: (app, consent) => {
+      const list = mock.apps || [];
+      const hit = list.find((a) => a.app === app);
+      if (hit) hit.consent = consent;
+      return P();
+    },
+    ReinstallApps: () => P(),
+    GetMigrationProfile: () => P(mock.migrationProfile || null),
+    SetMigrationProfile: (profile) => {
+      if (mock.migrationProfile) {
+        mock.migrationProfile.windowsProfile = profile;
+        mock.migrationProfile.matched = true;
+      }
+      return P();
+    },
+    GetLookMigration: () => P(mock.look || null),
     ConvertCategory: () => P(),
     ImportBrowserData: () => P('ok'),
     CreateDataPartition: () => P({ letter: 'D', label: 'wootc-data', freeGB: 60, encrypted: false }),

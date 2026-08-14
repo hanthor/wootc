@@ -63,6 +63,9 @@ type InstallConfig struct {
 	// over on first login. Default false — we honor the image maker's desktop
 	// defaults unless the user asks to make it feel like Windows.
 	WindowsLook bool `json:"windowsLook"`
+	// SessionConsent is opt-in per app because it authorizes moving auth
+	// material. An absent or false entry never stages a session envelope.
+	SessionConsent map[string]bool `json:"sessionConsent,omitempty"`
 }
 
 // ProgressEvent is emitted during install for the frontend progress bar.
@@ -204,11 +207,11 @@ func (a *App) shutdown(ctx context.Context) {
 // reads it to gate the UI to green-only scenarios (docs/RELEASING.md); the
 // backend enforces the same rules in StartInstall (defense in depth).
 type SupportPolicy struct {
-	Channel             string `json:"channel"`             // alpha | beta | stable
-	ExperimentalImages  bool   `json:"experimentalImages"`  // offer non-green images?
-	BitLockerSupported  bool   `json:"bitlockerSupported"`  // is the FDE path green yet? (#34)
-	CustomImageAllowed  bool   `json:"customImageAllowed"`  // arbitrary OCI ref?
-	Reason              string `json:"reason"`              // one-liner for the UI
+	Channel            string `json:"channel"`            // alpha | beta | stable
+	ExperimentalImages bool   `json:"experimentalImages"` // offer non-green images?
+	BitLockerSupported bool   `json:"bitlockerSupported"` // is the FDE path green yet? (#34)
+	CustomImageAllowed bool   `json:"customImageAllowed"` // arbitrary OCI ref?
+	Reason             string `json:"reason"`             // one-liner for the UI
 }
 
 // supportChannel resolves the active release channel. Default is the
@@ -648,6 +651,31 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			// an AppData footprint. Best-effort: never fail install.
 			if err := collectPrograms(); err != nil {
 				fmt.Fprintf(os.Stderr, "[wootc] program collection skipped: %v\n", err)
+			}
+			return nil
+		}},
+		{"Checking app sessions", 90, func() error {
+			candidates, err := collectSessions()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[wootc] session collection skipped: %v\n", err)
+				return nil
+			}
+			results := exportConsentedSessions(candidates, cfg.SessionConsent, cfg.Password)
+			for _, result := range results {
+				if result.State == "failed" {
+					fmt.Fprintf(os.Stderr, "[wootc] %s session export failed: %s\n", result.App, result.Reason)
+				}
+			}
+			// This is deliberately a status ledger, not a success marker. The
+			// target-side importer must replace "staged" with "imported" before
+			// any UI can describe the app as signed in.
+			path := filepath.Join(wootcDir(), "install", "slurp", "session", "exports.json")
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				fmt.Fprintf(os.Stderr, "[wootc] session export ledger directory skipped: %v\n", err)
+				return nil
+			}
+			if err := os.WriteFile(path, []byte(sessionExportSummary(results)), 0o600); err != nil {
+				fmt.Fprintf(os.Stderr, "[wootc] session export ledger skipped: %v\n", err)
 			}
 			return nil
 		}},

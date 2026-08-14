@@ -20,16 +20,6 @@ import (
 // be decrypted. We decrypt the app master key and stage it (re-wrapped)
 // for the target, gated by per-app consent from the caller.
 
-// SessionCandidate is a per-app finding surfaced to the GUI so the user
-// can consent (or not) to moving its login.
-type SessionCandidate struct {
-	App        string `json:"app"`
-	Kind       string `json:"kind"`       // "chromium" | "plainfile"
-	Portable   bool   `json:"portable"`   // decryptable here?
-	Recommend  string `json:"recommend"`  // "copy" | "relink" | "signin"
-	Note       string `json:"note"`
-}
-
 // chromiumApps maps an app to its Windows User-Data root (relative to the
 // profile). safeStorage layout is identical across Chromium/Electron apps.
 var chromiumApps = map[string]string{
@@ -85,6 +75,7 @@ func collectSessions() ([]SessionCandidate, error) {
 		}
 		cands = append(cands, SessionCandidate{
 			App: app, Kind: "chromium", Portable: portable, Recommend: rec, Note: note,
+			ConsentRequired: portable && rec == "copy",
 		})
 	}
 
@@ -95,6 +86,77 @@ func collectSessions() ([]SessionCandidate, error) {
 	data, _ := marshalJSON(cands)
 	_ = os.WriteFile(filepath.Join(slurpDir, "candidates.json"), data, 0o600)
 	return cands, nil
+}
+
+func sessionCandidates() ([]SessionCandidate, error) {
+	return collectSessions()
+}
+
+// exportSession performs only the Windows-online half of migration. It is
+// intentionally impossible to call without explicit consent and a vault
+// secret held in memory by the install pipeline. Discord and Slack remain
+// relink-only even if their DPAPI key is readable.
+func exportSession(app, vaultSecret string, consent bool) error {
+	if !consent {
+		return fmt.Errorf("session export for %s requires explicit consent", app)
+	}
+	if app == "discord" || app == "slack" {
+		return fmt.Errorf("%s sessions are relink-only", app)
+	}
+	rel, ok := chromiumApps[app]
+	if !ok {
+		return fmt.Errorf("unsupported session app %q", app)
+	}
+	profile := os.Getenv("USERPROFILE")
+	if profile == "" {
+		return fmt.Errorf("USERPROFILE not set")
+	}
+	root := filepath.Join(profile, rel)
+	key, err := chromiumMasterKey(root)
+	if err != nil {
+		return err
+	}
+	data, err := sealSessionPayload([]byte(vaultSecret), app, key)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Join(wootcDir(), "install", "slurp", "session")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, app+".enc")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("stage %s session: %w", app, err)
+	}
+	if err := restrictFileACL(path); err != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("restrict %s session: %w", app, err)
+	}
+	return nil
+}
+
+func chromiumMasterKey(userDataRoot string) ([]byte, error) {
+	raw, err := os.ReadFile(filepath.Join(userDataRoot, "Local State"))
+	if err != nil {
+		return nil, fmt.Errorf("read Chromium Local State: %w", err)
+	}
+	var parsed struct {
+		OSCrypt struct {
+			EncryptedKey string `json:"encrypted_key"`
+		} `json:"os_crypt"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.OSCrypt.EncryptedKey == "" {
+		return nil, fmt.Errorf("Chromium Local State has no encrypted key")
+	}
+	keyBlob, err := base64.StdEncoding.DecodeString(parsed.OSCrypt.EncryptedKey)
+	if err != nil || !strings.HasPrefix(string(keyBlob), "DPAPI") {
+		return nil, fmt.Errorf("Chromium key is not a DPAPI key")
+	}
+	key, err := dpapiUnprotect(keyBlob[5:])
+	if err != nil {
+		return nil, fmt.Errorf("DPAPI decrypt Chromium key: %w", err)
+	}
+	return key, nil
 }
 
 // chromiumKeyDecryptable checks that Local State holds a DPAPI-encrypted
@@ -114,12 +176,6 @@ func chromiumKeyDecryptable(userDataRoot string) bool {
 	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.OSCrypt.EncryptedKey == "" {
 		return false
 	}
-	keyBlob, err := base64.StdEncoding.DecodeString(parsed.OSCrypt.EncryptedKey)
-	if err != nil || !strings.HasPrefix(string(keyBlob), "DPAPI") {
-		return false
-	}
-	if _, err := dpapiUnprotect(keyBlob[5:]); err != nil {
-		return false
-	}
-	return true
+	_, err = chromiumMasterKey(userDataRoot)
+	return err == nil
 }

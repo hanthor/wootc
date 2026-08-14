@@ -55,17 +55,64 @@ func (a *App) ImportBrowserData() (string, error) {
 // AppMigration is one detected Windows application and the honest outcome
 // of migrating it (docs/session-migration.md).
 type AppMigration struct {
-	App     string `json:"app"`
-	Flatpak string `json:"flatpak"`
-	Session string `json:"session"` // portable | signin | none
-	Copied  bool   `json:"copied"`
-	Note    string `json:"note"`
+	App              string `json:"app"`
+	Flatpak          string `json:"flatpak"`
+	Session          string `json:"session"` // portable | signin | relink | none
+	Copied           bool   `json:"copied"`
+	Note             string `json:"note"`
+	ConsentAvailable bool   `json:"consentAvailable"`
+	Consent          bool   `json:"consent"`
 }
 
 // GetAppMigrations returns the per-app migration outcomes recorded by
 // wootc-detect-apps (bridge-apps.json).
 func (a *App) GetAppMigrations() ([]AppMigration, error) {
 	return appMigrations()
+}
+
+// GetSessionCandidates reports which Windows sessions were proven
+// decryptable. It never returns tokens or decrypted payloads.
+func (a *App) GetSessionCandidates() ([]SessionCandidate, error) {
+	return sessionCandidates()
+}
+
+// SetSessionConsent records the user's explicit per-app choice. It does not
+// copy a token by itself; the Windows-online exporter consumes the same
+// decision when a supported install is staged.
+func (a *App) SetSessionConsent(app string, consent bool) error {
+	return setSessionConsent(app, consent)
+}
+
+// ReinstallApps installs the detected Flatpak counterparts without copying
+// their credentials or application data.
+func (a *App) ReinstallApps() error {
+	return reinstallApps()
+}
+
+type MigrationProfile struct {
+	LinuxUser      string `json:"linuxUser"`
+	WindowsProfile string `json:"windowsProfile"`
+	Matched        bool   `json:"matched"`
+	Note           string `json:"note"`
+}
+
+func (a *App) GetMigrationProfile() (MigrationProfile, error) {
+	return migrationProfile()
+}
+
+func (a *App) SetMigrationProfile(profile string) error {
+	return setMigrationProfile(profile)
+}
+
+type LookMigration struct {
+	Available bool     `json:"available"`
+	Applied   bool     `json:"applied"`
+	Items     []string `json:"items"`
+	Note      string   `json:"note"`
+}
+
+func (a *App) GetLookMigration() (LookMigration, error) {
+	return lookMigration()
 }
 
 // OfficeMigration summarizes what moved from MS Office to LibreOffice.

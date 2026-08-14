@@ -1,5 +1,5 @@
 import '../src/style.css';
-import { GetImages, GetSystemInfo, StartInstall, CancelInstall, GetStatus, Reboot, ExistingInstallFound, GetMode, GetMigrationCategories, ConvertCategory, ImportBrowserData, GetAppMigrations, GetOfficeMigration, GetBranding, CreateDataPartition, GetUninstallInfo, UninstallWith, GetVMCapability, BootInVM, DefragDrive, GetFreshVMCapability, TryInVMFresh, InstallPreviewForReal, E2EDriveDirective, E2EDriveReport, GetSupportPolicy } from '../wailsjs/go/main/App';
+import { GetImages, GetSystemInfo, StartInstall, CancelInstall, GetStatus, Reboot, ExistingInstallFound, GetMode, GetMigrationCategories, ConvertCategory, ImportBrowserData, GetAppMigrations, GetOfficeMigration, GetSessionCandidates, SetSessionConsent, ReinstallApps, GetMigrationProfile, SetMigrationProfile, GetLookMigration, GetBranding, CreateDataPartition, GetUninstallInfo, UninstallWith, GetVMCapability, BootInVM, DefragDrive, GetFreshVMCapability, TryInVMFresh, InstallPreviewForReal, E2EDriveDirective, E2EDriveReport, GetSupportPolicy } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { fmtSize } from './lib/format.js';
 import { el, btn, chip, warningBanner, inputField } from './lib/ui.js';
@@ -14,7 +14,10 @@ const state = {
   brand: null,         // partner/enterprise branding (themeable)
   categories: [],      // migration dashboard rows
   apps: [],            // detected app migrations
+  sessionCandidates: [], // Windows-online DPAPI findings; never tokens
   office: null,        // MS Office → LibreOffice summary
+  migrationProfile: null,
+  look: null,
   converting: {},      // category id → percent while a conversion runs
   selected: null,      // selected Image
   config: {
@@ -29,6 +32,7 @@ const state = {
     encryption: 'tpm2-luks',
     luksPassphrase: '',
     windowsLook: false,
+    sessionConsent: {},
   },
   progress: {
     step: '',
@@ -125,16 +129,21 @@ async function init() {
     return;
   }
 
-  const [images, sysinfo, existing, policy] = await Promise.all([
+  const [images, sysinfo, existing, policy, sessionCandidates] = await Promise.all([
     GetImages(),
     GetSystemInfo(),
     ExistingInstallFound(),
     GetSupportPolicy().catch(() => ({ channel: 'alpha', experimentalImages: false, bitlockerSupported: false, customImageAllowed: false })),
+    // A missing binding throws synchronously, which would escape a plain
+    // .catch() on the call and blank the whole launchpad; session candidates
+    // are optional, so absorb that too.
+    Promise.resolve().then(GetSessionCandidates).catch(() => []),
   ]);
 
   state.policy = policy;
   state.images = images || [];
   state.sysinfo = sysinfo;
+  state.sessionCandidates = sessionCandidates || [];
   state.selected = state.images[0] || null;
   applyImageDefaults(state.selected);
 
@@ -153,16 +162,32 @@ async function init() {
   render();
 }
 
+// A missing Wails binding makes its generated wrapper throw synchronously, so
+// a plain `.catch()` on the call never runs and one absent optional method
+// would blank the whole dashboard. Degrade that section instead.
+async function optional(call, fallback) {
+  try {
+    return (await call()) ?? fallback;
+  } catch (e) {
+    console.error(e);
+    return fallback;
+  }
+}
+
 async function refreshCategories() {
   try {
-    const [cats, apps, office] = await Promise.all([
-      GetMigrationCategories(),
-      GetAppMigrations().catch(() => []),
-      GetOfficeMigration().catch(() => null),
+    const [cats, apps, office, profile, look] = await Promise.all([
+      optional(GetMigrationCategories, []),
+      optional(GetAppMigrations, []),
+      optional(GetOfficeMigration, null),
+      optional(GetMigrationProfile, null),
+      optional(GetLookMigration, null),
     ]);
     state.categories = cats || [];
     state.apps = apps || [];
     state.office = office && office.present ? office : null;
+    state.migrationProfile = profile;
+    state.look = look;
   } catch (e) {
     console.error(e);
     state.categories = [];
@@ -413,6 +438,31 @@ function renderLaunchpad() {
   if (state.config.windowsLook) lookRow.style.borderColor = 'var(--primary)';
   fields.appendChild(lookRow);
 
+  // Auth-token migration is a separate, explicit opt-in from look/data
+  // migration. The backend defaults every app to off and still refuses
+  // Discord/Slack because those services prefer relinking.
+  const movableSessions = state.sessionCandidates.filter(c => c.portable && c.recommend === 'copy');
+  if (movableSessions.length) {
+    const sessionBox = el('div');
+    sessionBox.style.cssText = 'margin-top:8px;padding:8px;border:1.5px solid var(--border);border-radius:6px';
+    sessionBox.innerHTML = `<div style="font-size:12px;font-weight:600">Signed-in app sessions</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px">Optional: move these sessions while Windows is online. Off means you will sign in once on Linux.</div>`;
+    movableSessions.forEach(candidate => {
+      const row = el('label');
+      row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:12px;margin-top:7px';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.checked = !!state.config.sessionConsent[candidate.app];
+      checkbox.style.marginTop = '1px';
+      checkbox.onchange = () => { state.config.sessionConsent[candidate.app] = checkbox.checked; };
+      const copy = el('span');
+      copy.innerHTML = `<b style="text-transform:capitalize">${candidate.app}</b><br><span style="color:var(--text-muted)">${candidate.note}</span>`;
+      row.appendChild(checkbox);
+      row.appendChild(copy);
+      sessionBox.appendChild(row);
+    });
+    fields.appendChild(sessionBox);
+  }
+
   const advanced = el('details');
   // Every control change re-renders the form; without persisting the open
   // state the panel snaps shut on each toggle — the user opens Advanced,
@@ -589,6 +639,7 @@ async function installPreviewForReal() {
       encryption: state.config.encryption,
       luksPassphrase: state.config.luksPassphrase,
       windowsLook: state.config.windowsLook,
+      sessionConsent: state.config.sessionConsent,
     });
     state.screen = 'done';
     render();
@@ -785,7 +836,60 @@ function renderMigrateScreen() {
     al.style.cssText = 'display:flex;flex-direction:column;gap:8px';
     state.apps.forEach(a => al.appendChild(renderAppRow(a)));
     appsSection.appendChild(al);
+    const reinstall = btn('Reinstall detected apps', 'btn btn-ghost', async () => {
+      reinstall.disabled = true;
+      reinstall.textContent = 'Installing…';
+      try {
+        await ReinstallApps();
+        alert('The detected Flatpak apps were installed. App data and credentials were not copied.');
+      } catch (e) {
+        alert('Could not reinstall detected apps: ' + e);
+      } finally {
+        reinstall.disabled = false;
+        reinstall.textContent = 'Reinstall detected apps';
+      }
+    });
+    reinstall.style.cssText = 'font-size:12px;margin-top:8px';
+    appsSection.appendChild(reinstall);
     scroll.appendChild(appsSection);
+  }
+
+  if (state.migrationProfile) {
+    const profile = el('div');
+    profile.appendChild(sectionLabel('Windows profile mapping'));
+    const card = el('div');
+    card.style.cssText = 'background:var(--bg-card);border:1.5px solid var(--border);border-radius:8px;padding:12px 16px;display:flex;align-items:center;gap:10px';
+    const copy = el('div');
+    copy.style.flex = '1';
+    copy.innerHTML = `<div style="font-size:12.5px;font-weight:600">Linux <code>${state.migrationProfile.linuxUser || 'unknown'}</code> → Windows <code>${state.migrationProfile.windowsProfile || 'not mapped'}</code></div><div style="font-size:11.5px;color:var(--text-muted);margin-top:3px">${state.migrationProfile.note || ''}</div>`;
+    card.appendChild(copy);
+    const choose = btn('Choose', 'btn btn-ghost', async () => {
+      const value = prompt('Windows profile folder name:', state.migrationProfile.windowsProfile || '');
+      if (!value) return;
+      try { await SetMigrationProfile(value.trim()); await refreshCategories(); }
+      catch (e) { alert('Could not map that Windows profile: ' + e); }
+    });
+    choose.style.fontSize = '12px';
+    card.appendChild(choose);
+    profile.appendChild(card);
+    scroll.appendChild(profile);
+  }
+
+  if (state.look) {
+    const look = el('div');
+    look.appendChild(sectionLabel('Windows look'));
+    const card = el('div');
+    card.style.cssText = 'background:var(--bg-card);border:1.5px solid var(--border);border-radius:8px;padding:12px 16px';
+    const status = state.look.applied ? '✓ Applied to this Linux user' : state.look.available ? 'Ready to apply on first login' : 'Not collected';
+    card.innerHTML = `<div style="font-size:12.5px;font-weight:600">${status}</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:3px">${state.look.note || ''}</div>`;
+    if (state.look.items?.length) {
+      const items = el('div');
+      items.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin-top:8px';
+      state.look.items.forEach(item => items.appendChild(chip(item, false)));
+      card.appendChild(items);
+    }
+    look.appendChild(card);
+    scroll.appendChild(look);
   }
 
   if (state.office) {
@@ -870,6 +974,7 @@ const APP_ICONS = {
 const SESSION_BADGE = {
   portable: { label: '✓ Signed in', cls: 'ok' },
   signin:   { label: 'Sign in once', cls: '' },
+  relink:   { label: 'Re-link needed (2 steps)', cls: '' },
   none:     { label: 'Re-link needed', cls: '' },
 };
 
@@ -877,15 +982,103 @@ function renderAppRow(a) {
   const row = el('div');
   row.style.cssText = 'display:flex;align-items:center;gap:12px;background:var(--bg-card);border:1.5px solid var(--border);border-radius:8px;padding:10px 16px';
   const badge = SESSION_BADGE[a.session] || SESSION_BADGE.signin;
-  row.innerHTML = `
+
+  const left = el('div');
+  left.style.cssText = 'display:flex;align-items:center;gap:12px;flex:1;min-width:0';
+  left.innerHTML = `
     <span style="font-size:18px">${APP_ICONS[a.app] || '📦'}</span>
     <div style="flex:1;min-width:0">
       <div style="font-weight:600;font-size:13px;text-transform:capitalize">${a.app}</div>
       <div style="font-size:11.5px;color:var(--text-muted);margin-top:1px">${a.note || ''}</div>
     </div>
-    <span class="chip ${badge.cls}" style="flex-shrink:0">${badge.label}</span>
   `;
+  row.appendChild(left);
+
+  if (a.consentAvailable) {
+    const consent = el('label');
+    consent.style.cssText = 'display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-muted);flex-shrink:0';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = !!a.consent;
+    checkbox.title = 'Allow session token copy when the Windows-online exporter supports this app';
+    checkbox.onchange = async () => {
+      checkbox.disabled = true;
+      try { await SetSessionConsent(a.app, checkbox.checked); a.consent = checkbox.checked; }
+      catch (e) { checkbox.checked = !checkbox.checked; alert('Could not save session consent: ' + e); }
+      finally { checkbox.disabled = false; }
+    };
+    consent.appendChild(checkbox);
+    consent.appendChild(document.createTextNode('Allow session copy'));
+    row.appendChild(consent);
+  }
+
+  if (a.session === 'relink') {
+    const relinkBtn = btn('Re-link Guide', 'btn btn-ghost', () => openRelinkModal(a));
+    relinkBtn.style.fontSize = '12px';
+    relinkBtn.style.flexShrink = '0';
+    row.appendChild(relinkBtn);
+  }
+
+  const chipSpan = el('span', `chip ${badge.cls}`);
+  chipSpan.style.flexShrink = '0';
+  chipSpan.textContent = badge.label;
+  row.appendChild(chipSpan);
   return row;
+}
+
+function openRelinkModal(a) {
+  const modal = el('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:1000;padding:20px';
+  const content = el('div');
+  content.style.cssText = 'background:var(--bg-card);border:1.5px solid var(--border);border-radius:12px;padding:20px;max-width:480px;width:100%;box-shadow:0 10px 25px rgba(0,0,0,0.5)';
+
+  let title = 'Re-link Phone App';
+  let stepsHtml = '';
+
+  if (a.app === 'signal') {
+    title = 'Signal: Phone Re-link Steps';
+    stepsHtml = `
+      <ol style="margin:12px 0;padding-left:20px;font-size:13px;color:var(--text-dim);display:flex;flex-direction:column;gap:8px">
+        <li>Open Signal on your phone.</li>
+        <li>Go to <strong>Settings → Linked Devices</strong>.</li>
+        <li>Tap <strong>Link New Device</strong> and scan the QR code displayed in Signal Desktop.</li>
+      </ol>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:16px">Note: Message history stays on your phone by design.</div>
+    `;
+  } else if (a.app === 'whatsapp') {
+    title = 'WhatsApp: Web Re-link Steps';
+    stepsHtml = `
+      <ol style="margin:12px 0;padding-left:20px;font-size:13px;color:var(--text-dim);display:flex;flex-direction:column;gap:8px">
+        <li>Open <strong>web.whatsapp.com</strong> in your browser.</li>
+        <li>Open WhatsApp on your phone and go to <strong>Settings → Linked Devices</strong>.</li>
+        <li>Tap <strong>Link a Device</strong> and scan the QR code on screen.</li>
+      </ol>
+    `;
+  } else if (a.app === 'telegram') {
+    title = 'Telegram: Re-link / Fallback Steps';
+    stepsHtml = `
+      <ol style="margin:12px 0;padding-left:20px;font-size:13px;color:var(--text-dim);display:flex;flex-direction:column;gap:8px">
+        <li>Open Telegram Desktop on Linux.</li>
+        <li>Scan the displayed QR code using Telegram on your phone (<strong>Settings → Devices → Link Desktop Device</strong>).</li>
+        <li>Alternatively, enter your phone number to receive a login code.</li>
+      </ol>
+    `;
+  } else {
+    stepsHtml = `<div style="font-size:13px;color:var(--text-dim);margin:12px 0">${a.note || 'Follow phone app settings to link device.'}</div>`;
+  }
+
+  content.innerHTML = `
+    <div style="font-weight:600;font-size:16px;margin-bottom:8px">${title}</div>
+    ${stepsHtml}
+  `;
+
+  const footer = el('div');
+  footer.style.cssText = 'display:flex;justify-content:flex-end;margin-top:16px';
+  const closeBtn = btn('Done', 'btn btn-primary', () => document.body.removeChild(modal));
+  footer.appendChild(closeBtn);
+  content.appendChild(footer);
+  modal.appendChild(content);
+  document.body.appendChild(modal);
 }
 
 function migrateAction(c) {
@@ -1063,6 +1256,7 @@ async function startInstall() {
       storageDrive,
       encryption:     state.config.encryption,
       luksPassphrase: state.config.luksPassphrase,
+      sessionConsent: state.config.sessionConsent,
     });
   } catch (e) {
     state.progress.error = String(e);
