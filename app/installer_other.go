@@ -85,6 +85,9 @@ func writeBitLockerKey(key string) error { return nil }
 func collectLook() error                                          { return nil }
 func collectWifi() error                                          { return nil }
 func collectPrograms() error                                      { return nil }
+func collectSessions() ([]SessionCandidate, error)                { return nil, nil }
+func sessionCandidates() ([]SessionCandidate, error)              { return nil, nil }
+func exportSession(string, string, bool) error                    { return nil }
 func uninstall(ctx context.Context) error                         { return nil }
 func uninstallWith(ctx context.Context, o UninstallOptions) error { return nil }
 func getUninstallInfo() UninstallInfo                             { return UninstallInfo{Found: false} }

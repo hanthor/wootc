@@ -25,6 +25,17 @@ export interface InstallConfig {
   storageDrive: string;
   encryption: 'none' | 'tpm2-luks' | 'luks-passphrase';
   luksPassphrase: string;
+  windowsLook?: boolean;
+  sessionConsent?: Record<string, boolean>;
+}
+
+export interface SessionCandidate {
+  app: string;
+  kind: 'chromium' | 'plainfile';
+  portable: boolean;
+  recommend: 'copy' | 'relink' | 'signin';
+  note: string;
+  consentRequired: boolean;
 }
 
 export interface InstallStatus {
@@ -85,6 +96,7 @@ export function GetMode(): Promise<'installer' | 'migration'>;
 export function GetMigrationCategories(): Promise<BridgeCategory[]>;
 export function ConvertCategory(id: string): Promise<void>;
 export function ImportBrowserData(): Promise<string>;
+export function GetSessionCandidates(): Promise<SessionCandidate[]>;
 export function GetAppMigrations(): Promise<AppMigration[]>;
 export function GetOfficeMigration(): Promise<any>;
 export function SetSessionConsent(app: string, consent: boolean): Promise<void>;

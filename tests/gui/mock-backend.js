@@ -37,6 +37,9 @@ function makeApp(mock) {
     GetMigrationCategories: () => P(mock.categories || []),
     GetAppMigrations: () => P(mock.apps || []),
     GetOfficeMigration: () => P(mock.office || { present: false }),
+    // Decryptability-only findings, never tokens. Empty by default so the
+    // consent block only renders in scenarios that ask for it.
+    GetSessionCandidates: () => P(mock.sessionCandidates || []),
     // Session consent is a recorded opt-in only — the mock just remembers it.
     SetSessionConsent: (app, consent) => {
       const list = mock.apps || [];

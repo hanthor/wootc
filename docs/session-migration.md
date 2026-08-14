@@ -40,6 +40,34 @@ app** — this is moving auth tokens, so the dashboard asks first and
 defaults off. (Implemented incrementally; the collector scaffolding lands
 here, per-app LevelDB rewriting is the follow-up.)
 
+### Online rewrap contract
+
+The Windows installer now has the first complete, testable half of that
+contract. `collectSessions` writes only decryptability findings. The install
+configuration's `sessionConsent` map is opt-in per app; missing and false
+entries do nothing. For a consented Chrome, Edge, or Spotify entry, the
+installer decrypts the DPAPI-protected Chromium master key while the user is
+online and writes `install/slurp/session/<app>.enc`. It also writes an
+`exports.json` ledger whose state is `staged`, never `imported`.
+
+That file is a versioned, authenticated AES-256-GCM envelope with the binary
+layout `[version | 32-byte salt | nonce | ciphertext+tag]`. Its key is
+derived with HKDF-SHA256 from the Linux vault secret, app name, and the fresh
+per-envelope salt; the app name is also authenticated as associated data.
+The DPAPI key is never written in clear. Files are created with mode `0600`
+and the export is best-effort: a failed export does not fail installation or
+claim that the session moved.
+
+The target-side consumer still must decrypt the envelope, enumerate the
+app's SQLite/LevelDB values, and re-encrypt them with the Linux keyring. That
+work is deliberately separate because Chrome, Edge, and Spotify differ in
+database layout and token invalidation behavior. Discord and Slack remain
+re-link-only even when DPAPI can read their key.
+
+Until that consumer completes and records `imported`, the dashboard must show
+re-link/sign-in guidance rather than a signed-in result. A staged key is an
+implementation artifact, not evidence that a token transplant succeeded.
+
 **Phone-linked apps → guided re-link, not token theft.** Signal, WhatsApp,
 and (when token copy is declined) any messenger: the safest, most durable
 path is the app's own "link a device" flow. The dashboard shows the exact
