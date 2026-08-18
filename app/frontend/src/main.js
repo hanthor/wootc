@@ -1,7 +1,8 @@
 import '../src/style.css';
-import { GetImages, GetSystemInfo, StartInstall, CancelInstall, GetStatus, Reboot, ExistingInstallFound, GetMode, GetMigrationCategories, ConvertCategory, ImportBrowserData, GetAppMigrations, GetOfficeMigration, GetSessionCandidates, SetSessionConsent, ReinstallApps, GetMigrationProfile, SetMigrationProfile, GetLookMigration, GetBranding, CreateDataPartition, GetUninstallInfo, UninstallWith, GetVMCapability, BootInVM, DefragDrive, GetFreshVMCapability, TryInVMFresh, InstallPreviewForReal, E2EDriveDirective, E2EDriveReport, GetSupportPolicy } from '../wailsjs/go/main/App';
+import { GetImages, GetSystemInfo, StartInstall, CancelInstall, GetStatus, Reboot, ExistingInstallFound, GetMode, GetMigrationCategories, ConvertCategory, ImportBrowserData, GetAppMigrations, GetOfficeMigration, GetSessionCandidates, SetSessionConsent, ReinstallApps, GetMigrationProfile, SetMigrationProfile, GetLookMigration, GetBranding, CreateDataPartition, GetUninstallInfo, UninstallWith, GetVMCapability, BootInVM, DefragDrive, GetFreshVMCapability, TryInVMFresh, InstallPreviewForReal, GetSupportPolicy } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { fmtSize } from './lib/format.js';
+import { startE2EDrive } from './lib/e2e.js';
 import { el, btn, chip, warningBanner, inputField } from './lib/ui.js';
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -1307,93 +1308,5 @@ function renderBitlockerChooser() {
   return wrap;
 }
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-
-// ── E2E drive mode ────────────────────────────────────────────────────────────
-// Wails' WebView cannot expose CDP (both loaders drop the env var once the
-// framework passes its own browser args), so the GUI E2E drives the REAL form
-// through this loop instead: a directive arrives over the same Go<->JS bridge
-// every user click crosses, is executed as DOM events against the live
-// widgets (same handlers, same validation), and state is reported back.
-// E2EDriveDirective returns "" unless the app runs with WOOTC_E2E_DRIVE=1.
-function e2eFill(sel, value) {
-  const inp = document.querySelector(sel);
-  if (!inp) return false;
-  inp.value = value;
-  inp.dispatchEvent(new Event('input'));
-  if (inp.oninput) inp.oninput();
-  return true;
-}
-
-function e2eFieldByLabel(label) {
-  for (const f of document.querySelectorAll('.field')) {
-    const l = f.querySelector('label');
-    if (l && l.textContent === label) return f.querySelector('input');
-  }
-  return null;
-}
-
-async function e2eDriveLoop() {
-  let raw = '';
-  try { raw = await E2EDriveDirective(); } catch { return; }  // binding absent: stop
-  try {
-    if (raw) {
-      const d = JSON.parse(raw);
-      if (d.action === 'install' && !window.__e2eInstallDriven && state.screen === 'launchpad') {
-        const imgInput = e2eFieldByLabel('Custom supported OCI image');
-        const user = e2eFieldByLabel('Linux Username');
-        const host = e2eFieldByLabel('Hostname');
-        const pws = document.querySelectorAll('input[type=password]');
-        // Match the script-proven flow unless the directive says otherwise:
-        // the form defaults to tpm2-luks, which the drive-mode E2E must not
-        // silently inherit (the reference setup-wootc.ps1 path is
-        // unencrypted; LUKS is its own test axis).
-        const enc = d.encryption || 'none';
-        const encRadio = document.querySelector(`input[name=encryption][value=${enc}]`);
-        if (encRadio && !encRadio.checked) {
-          encRadio.checked = true;
-          if (encRadio.onchange) encRadio.onchange();
-        }
-        // The custom image field only renders when the support policy allows
-        // it (customImageAllowed !== false).  When absent, try to select the
-        // matching image from the grid; if none match, the form's default
-        // selection is used.
-        if (!imgInput && d.image) {
-          for (const card of document.querySelectorAll('.image-card')) {
-            if (card.__imgRef === d.image) { card.click(); break; }
-          }
-        }
-        if (user && host && pws.length >= 2) {
-          const fills = [[user, d.username], [host, d.hostname],
-           [pws[0], d.password], [pws[1], d.password]];
-          if (imgInput) fills.unshift([imgInput, d.image]);
-          fills.forEach(([inp, v]) => {
-            inp.value = v;
-            if (inp.oninput) inp.oninput();
-          });
-          const btn = document.getElementById('install-btn');
-          if (btn && !btn.disabled) {
-            window.__e2eInstallDriven = true;
-            btn.click();
-          }
-        }
-      }
-      if (d.action === 'reboot' && state.screen === 'done' && !window.__e2eRebootDriven) {
-        window.__e2eRebootDriven = true;
-        Reboot();
-      }
-    }
-    await E2EDriveReport(JSON.stringify({
-      screen: state.screen,
-      installDriven: !!window.__e2eInstallDriven,
-      installBtnDisabled: (document.getElementById('install-btn') || {}).disabled ?? null,
-      hint: (document.getElementById('install-hint') || {}).textContent || '',
-      progressStep: state.progress?.step || '',
-      error: state.progress?.error || null,
-    }));
-  } catch (e) { /* drive mode must never break the app */ }
-  setTimeout(e2eDriveLoop, 2000);
-}
-
 init().catch(console.error);
-e2eDriveLoop();
+startE2EDrive(state);
