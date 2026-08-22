@@ -243,17 +243,40 @@ func writeESPManifest(espPath, content string) error {
 	// being used by another process") — seen live on the E2E ESP the first
 	// time a GUI install crossed this path (run 32550338286). The hold is
 	// measured in milliseconds; a short bounded retry converts a hard
-	// install failure into a wait nobody notices. Every other error keeps
-	// failing fast on the first attempt's result.
+	// install failure into a wait nobody notices.
+	//
+	// Second Windows quirk, seen the first time the RETRY crossed this path
+	// (run 32556250889, bluefin-lts): the rename can REPORT failure after
+	// the move has in fact happened — the ESP dump taken seconds after the
+	// "failed" install showed the manifest complete, containing the very
+	// claim whose rename supposedly died with "The system cannot find the
+	// file specified" (the tmp was gone because it had been moved). So the
+	// return code is not the verdict: after every failed attempt, read the
+	// destination back — content equal to what we just wrote IS success,
+	// whoever's error code says otherwise.
 	var renameErr error
 	for attempt := 0; attempt < 20; attempt++ {
 		if renameErr = os.Rename(tmp, final); renameErr == nil {
 			return nil
 		}
+		if manifestLanded(final, content) {
+			os.Remove(tmp) //nolint:errcheck — may already be gone; that's fine
+			return nil
+		}
 		time.Sleep(250 * time.Millisecond)
 	}
 	os.Remove(tmp)
+	if manifestLanded(final, content) {
+		return nil
+	}
 	return renameErr
+}
+
+// manifestLanded reports whether final already holds exactly the content this
+// write intended — the ground truth a lying rename return code can't fake.
+func manifestLanded(final, content string) bool {
+	b, err := os.ReadFile(final)
+	return err == nil && string(b) == content
 }
 
 // stageESPFile claims rel and then writes it, in that order, so the ESP is
