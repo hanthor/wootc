@@ -183,7 +183,7 @@ jobs:
           name: gui-walkthrough-${{ github.run_attempt }}
           if-no-files-found: warn
           path: |
-            docs/screenshots/*.png
+            docs/screenshots/**/*.png
             tests/gui/playwright-report/
             tests/gui/test-results/
           retention-days: 14

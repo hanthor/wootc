@@ -193,6 +193,7 @@ img.image-emoji { width: 20px; height: 20px; object-fit: contain; }
 img.titlebar-logo { width: 20px; height: 20px; object-fit: contain; }
 img.bootcard-logo { width: 22px; height: 22px; object-fit: contain; }
 span.bootcard-logo { font-size: 20px; }
+img.done-icon { width: 64px; height: 64px; object-fit: contain; }
 .image-desktop {
   margin-left: auto;
   font-size: 11px;

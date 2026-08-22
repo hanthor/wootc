@@ -4,6 +4,14 @@ import { state } from '../lib/state.js';
 import { distroName } from '../lib/branding.js';
 import { el, btn } from '../lib/ui.js';
 
+// The celebration mark: a branded build celebrates with its own logo; the
+// generic build keeps the confetti (emoji only where it IS the branding).
+function doneMark() {
+  const b = state.brand || {};
+  if (b.logoDataUri) return `<img class="done-icon" src="${b.logoDataUri}" alt="">`;
+  return '🎉';
+}
+
 // ── Screen 3: Done ────────────────────────────────────────────────────────────
 
 export function renderDoneScreen() {
@@ -13,7 +21,7 @@ export function renderDoneScreen() {
 
   const hero = el('div', 'done-hero');
   hero.innerHTML = `
-    <div class="done-icon">🎉</div>
+    <div class="done-icon">${doneMark()}</div>
     <div class="done-title">${distroName()} is ready!</div>
     <div class="done-body">
       ${state.selected?.name || distroName()} ${state.selected?.desktopName || ''} has been configured.<br>
