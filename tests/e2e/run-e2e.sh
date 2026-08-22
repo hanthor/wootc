@@ -2303,6 +2303,20 @@ reset_oem_attempt
 # If a restart does not clear it, say so and leave the app's own refusal as
 # the verdict rather than pretending the machine is ready.
 gui_settle_pending_servicing() {
+    # Stop the update machinery FIRST, or "cleared" does not stay cleared:
+    # el10-gnome-win10pro (run 32556250889) restarted, probed clean
+    # ("Pending servicing cleared by a restart"), launched the GUI — and two
+    # minutes later the app refused with "(servicing)" because Windows
+    # Update had resumed post-reboot and staged fresh work between our probe
+    # and the app's. An E2E VM has no business updating mid-test; disabling
+    # wuauserv/UsoSvc makes the settle below stick. Best-effort per service
+    # (WaaSMedicSvc actively resists), logged, never fatal.
+    qga_powershell 'foreach ($svc in "wuauserv","UsoSvc","WaaSMedicSvc") {
+  try { Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue } catch {}
+  try { Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue } catch {}
+}
+Write-Output "update services stopped"' >/dev/null 2>&1 || true
+    info "    Windows Update services stopped+disabled for the test run (servicing state can no longer re-stage mid-run)"
     # shellcheck disable=SC2016 # PowerShell variables must remain literal.
     local probe='$r = @()
 if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") { $r += "servicing" }

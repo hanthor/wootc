@@ -339,3 +339,37 @@ func TestRealFedoraStillBlocksAfterTheNamespaceFix(t *testing.T) {
 		t.Fatal("a real Fedora ESP must still block the install")
 	}
 }
+
+// The rename can report failure after the move has in fact happened (run
+// 32556250889, bluefin-lts: the ESP dump showed the manifest complete —
+// containing the very claim whose rename "failed" with file-not-found).
+// The verdict must therefore be the destination's CONTENT, not the return
+// code. manifestLanded is that verdict.
+func TestManifestLandedIsTheVerdict(t *testing.T) {
+	esp := t.TempDir()
+	final := espManifestPath(esp)
+	if err := os.MkdirAll(filepath.Dir(final), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "# Files on this EFI partition written by wootc.\nefi/fedora/shimx64.efi\n"
+	if manifestLanded(final, content) {
+		t.Fatal("no file yet — nothing can have landed")
+	}
+	writeFile(t, final, content)
+	if !manifestLanded(final, content) {
+		t.Fatal("the exact intended content is on disk; that IS success")
+	}
+	if manifestLanded(final, content+"efi/fedora/grubx64.efi\n") {
+		t.Fatal("different intended content must not be mistaken for success")
+	}
+	// And the writer itself: a normal write must still land and verify.
+	if err := writeESPManifest(esp, content); err != nil {
+		t.Fatalf("writeESPManifest: %v", err)
+	}
+	if !manifestLanded(final, content) {
+		t.Fatal("written manifest should verify against its own content")
+	}
+	if _, err := os.Stat(final + ".tmp"); err == nil {
+		t.Fatal("tmp file left behind after a successful write")
+	}
+}

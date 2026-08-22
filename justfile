@@ -146,15 +146,44 @@ build-icon:
 # Build the real wootc.exe (frontend + windows/amd64) into wootc-files/, where
 # it's shared into the VM as \\host.lan\Data\wootc.exe (see compose.yml).
 # native_webview2loader is required for the CDP endpoint (see tests/gui/run-cdp.sh).
-build-wootc-exe:
+#
+# brand picks which embedded identity the binary wears (app/branding/<brand>/,
+# docs/branding-and-distribution.md) — the file is still named wootc.exe
+# because that is the E2E/VM share contract; the brand is baked inside:
+#   just build-wootc-exe bazzite && just vm-wootc bazzite
+build-wootc-exe brand="wootc":
     #!/usr/bin/env bash
     set -euo pipefail
+    test -f "app/branding/{{ brand }}/brand.json" || {
+        echo "unknown brand '{{ brand }}' — pick one of:" >&2
+        ls app/branding >&2; exit 1; }
     mkdir -p "{{ FILES }}"
     (cd app/frontend && npm install --silent && npm run build >/dev/null)
     (cd app && GOOS=windows GOARCH=amd64 \
-        go build -tags desktop,production,native_webview2loader -ldflags "-w -s" \
+        go build -tags desktop,production,native_webview2loader \
+        -ldflags "-w -s -X main.brandID={{ brand }}" \
         -o "{{ FILES }}/wootc.exe" .)
+    echo "brand: {{ brand }} ($(jq -r '.productName // "wootc"' "app/branding/{{ brand }}/brand.json"))"
     ls -lh "{{ FILES }}/wootc.exe"
+
+# Build EVERY brand's installer under its release name (Bazzite-Installer.exe,
+# …) — the same loop the release pipeline runs, for local side-by-side testing.
+build-brands out="dist":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    (cd app/frontend && npm install --silent && npm run build >/dev/null)
+    mkdir -p "{{ out }}"
+    for dir in app/branding/*/; do
+        brand=$(basename "$dir")
+        exe=$(jq -r '.exeName // empty' "$dir/brand.json")
+        [ -n "$exe" ] || { echo "$dir/brand.json has no exeName" >&2; exit 1; }
+        (cd app && GOOS=windows GOARCH=amd64 \
+            go build -tags desktop,production,native_webview2loader \
+            -ldflags "-w -s -X main.brandID=$brand" \
+            -o "../{{ out }}/$exe.exe" .)
+        echo "built {{ out }}/$exe.exe (brand: $brand)"
+    done
+    ls -lh "{{ out }}"
 
 # ── Remote E2E ────────────────────────────────────────────────────────────────
 #
@@ -434,7 +463,8 @@ vm-start:
 # Windows disk/answer file is already staged in tests/e2e/storage (run `just
 # e2e` once first if storage/ is empty). Once inside Windows, run
 # \\host.lan\Data\wootc.exe by hand to click through the real GUI.
-vm-wootc: build-wootc-exe build vm-start
+# Pass a brand to click through a branded build: `just vm-wootc bazzite`.
+vm-wootc brand="wootc": (build-wootc-exe brand) build vm-start
     #!/usr/bin/env bash
     set -euo pipefail
     port=$(cat "{{ STORAGE }}/.rdp-port" 2>/dev/null || echo "{{ RDP_PORT }}")
