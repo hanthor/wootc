@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ESP ownership manifest (#52).
@@ -236,11 +237,23 @@ func writeESPManifest(espPath, content string) error {
 		os.Remove(tmp)
 		return err
 	}
-	if err := os.Rename(tmp, final); err != nil {
-		os.Remove(tmp)
-		return err
+	// Windows quirk: a virus scanner or the search indexer often has a
+	// just-written file open for a moment, and the rename then fails with a
+	// sharing violation ("The process cannot access the file because it is
+	// being used by another process") — seen live on the E2E ESP the first
+	// time a GUI install crossed this path (run 32550338286). The hold is
+	// measured in milliseconds; a short bounded retry converts a hard
+	// install failure into a wait nobody notices. Every other error keeps
+	// failing fast on the first attempt's result.
+	var renameErr error
+	for attempt := 0; attempt < 20; attempt++ {
+		if renameErr = os.Rename(tmp, final); renameErr == nil {
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
-	return nil
+	os.Remove(tmp)
+	return renameErr
 }
 
 // stageESPFile claims rel and then writes it, in that order, so the ESP is
