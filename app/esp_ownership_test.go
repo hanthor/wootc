@@ -373,3 +373,32 @@ func TestManifestLandedIsTheVerdict(t *testing.T) {
 		t.Fatal("tmp file left behind after a successful write")
 	}
 }
+
+// The spiral that killed the v0.1.0-alpha.1 gate: once tmp vanishes, a
+// rename-only retry loop is GUARANTEED file-not-found forever. persistManifest
+// must recreate its move source and converge — and must recognize
+// already-landed content without needing any tmp at all.
+func TestPersistManifestSurvivesAVanishedTmp(t *testing.T) {
+	dir := t.TempDir()
+	final := filepath.Join(dir, "wootc-owned.txt")
+	tmp := final + ".tmp"
+	content := "# claims\nefi/fedora/shimx64.efi\n"
+
+	// No tmp exists and final holds OLD content — exactly the post-phantom
+	// state. The loop must rebuild tmp and replace final.
+	writeFile(t, final, "# old claims\n")
+	if err := persistManifest(tmp, final, content); err != nil {
+		t.Fatalf("persistManifest with vanished tmp: %v", err)
+	}
+	if !manifestLanded(final, content) {
+		t.Fatal("final does not hold the intended content")
+	}
+	if _, err := os.Stat(tmp); err == nil {
+		t.Fatal("tmp left behind")
+	}
+
+	// Content already landed, no tmp anywhere: immediate success, no writes.
+	if err := persistManifest(tmp, final, content); err != nil {
+		t.Fatalf("persistManifest with landed content: %v", err)
+	}
+}
