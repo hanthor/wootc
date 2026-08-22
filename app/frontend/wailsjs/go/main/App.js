@@ -134,3 +134,11 @@ export function E2EDriveReport(arg1) {
 export function GetSupportPolicy() {
   return window['go']['main']['App']['GetSupportPolicy']();
 }
+
+export function GetLastRun() {
+  return window['go']['main']['App']['GetLastRun']();
+}
+
+export function BootIntoLinux() {
+  return window['go']['main']['App']['BootIntoLinux']();
+}

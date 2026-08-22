@@ -26,6 +26,17 @@ It's a modern, Secure-Boot-friendly take on the classic [Wubi](https://en.wikipe
 idea, built for container-native (OCI/ostree) Linux images and for people who
 have never touched a partition editor.
 
+## Get wootc
+
+Download `wootc.exe` from the
+[latest release](https://github.com/tuna-os/wootc/releases/latest) and run
+it as Administrator. Because the binary is not yet code-signed, Windows
+shows a SmartScreen warning and an "unknown publisher" prompt on the way —
+**[Getting started](docs/getting-started.md)** walks through both screens
+and explains why they appear. The
+[user guide](docs/user-guide.md) covers everything after that, including
+[how to put everything back](docs/user-guide.md#9-uninstall--put-everything-back).
+
 ## Why
 
 > **North Star** — make it as easy as possible for *non-technical Windows
@@ -192,8 +203,10 @@ GUI-driven green run.
   **read-only**; BitLocker volumes are never decrypted in place.
 - **Secrets stay put.** Passwords, private keys, tokens, and credential stores
   are never copied silently — you sign in again where it matters.
-- **Reversible uninstall.** Removes the boot entry and `C:\wootc\`, and can
-  reclaim a dedicated Linux partition, restoring Windows to its prior state.
+- **Reversible uninstall.** Removes the boot entry, bootloader files and
+  installer, keeps `root.disk` unless asked to delete it, can reclaim a
+  dedicated Linux partition, and restores the power settings setup changed.
+  Listed in Windows' own Apps list as "TunaOS (wootc)".
 
 ## Architecture
 

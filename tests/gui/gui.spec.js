@@ -192,13 +192,51 @@ test('branding — partner re-skin applies theme + copy', async ({ page }) => {
   await boot(page, { mode: 'installer', images: IMAGES, sysinfo: SYSINFO, brand });
   // Brand name in the title bar, custom install verb on the CTA and title.
   await expect(page.locator('.titlebar-name')).toContainText('Acme Switch');
-  await expect(page.locator('.screen-title').first()).toContainText('Migrate TunaOS');
+  // The overlay's name IS the distribution being installed now, so the
+  // re-skinned title carries it.
+  await expect(page.locator('.screen-title').first()).toContainText('Migrate Acme Switch');
   await expect(page.locator('#install-btn')).toContainText('Migrate');
   // Accent applied as a CSS variable.
   const accent = await page.evaluate(() =>
     getComputedStyle(document.documentElement).getPropertyValue('--accent').trim());
   expect(accent).toBe('#e6007a');
   await shot(page, '07-branded');
+});
+
+test('branding — a brand build wears real assets, not the wootc name', async ({ page }) => {
+  // Mirrors what a `-X main.brandID=bazzite` binary serves from GetBranding:
+  // real logo (data URI), embedded typeface, deep theme CSS, own catalog.
+  const logo = 'data:image/svg+xml;base64,' + Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64');
+  const brand = {
+    name: 'Bazzite', productName: 'Bazzite Installer', exeName: 'Bazzite-Installer',
+    tagline: 'The next generation of Linux gaming — your Windows files come along.',
+    logoEmoji: '', version: '0.1.0', accent: '#8a2be2', accentText: '#ffffff',
+    background: '#0f0f0f', card: '#1c1c1c', text: '#f0f0f0', installVerb: 'Install',
+    fontFamily: 'DM Sans', logoDataUri: logo,
+    fontDataUri: 'data:font/woff2;base64,AA==',
+    themeCss: ':root{--bg:#0f0f0f}.btn-primary{background:linear-gradient(130deg,#0546ad,#8a2be2)}',
+    catalog: ['bazzite', 'bazzite-deck'], defaultImage: 'bazzite', hideCustomImage: true,
+  };
+  const images = [
+    { id: 'bazzite', name: 'Bazzite', emoji: '🎮', base: 'Universal Blue (Fedora)', desktop: 'kde', desktopName: 'KDE Plasma', imageRef: 'ghcr.io/ublue-os/bazzite:stable', description: 'The next generation of Linux gaming.', bootloader: 'grub2', composeFs: false, status: 'experimental' },
+    { id: 'bazzite-deck', name: 'Bazzite Deck', emoji: '🕹️', base: 'Universal Blue (Fedora)', desktop: 'kde', desktopName: 'Game Mode (KDE)', imageRef: 'ghcr.io/ublue-os/bazzite-deck:stable', description: 'Boots straight into Steam.', bootloader: 'grub2', composeFs: false, status: 'experimental' },
+  ];
+  await boot(page, { mode: 'installer', images, sysinfo: SYSINFO, brand });
+  // The product's own name — never "wootc" — and the real mark as an <img>.
+  await expect(page.locator('.titlebar-name')).toContainText('Bazzite Installer');
+  await expect(page.locator('img.titlebar-logo')).toBeVisible();
+  await expect(page.locator('.screen-title').first()).toContainText('Install Bazzite');
+  // Cards wear the brand mark instead of emoji.
+  await expect(page.locator('img.image-emoji').first()).toBeVisible();
+  // hideCustomImage removes the custom-OCI field outright.
+  await expect(page.getByPlaceholder('ghcr.io/ublue-os/image:tag')).toHaveCount(0);
+  // Deep theme injected and winning: the ground is the brand's, and the
+  // typeface is registered.
+  const bg = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg').trim());
+  expect(bg).toBe('#0f0f0f');
+  await expect(page.locator('#brand-theme')).toHaveCount(1);
+  await expect(page.locator('#brand-font')).toHaveCount(1);
+  await shot(page, '07-branded-bazzite');
 });
 
 test('migration dashboard — files, apps, office', async ({ page }) => {
@@ -323,4 +361,40 @@ test('every exit button reaches the runtime', async ({ page }) => {
   await boot(page, { mode: 'migration', categories: MIGRATION_CATEGORIES, apps: APPS, office: OFFICE });
   await page.locator('.footer').getByRole('button', { name: 'Close', exact: true }).click();
   expect(await page.evaluate(() => window.__wootcWindowCalls)).toContain('Quit');
+});
+
+// ── North Star honesty wave (audit 2026-08-22) ───────────────────────────────
+
+// The one number the user chooses must be the one number that is checked: a
+// 30-GB-free machine could previously request 500 GB and learn about it from
+// a raw allocation error mid-install.
+test('disk size larger than C: can hold gates the install button', async ({ page }) => {
+  await boot(page, { mode: 'installer', images: IMAGES,
+    sysinfo: { ...SYSINFO, freeDiskGB: 30 } });
+  await page.locator('.field:has-text("Linux Username") input').fill('alice');
+  const pw = page.locator('input[type=password]');
+  await pw.nth(0).fill('hunter2');
+  await pw.nth(1).fill('hunter2');
+  // 30 GB free - 15 GB headroom = 15 GB max, below the 20 GB minimum.
+  await expect(page.locator('#install-btn')).toBeDisabled();
+  await expect(page.locator('#install-hint')).toContainText('Free up some space');
+});
+
+// A failed attempt must greet the user as a failed attempt — with the calm
+// truth — not with silence or "an existing installation was found".
+test('a failed last run is acknowledged on relaunch', async ({ page }) => {
+  await boot(page, { mode: 'installer', images: IMAGES, sysinfo: SYSINFO,
+    lastRun: { state: 'failed', phase: 'Making room for Linux', error: 'disk full' } });
+  await expect(page.locator('body')).toContainText("didn't finish");
+  await expect(page.locator('body')).toContainText('Nothing outside the wootc folder was changed');
+});
+
+// Once the deployer has completed, the control panel closes the post-deploy
+// loop from the Windows side: a button that actually starts TunaOS.
+test('a deployed install offers Restart into TunaOS', async ({ page }) => {
+  await boot(page, { mode: 'installer', images: IMAGES, sysinfo: SYSINFO,
+    existing: true,
+    uninstall: { found: true, storageDrive: 'C', diskPath: 'C:\\wootc\\disks\\root.disk', diskSizeGB: 40, deployed: true } });
+  await expect(page.getByRole('button', { name: /Restart into TunaOS/ })).toBeVisible();
+  await expect(page.locator('body')).toContainText('Windows stays your default');
 });

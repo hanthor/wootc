@@ -222,6 +222,25 @@ bind_profile() {
             bound=$((bound + 1))
         fi
     done
+    add_host_bookmark "$home"
+}
+
+# A file-manager bookmark for everything OUTSIDE the six bridged folders
+# (C:\Program Files, a games library, a second data directory). The bridged
+# folders make the common files invisible magic; anything else was reachable
+# only by typing /run/wootc/host, which no screen ever mentions (North Star
+# audit 2026-08-22). One line per GTK generation, never duplicated, owned by
+# the user (this unit runs as root).
+add_host_bookmark() {
+    local home="$1" uri="file:///run/wootc/host Windows drive" gen bm
+    for gen in gtk-3.0 gtk-4.0; do
+        bm="$home/.config/$gen/bookmarks"
+        mkdir -p "${bm%/*}" 2>/dev/null || true
+        if ! grep -qsF "$uri" "$bm" 2>/dev/null; then
+            echo "$uri" >> "$bm" 2>/dev/null || true
+        fi
+        chown --reference="$home" "${bm%/*}" "$bm" 2>/dev/null || true
+    done
 }
 
 # Attempt BitLocker unlock before scanning for profiles when the host

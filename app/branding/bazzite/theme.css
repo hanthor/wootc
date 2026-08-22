@@ -1,0 +1,33 @@
+/* Bazzite deep theme — palette, type and button treatment lifted from
+   bazzite.gg (dark #0f0f0f ground, DM Sans, cobalt→violet gradient:
+   linear-gradient(130deg, #0546ad, #8a2be2)). Injected after style.css, so
+   these token overrides win in BOTH light and dark Windows themes: a
+   branded build commits to the brand's look. */
+:root {
+  --bg:          #0f0f0f;
+  --bg-card:     #1c1c1c;
+  --bg-input:    #262626;
+  --bg-hover:    #2e2e2e;
+  --border:      #333333;
+  --border-focus:#8a2be2;
+  --text:        #f0f0f0;
+  --text-muted:  #9a9a9a;
+  --text-dim:    #c2c2c2;
+  --accent:      #8a2be2;
+  --accent-light:#a45ef0;
+  --accent-glow: rgba(138, 43, 226, 0.30);
+  --radius:      14px;
+  --radius-sm:   8px;
+}
+
+.btn-primary {
+  background: linear-gradient(130deg, #0546ad 0%, #8a2be2 100%);
+  color: #ffffff;
+  border: none;
+  font-weight: 700;
+}
+.btn-primary:hover { filter: brightness(1.15); box-shadow: 0 0 0 3px var(--accent-glow); }
+
+.image-card.selected { border-color: #8a2be2; box-shadow: 0 0 0 3px rgba(138, 43, 226, 0.25); }
+
+.screen-title { font-weight: 700; letter-spacing: -0.01em; }

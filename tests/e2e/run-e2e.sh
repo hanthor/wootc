@@ -1291,6 +1291,26 @@ if [ "$SKIP_BUILD" = false ]; then
     flock -u 8
 fi
 
+# Manifest for the app's fail-closed artifact verification (#53/#194): the
+# GUI/headless installer refuses boot artifacts it cannot check against a
+# SHA256SUMS. E2E stages the artifacts itself, so it stages their manifest
+# beside them (the app prefers a pre-staged install\SHA256SUMS over the
+# release fetch — the offline-bundle contract). Without this, every
+# GUI-driven cell died at 'SHA256SUMS manifest unavailable: HTTP 404'
+# the moment #194 landed (run 32549251225).
+(
+    cd "$SCRIPT_DIR/wootc-files"
+    : > SHA256SUMS
+    for f in deployer-vmlinuz deployer-initramfs.img shimx64.efi grubx64.efi wubildr.efi; do
+        [ -f "$f" ] && sha256sum "$f" >> SHA256SUMS
+    done
+)
+[ -s "$SCRIPT_DIR/wootc-files/SHA256SUMS" ] || {
+    fail "wootc-files/SHA256SUMS is empty — no boot artifacts to checksum"
+    exit 1
+}
+info "Boot-artifact manifest staged: $(wc -l < "$SCRIPT_DIR/wootc-files/SHA256SUMS") entries"
+
 # wubildr is no longer required for Secure Boot (we use the signed shim chain).
 # Keep the file around for reference if it was built.
 
@@ -2397,7 +2417,7 @@ Write-Output "webview2-install-started"' >/dev/null 2>&1 || warn "    (could not
 
     qga_powershell 'New-Item -ItemType Directory -Force -Path C:\wootc\install | Out-Null
 Copy-Item \\host.lan\Data\wootc.exe C:\wootc\wootc.exe -Force
-foreach ($f in "deployer-vmlinuz","deployer-initramfs.img","shimx64.efi","grubx64.efi","wubildr.efi","mirror.txt") { if (Test-Path "\\host.lan\Data\$f") { Copy-Item "\\host.lan\Data\$f" "C:\wootc\install\$f" -Force } }
+foreach ($f in "deployer-vmlinuz","deployer-initramfs.img","shimx64.efi","grubx64.efi","wubildr.efi","mirror.txt","SHA256SUMS") { if (Test-Path "\\host.lan\Data\$f") { Copy-Item "\\host.lan\Data\$f" "C:\wootc\install\$f" -Force } }
 Remove-Item C:\wootc\e2e-drive.json,C:\wootc\e2e-drive-state.json -Force -ErrorAction SilentlyContinue
 @"
 set WOOTC_E2E_DRIVE=1

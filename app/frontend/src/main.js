@@ -1,5 +1,5 @@
 import '../src/style.css';
-import { GetImages, GetSystemInfo, ExistingInstallFound, GetMode, GetSessionCandidates, GetBranding, GetUninstallInfo, GetVMCapability, GetFreshVMCapability, GetSupportPolicy } from '../wailsjs/go/main/App';
+import { GetImages, GetSystemInfo, ExistingInstallFound, GetMode, GetSessionCandidates, GetBranding, GetUninstallInfo, GetVMCapability, GetFreshVMCapability, GetSupportPolicy, GetLastRun } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { startE2EDrive } from './lib/e2e.js';
 import { state } from './lib/state.js';
@@ -16,7 +16,7 @@ import { renderMigrateScreen, renderMigrateRows, refreshCategories } from './scr
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
-  try { applyBranding(await GetBranding()); } catch { applyBranding({ name: 'wootc', tagline: '', logoEmoji: '🐠', version: '0.1.0', installVerb: 'Install' }); }
+  try { applyBranding(await GetBranding()); } catch { applyBranding({ name: 'TunaOS', productName: 'wootc', tagline: '', logoEmoji: '🐠', version: '0.1.0', installVerb: 'Install' }); }
   // Listen for progress events from Go backend
   EventsOn('install:progress', (e) => {
     state.progress.step = e.step;
@@ -72,7 +72,7 @@ async function init() {
     return;
   }
 
-  const [images, sysinfo, existing, policy, sessionCandidates] = await Promise.all([
+  const [images, sysinfo, existing, policy, sessionCandidates, lastRun] = await Promise.all([
     GetImages(),
     GetSystemInfo(),
     ExistingInstallFound(),
@@ -81,13 +81,21 @@ async function init() {
     // .catch() on the call and blank the whole launchpad; session candidates
     // are optional, so absorb that too.
     Promise.resolve().then(GetSessionCandidates).catch(() => []),
+    // Honesty on relaunch: a failed attempt must greet the user as a failed
+    // attempt, not as "an existing installation was found".
+    Promise.resolve().then(GetLastRun).catch(() => null),
   ]);
+  state.lastRun = lastRun && lastRun.state ? lastRun : null;
 
   state.policy = policy;
   state.images = images || [];
   state.sysinfo = sysinfo;
   state.sessionCandidates = sessionCandidates || [];
-  state.selected = state.images[0] || null;
+  // A brand can name its pre-selected card; otherwise the first offered
+  // image is the default, as before.
+  state.selected = (state.brand?.defaultImage
+    && state.images.find(i => i.id === state.brand.defaultImage))
+    || state.images[0] || null;
   applyImageDefaults(state.selected);
 
   // Default the Linux identity from this Windows machine so the launchpad

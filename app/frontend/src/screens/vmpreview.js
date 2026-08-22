@@ -1,6 +1,7 @@
 import { TryInVMFresh, InstallPreviewForReal } from '../../wailsjs/go/main/App';
 import { state } from '../lib/state.js';
 import { render } from '../lib/render.js';
+import { distroName } from '../lib/branding.js';
 import { el, btn } from '../lib/ui.js';
 
 // ── Try in VM (§6.1) ──────────────────────────────────────────────────────────
@@ -58,7 +59,7 @@ export function renderVMPreviewScreen() {
   } else if (state.vmReady) {
     screen.innerHTML = `<div style="font-size:40px">🖥️</div>
       <h2>Your preview is running</h2>
-      <div style="color:var(--text-muted);max-width:440px">${state.selected?.name || 'TunaOS'} is booting in its own window — try it out. If you like it, install it for real using the same disk (no re-download, no re-deploy).</div>`;
+      <div style="color:var(--text-muted);max-width:440px">${state.selected?.name || distroName()} is booting in its own window — try it out. If you like it, install it for real using the same disk (no re-download, no re-deploy).</div>`;
     const row = el('div'); row.style.cssText = 'display:flex;gap:10px;margin-top:8px';
     row.appendChild(btn('Not now', 'btn btn-ghost', () => { state.screen = 'launchpad'; render(); }));
     row.appendChild(btn('Install for Real →', 'btn btn-primary', () => installPreviewForReal()));

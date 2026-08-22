@@ -1,0 +1,32 @@
+/* Bluefin deep theme — tokens from projectbluefin.io (Inter, deep
+   navy #10151f ground, indigo tile gradient #3550ec → #252b4b, soft sky
+   accents #60a5fa/#93c5fd). Injected after style.css, so these token
+   overrides win in BOTH light and dark Windows themes. */
+:root {
+  --bg:          #10151f;
+  --bg-card:     #161d2b;
+  --bg-input:    #1b2334;
+  --bg-hover:    #202a3e;
+  --border:      #273349;
+  --border-focus:#60a5fa;
+  --text:        #e2e8f0;
+  --text-muted:  #8b98ad;
+  --text-dim:    #cbd5e1;
+  --accent:      #3550ec;
+  --accent-light:#60a5fa;
+  --accent-glow: rgba(96, 165, 250, 0.25);
+  --radius:      16px;
+  --radius-sm:   10px;
+}
+
+.btn-primary {
+  background: linear-gradient(160deg, #3550ec 0%, #252b4b 130%);
+  color: #ffffff;
+  border: none;
+  font-weight: 600;
+}
+.btn-primary:hover { filter: brightness(1.18); box-shadow: 0 0 0 3px var(--accent-glow); }
+
+.image-card.selected { border-color: #60a5fa; box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.22); }
+
+.screen-title { font-weight: 700; letter-spacing: -0.015em; }

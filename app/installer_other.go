@@ -69,9 +69,10 @@ func configureBCD(bootloader string) error    { return nil }
 
 func writeVault(cfg InstallConfig) error {
 	vault := map[string]string{
-		"username": cfg.Username,
-		"hostname": cfg.Hostname,
-		"image":    cfg.ImageRef,
+		"username":    cfg.Username,
+		"hostname":    cfg.Hostname,
+		"image":       cfg.ImageRef,
+		"distro_name": effectiveBranding().Name,
 	}
 	return marshalJSONToFile("/tmp/wootc/install/vault.json", vault)
 }
@@ -105,3 +106,12 @@ func (a *App) CreateDataPartition(sizeGB int) (DataPartition, error) {
 }
 
 func restrictFileACL(path string) error { return nil } // no-op on Linux
+
+// disarmOneShot is Windows-only (BCD one-shot removal); no-op elsewhere.
+func disarmOneShot() {}
+
+// Windows-only surfaces of the leave-cleanly story; no-ops elsewhere.
+func armOneShotFromPersistedGUID() error {
+	return fmt.Errorf("boot arming is only available on Windows")
+}
+func registerUninstallEntry() {}

@@ -83,6 +83,8 @@ phase() {
     case "$1" in
         ntfs-mounted)       splash_set  6 12 "Preparing your disk..." ;;
         scratch-setup)      splash_set 12 18 "Preparing your disk..." ;;
+        network-wait)       splash_set 16 18 "Waiting for a network connection - plug in a network cable if this takes a while..." ;;
+        bundle-ingest)      splash_set 18 24 "Loading your downloaded system - no internet needed..." ;;
         registry-preflight) splash_set 18 24 "Connecting to the software library..." ;;
         fisherman)          splash_set 26 86 "Downloading and installing your Linux system..." ;;
         verification)       splash_set 88 95 "Almost there - making sure everything is perfect..." ;;
@@ -111,8 +113,8 @@ splash_set() {
     printf '%s\t%s\t%s\n' "$1" "$2" "$3" > "$SPLASH_STATE" 2>/dev/null || true
 }
 
-splash_paint() {  # <pct> <message> <spinner-char>
-    local pct="$1" msg="$2" sp="$3" i filled bar=""
+splash_paint() {  # <pct> <message> <spinner-char> [long]
+    local pct="$1" msg="$2" sp="$3" mode="${4:-}" i filled bar=""
     filled=$(( pct * 46 / 100 ))
     for ((i = 0; i < 46; i++)); do (( i < filled )) && bar+="#" || bar+="-"; done
     # Repaint in place (cursor-home, clear-to-EOL per line) — no full-screen
@@ -125,8 +127,17 @@ splash_paint() {  # <pct> <message> <spinner-char>
         printf '\033[0;97m                     %s  %s\033[0m\033[K\n\n\n' "$sp" "$msg"
         printf '\033[1;96m                     [%s] %3d%%\033[0m\033[K\n\n\n\n\n' "$bar" "$pct"
         printf '\033[0;92m                [OK]  Your Windows and all of your files are safe.\033[0m\033[K\n\n'
-        printf '\033[0;97m                   This usually takes about 5 to 15 minutes.\033[0m\033[K\n'
-        printf '\033[0;97m                   Please keep your PC plugged in - no need to touch anything.\033[0m\033[K\n'
+        # Past the promised window, tell the truth instead of letting the
+        # user compare a stalled bar against "5 to 15 minutes" (a full
+        # system image on a slow link is legitimately 30-60 minutes; the
+        # old copy made that look like a hang).
+        if [ "$mode" = long ]; then
+            printf '\033[0;97m                   Still working - a big download can take 30-60 minutes\033[0m\033[K\n'
+            printf '\033[0;97m                   on slower connections. Please keep your PC plugged in.\033[0m\033[K\n'
+        else
+            printf '\033[0;97m                   This usually takes about 5 to 15 minutes.\033[0m\033[K\n'
+            printf '\033[0;97m                   Please keep your PC plugged in - no need to touch anything.\033[0m\033[K\n'
+        fi
     } > "$SPLASH_TTY" 2>/dev/null || true
 }
 
@@ -139,7 +150,7 @@ splash_start() {
     setterm -blank 0 -powerdown 0 >"$SPLASH_TTY" 2>/dev/null || true
     splash_set 2 6 "Getting things ready..."
     (
-        local frame=0 cur=2 spinners='|/-\' last=""
+        local frame=0 cur=2 spinners='|/-\' last="" mode=""
         while :; do
             local start ceil msg line
             line=$(cat "$SPLASH_STATE" 2>/dev/null || true)
@@ -151,7 +162,11 @@ splash_start() {
                 cur=$(( cur + ( (ceil - cur) / 12 ) + 1 ))
                 [ "$cur" -gt "$ceil" ] && cur="$ceil"
             fi
-            splash_paint "$cur" "$msg" "${spinners:frame%4:1}"
+            # 2s per frame → frame 450 is the 15-minute mark, the outer edge
+            # of the on-screen promise. Swap the footer to the honest
+            # long-download copy from there on.
+            [ "$frame" -ge 450 ] && mode=long
+            splash_paint "$cur" "$msg" "${spinners:frame%4:1}" "$mode"
             frame=$(( frame + 1 ))
             sleep 2
         done
@@ -282,6 +297,69 @@ LUKS_TYPE="$(read_cmdline wootc.luks none)"
 LUKS_PASSPHRASE="$(read_cmdline wootc.luks-passphrase)"
 VAULT_PATH="$(read_cmdline wootc.vault)"
 DEBUG="$(read_cmdline wootc.debug)"
+
+# ── Observed vs product mode ────────────────────────────────────────────────
+# The E2E harness arms the deployer with console=ttyS0 so it can watch the
+# serial; no real install carries that karg (the app adds it only under
+# WOOTC_E2E_DRIVE=1, and setup-wootc.ps1 is E2E-only). Every behavior the
+# harness depends on — verbose Phase-2 consoles, self-managed one-shots,
+# tool output on the serial — stays bit-identical in observed mode. The
+# calmer product behavior below applies only to real users.
+WOOTC_OBSERVED=""
+grep -q 'console=ttyS0' /proc/cmdline 2>/dev/null && WOOTC_OBSERVED=1
+
+# Product: the VGA console is the splash's screen. Tool output (podman,
+# fisherman, dracut) inherits this script's stdout, and on a serial-less
+# machine that is the SAME tty the splash owns — every line would scroll
+# over the reassurance screen. Route it away: log()/err() already write the
+# curated record to kmsg + the persistent NTFS log, and cleanup() stages the
+# full boot journal to C:\wootc\logs, so nothing diagnostic is lost.
+if [[ -z "$WOOTC_OBSERVED" && "${DEBUG:-}" != 1 ]]; then
+    exec >/dev/null 2>&1
+fi
+
+# Phase-2 console kargs. Observed runs keep today's exact strings (the E2E
+# classifier and serial evidence depend on them). A real user's new OS must
+# not greet them with a kernel wall on every boot, so product Phase 2 boots
+# quiet — the attach hook's handful of direct /dev/console lines still
+# surface if the attach itself goes wrong.
+if [[ -n "$WOOTC_OBSERVED" || "${DEBUG:-}" == 1 ]]; then
+    PHASE2_CONSOLE_FULL="console=tty1 console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 ignore_loglevel"
+    PHASE2_CONSOLE_BASIC="console=tty1 console=ttyS0,115200"
+else
+    PHASE2_CONSOLE_FULL="quiet"
+    PHASE2_CONSOLE_BASIC="quiet"
+fi
+
+# After a verified deploy, arm ONE more one-shot so the next boot actually
+# starts the Linux we just promised ("All set! Starting your new Linux
+# system..."). BootNext is consumed by the firmware on that single boot —
+# Windows remains the default, keeping the done screen's contract ("Windows
+# stays your default until Linux has proven it works"). The E2E harness
+# manages its own re-arm from Windows between deploy and Phase 2 (VDL
+# extension, snapshot), so observed runs never self-arm.
+WOOTC_REARMED=""
+rearm_bootnext() {
+    [[ -n "$WOOTC_OBSERVED" ]] && return 0
+    if ! command -v efibootmgr >/dev/null 2>&1; then
+        err "  [WARN] efibootmgr missing from the initramfs; next boot returns to Windows — the wootc app can start Linux"
+        return 0
+    fi
+    local num
+    num=$(efibootmgr 2>/dev/null | sed -n 's/^Boot\([0-9A-Fa-f]\{4\}\)\*\{0,1\}[[:space:]]\{1,\}wootc.*/\1/p' | head -1)
+    if [[ -z "$num" ]]; then
+        err "  [WARN] no 'wootc' firmware boot entry found; next boot returns to Windows"
+        return 0
+    fi
+    if efibootmgr --bootnext "$num" >/dev/null 2>&1; then
+        log "  [PASS] next boot armed for TunaOS (Boot$num, one-shot); Windows stays the default"
+        WOOTC_REARMED=1
+    else
+        err "  [WARN] could not set BootNext; next boot returns to Windows — the wootc app can start Linux"
+    fi
+    return 0
+}
+
 # Bring up the reassuring full-screen install UI as early as possible so the
 # very first thing on screen after "Booting wootc" is calm and friendly, not
 # a black screen or console text.
@@ -596,9 +674,70 @@ mount --bind /var/fisherman-tmp/host-containers /var/lib/containers
 mkdir -p /var/fisherman-tmp/var-tmp /var/tmp
 mount --bind /var/fisherman-tmp/var-tmp /var/tmp
 
+# ── Offline bundle ingest (OCI layout) ──────────────────────────────────────
+# Windows does all networking; the deployer must not need any
+# (docs/branding-and-distribution.md §3): a laptop's Wi-Fi does not exist in
+# this initramfs, and the E2E VM's virtio ethernet has been masking that.
+# The app pre-downloads the selected image into C:\wootc\bundle\oci — a
+# plain-file OCI layout (NTFS-safe: no xattrs, no whiteouts, digest-addressed
+# so verification is inherent). Ingesting it into local containers-storage
+# HERE, before anything network-shaped runs, makes every downstream consumer
+# offline for free: the capability probes run the local image, fisherman's
+# CheckImage finds it (no pull), and its skopeo containers-storage → OCI
+# export is pure local I/O.
+WOOTC_OFFLINE=0
+BUNDLE_OCI="/mnt/ntfs/wootc/bundle/oci"
+if [[ -f "$BUNDLE_OCI/index.json" ]]; then
+    _bundle_ref=$(jq -r '.image // empty' /mnt/ntfs/wootc/bundle/bundle.json 2>/dev/null || echo "")
+    if [[ -n "$_bundle_ref" && "$_bundle_ref" == "$IMAGE" ]]; then
+        phase "bundle-ingest"
+        log "Offline bundle for ${IMAGE} found — ingesting the OCI layout (no network needed)..."
+        _bundle_digest=$(jq -r '.digest // empty' /mnt/ntfs/wootc/bundle/bundle.json 2>/dev/null || echo "")
+        [[ -n "$_bundle_digest" ]] && log "  bundle pinned at ${_bundle_digest}"
+        _iid=$(timeout 1800 podman pull -q "oci:${BUNDLE_OCI}" 2>/dev/null || true)
+        if [[ -n "$_iid" ]] && timeout 60 podman tag "$_iid" "$IMAGE"; then
+            WOOTC_OFFLINE=1
+            log "  [PASS] bundle ingested as ${IMAGE} (${_iid})"
+        else
+            # Best-effort by design: a broken bundle must degrade to the
+            # network path, not strand the machine.
+            log "  [WARN] bundle ingest failed — falling back to the network"
+        fi
+    elif [[ -n "$_bundle_ref" ]]; then
+        log "Bundle holds ${_bundle_ref}, not ${IMAGE}; ignoring it and pulling instead"
+    fi
+fi
+
+# ── Wait for a network (only when one is actually needed) ───────────────────
+# The deploy hook fires from initqueue/settled as well as initqueue/online,
+# so an offline machine still starts deploying. With a matching bundle there
+# is nothing to wait for; without one, wait — bounded — for the online path,
+# and if it never comes, say exactly what to do about it.
+if [[ "$WOOTC_OFFLINE" != 1 ]]; then
+    _net_waited=0
+    while ! ip route show default 2>/dev/null | grep -q .; do
+        if (( _net_waited == 0 )); then
+            phase "network-wait"
+            log "No network yet — waiting for a connection (wired networks connect automatically)..."
+        fi
+        sleep 5
+        _net_waited=$(( _net_waited + 5 ))
+        if (( _net_waited >= 300 )); then
+            err "No network connection after 5 minutes and no pre-downloaded system was staged."
+            err "Connect a network cable and try again — or reinstall using an installer that downloads the system on Windows first."
+            splash_set 100 100 "No internet connection. Restarting into Windows - connect a network cable and try again."
+            sleep 5 2>/dev/null || true
+            if [[ "$DEBUG" ]]; then exec /bin/bash; else exit 1; fi
+        fi
+    done
+fi
+
 # ── Registry pre-flight ─────────────────────────────────────────────────────
 # Surface DNS/TLS/registry problems with a real error message on the console
 # instead of a bare podman exit status buried inside fisherman.
+if [[ "$WOOTC_OFFLINE" == 1 ]]; then
+    log "Registry pre-flight skipped — ${IMAGE} is already local (offline bundle)"
+else
 phase "registry-preflight"
 log "Registry pre-flight for ${IMAGE}..."
 if [[ ! -s /etc/resolv.conf ]]; then
@@ -618,6 +757,7 @@ if ! skopeo inspect --retry-times 3 "docker://${IMAGE}" >/dev/null; then
         err "cannot reach registry for ${IMAGE} (see skopeo error above)"
         if [[ "$DEBUG" ]]; then exec /bin/bash; else exit 1; fi
     fi
+fi
 fi
 
 # ── Attach the RAW image through losetup ───────────────────────────────────
@@ -654,6 +794,7 @@ VAULT_USER=""
 VAULT_PASSWORD_HASH=""
 VAULT_SECONDARY_USERS=""
 VAULT_PROFILE_MAP=""
+VAULT_DISTRO_NAME=""
 if [[ -n "$VAULT_PATH" ]]; then
     VAULT_FILE="/mnt/ntfs${VAULT_PATH}"
     if [[ -f "$VAULT_FILE" ]]; then
@@ -669,6 +810,9 @@ if [[ -n "$VAULT_PATH" ]]; then
         # during verification so the first-boot bridge can match directories
         # whose names sanitization changed ("Alice Smith" → alice-smith).
         VAULT_PROFILE_MAP=$(jq -r '.profile_map // {} | to_entries[] | "\(.key)\t\(.value)"' "$VAULT_FILE" 2>/dev/null || true)
+        # Branded installers (docs/branding-and-distribution.md) name the
+        # Phase-2 boot menu after the distribution they installed.
+        VAULT_DISTRO_NAME=$(jq -r '.distro_name // empty' "$VAULT_FILE" 2>/dev/null || true)
         if [[ -n "$VAULT_HOSTNAME" ]]; then
             HOSTNAME="$VAULT_HOSTNAME"
         fi
@@ -710,6 +854,16 @@ MIRRORCONF
     fi
 fi
 
+# What the Phase-2 boot menu calls the installed system. Branded installers
+# pass their distribution's name through the vault; everything else (older
+# vaults, headless runs) keeps the TunaOS default. grub.cfg menu titles have
+# no quoting escape hatch, so strip the metacharacters that could break one —
+# the name comes from our own brand.json, but the vault sits on NTFS where
+# anything could have edited it.
+DISTRO_NAME="${VAULT_DISTRO_NAME:-TunaOS}"
+DISTRO_NAME=$(printf '%s' "$DISTRO_NAME" | tr -d '"$`\\')
+[[ -n "$DISTRO_NAME" ]] || DISTRO_NAME="TunaOS"
+
 # ╔═══════════════════════════════════════════════════════════════════════════
 # ║ PROVISIONER: bootc/fisherman — begins here.
 # ║ Everything above this line is generic orchestration (disk discovery, NTFS,
@@ -745,6 +899,15 @@ ensure_ntfs_support() {
     # mount NTFS all along. Treat injection as best-effort belt — the braces
     # are the hook's runtime ntfs3 -> ntfs-3g fallback plus the loop-attach
     # guard. Making these failures fatal broke deploys that worked.
+    # Offline: dnf cannot reach any repo, and burning its retry timeouts
+    # against a network that does not exist only delays the deploy. The
+    # injection is best-effort belt anyway (see above) — the braces are the
+    # hook's runtime ntfs3 → ntfs-3g fallback plus the staged early-cpio
+    # closure, both of which work offline.
+    if [[ "${WOOTC_OFFLINE:-0}" == 1 ]]; then
+        log "  [WARN] offline: skipping ntfs-3g injection — relying on the image's NTFS support / staged closure"
+        return 0
+    fi
     log "No NTFS driver in ${IMAGE}; injecting ntfs-3g (persisted layer)…"
     local derived="localhost/wootc-ntfs-injected:latest" cname="wootc-ntfs-inject"
     timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
@@ -790,8 +953,19 @@ ensure_ntfs_support() {
     inj_err="${TMPDIR:-/tmp}/wootc-ntfs-inject.err"
     for attempt in 1 2 3; do
         timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
+        # Second rung: self-heal a broken rpmdb before escalating to EPEL.
+        # yellowfin:gnome started failing EVERY transaction with sqlite
+        # "database disk image is malformed" / "database table is locked"
+        # (runs 32534827767 / 32538672432, deterministic across runner VMs
+        # and Windows editions — the IMAGE ships the bad state, likely stale
+        # sqlite WAL files or a db written on a corrupted build runner).
+        # Dropping leftover -shm/-wal sidecars and rebuilding the db from the
+        # Packages table clears both; when the db is truly unreadable the
+        # rung fails and the chain degrades exactly as before.
         if timeout 300 podman run --name "$cname" --network=host "$IMAGE" sh -c \
             'dnf install -y ntfs-3g qemu-guest-agent || \
+             { d=$(rpm --eval %_dbpath); rm -f "$d/rpmdb.sqlite-shm" "$d/rpmdb.sqlite-wal" 2>/dev/null; \
+               rpm --rebuilddb && dnf install -y ntfs-3g qemu-guest-agent; } || \
              { { dnf install -y epel-release || \
                  dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm; } && \
                { dnf config-manager --set-enabled crb 2>/dev/null || true; } && \
@@ -2523,6 +2697,16 @@ QGAEOF
         "$DEPLOY_ROOT/var/usrlocal/bin/wootc-apply-look"
     install -D -m644 /usr/lib/wootc/migration/wootc-apply-look.desktop \
         "$DEPLOY_ROOT/etc/xdg/autostart/wootc-apply-look.desktop"
+    # One-time first-login welcome: opens the migration dashboard so the
+    # user is greeted and the tools are discovered, instead of landing on a
+    # silent desktop with everything unannounced (North Star audit).
+    # mig_opt, NOT a bare install: a raw `install` here ABORTED every deploy
+    # on the whole smoke matrix (run 32551962548, "ABORT: line 2616") the
+    # first time an initramfs without the payload met it — a missing welcome
+    # screen is never worth a dead migration. module-setup.sh now ships the
+    # files, and the landing bats pin both sides of that contract.
+    mig_opt 755 wootc-welcome "$DEPLOY_ROOT/var/usrlocal/bin/wootc-welcome"
+    mig_opt 644 wootc-welcome.desktop "$DEPLOY_ROOT/etc/xdg/autostart/wootc-welcome.desktop"
     # Slurped Windows look (wallpaper/theme/timezone), if the installer
     # collected it. Timezone applies system-wide right here.
     if [[ -d /mnt/ntfs/wootc/install/slurp ]]; then
@@ -2729,10 +2913,10 @@ SMODSH
                 cfs_opts=$(printf '%s' "$cfs_opts" | tr ' ' '\n' | grep -v '\$' | grep -vE '^(quiet|rhgb)$' | tr '\n' ' ' || true)
                 mkdir -p /mnt/esp/loader/entries
                 cat > /mnt/esp/loader/entries/wootc.conf <<BLSEOF
-title wootc Linux
+title ${DISTRO_NAME}
 linux /EFI/wootc/phase2-vmlinuz
 initrd /EFI/wootc/phase2-initramfs.img
-options ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} console=tty1 console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 ignore_loglevel ${PHASE2_KARGS}
+options ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} ${PHASE2_CONSOLE_FULL} ${PHASE2_KARGS}
 BLSEOF
                 rm -f /mnt/esp/loader/entries/wootc-deployer.conf
 
@@ -2741,17 +2925,30 @@ BLSEOF
                 # fail shim verification.  Use the deployer kernel instead —
                 # it is Fedora-signed and trusted by the ESP's Fedora shim.
                 # The Phase-2 initrd is the patched UKI initrd (cpio prepend).
-                PHASE2_LINUX="/EFI/wootc/deployer-vmlinuz ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} console=tty1 console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 ignore_loglevel ${PHASE2_KARGS}"
+                PHASE2_LINUX="/EFI/wootc/deployer-vmlinuz ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} ${PHASE2_CONSOLE_FULL} ${PHASE2_KARGS}"
                 for _gd in /mnt/esp/EFI/fedora /mnt/esp/EFI/redhat /mnt/esp/EFI/wootc; do
                     mkdir -p "$_gd"
+                    # "Windows" must be on this menu by name: the dual-boot
+                    # contract ("you're always one reboot away from Windows")
+                    # is worthless if the boot screen never says the word.
+                    # TunaOS stays default=0 so unattended boots (and E2E)
+                    # are unchanged; chainloading MS-signed bootmgfw.efi is
+                    # the standard shim-verified path.
                     cat > "$_gd/grub.cfg" <<GRUBCFGEOF
 # wootc Phase 2 (composefs) — deployer kernel + patched UKI initrd
 set default=0
-set timeout=3
+set timeout=5
 
-menuentry "wootc Linux" {
+menuentry "${DISTRO_NAME}" {
     linux ${PHASE2_LINUX}
     initrd /EFI/wootc/phase2-initramfs.img
+}
+
+menuentry "Windows" {
+    insmod part_gpt
+    insmod chain
+    search --no-floppy --set=root --file /EFI/Microsoft/Boot/bootmgfw.efi
+    chainloader /EFI/Microsoft/Boot/bootmgfw.efi
 }
 GRUBCFGEOF
                 done
@@ -2800,10 +2997,10 @@ GRUBCFGEOF
                     ROOT_OPTIONS=$(printf '%s' "$ROOT_OPTIONS" | tr ' ' '\n' | grep -v '\$' | grep -v -E '^(quiet|rhgb)$' | tr '\n' ' ' || true)
                     mkdir -p /mnt/esp/loader/entries
                     cat > /mnt/esp/loader/entries/wootc.conf <<BLSEOF
-title wootc Linux
+title ${DISTRO_NAME}
 linux /EFI/wootc/phase2-vmlinuz
 initrd /EFI/wootc/phase2-initramfs.img
-options ${ROOT_OPTIONS} console=tty1 console=ttyS0,115200 ${PHASE2_KARGS}
+options ${ROOT_OPTIONS} ${PHASE2_CONSOLE_BASIC} ${PHASE2_KARGS}
 BLSEOF
                     rm -f /mnt/esp/loader/entries/wootc-deployer.conf
                     log "  [PASS] Phase-2 systemd-boot entry written with wootc-boot & ntfs-3g patched initrd"
@@ -2907,13 +3104,16 @@ BLSEOF
                 # and ostree=; the loop-attach hook makes that UUID appear).
                 ROOT_OPTIONS=$(grep '^options ' "${BLS_DIR:-$DEPLOY_ROOT/boot/loader/entries}"/*.conf 2>/dev/null | head -1 | sed 's/^options *//')
                 # BLS $kernelopts-style variables never resolve in our
-                # grub.cfg; drop tokens containing '$'. Also drop quiet/rhgb —
-                # a silent early-boot panic (all 4 vCPUs parked in
-                # stop_this_cpu() at an identical RIP, confirmed via QEMU
-                # monitor `info registers` across CPUs) showed zero output on
-                # serial OR framebuffer, meaning the panic happens before any
-                # console driver registers. earlycon+ignore_loglevel force the
-                # UART console up immediately so the actual panic prints.
+                # grub.cfg; drop tokens containing '$'. Also drop quiet/rhgb
+                # so the console policy is set in ONE place
+                # (PHASE2_CONSOLE_*): observed runs re-add
+                # earlycon+ignore_loglevel — a silent early-boot panic (all 4
+                # vCPUs parked in stop_this_cpu() at an identical RIP,
+                # confirmed via QEMU monitor `info registers`) showed zero
+                # output on serial OR framebuffer, and only an immediately-up
+                # UART console prints it — while product runs re-add plain
+                # `quiet` so the user's new OS does not boot into a kernel
+                # wall.
                 ROOT_OPTIONS=$(printf '%s' "$ROOT_OPTIONS" | tr ' ' '\n' | grep -v '\$' | grep -v -E '^(quiet|rhgb)$' | tr '\n' ' ' || true)
 
                 # Write the Phase-2 menu to EVERY grub.cfg location the loaded
@@ -2926,14 +3126,25 @@ BLSEOF
                 # points at the now-deleted deployer-vmlinuz — wins, bricking the
                 # boot. Overwriting all three paths makes the handoff prefix-
                 # independent and removes the stale deployer menu.
+                # "Windows" must be on this menu by name (dual-boot contract);
+                # TunaOS stays default=0 so unattended boots and E2E are
+                # unchanged. Chainloading MS-signed bootmgfw.efi is the
+                # standard shim-verified path.
                 PHASE2_GRUB_CFG=$(cat <<GRUBEOF
 # wootc Phase 2 — boot installed system from root.disk
 set default=0
 set timeout=5
 
-menuentry "wootc Linux" {
-    linux /EFI/wootc/phase2-vmlinuz ${ROOT_OPTIONS} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} console=tty1 console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 ignore_loglevel ${PHASE2_KARGS}
+menuentry "${DISTRO_NAME}" {
+    linux /EFI/wootc/phase2-vmlinuz ${ROOT_OPTIONS} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} ${PHASE2_CONSOLE_FULL} ${PHASE2_KARGS}
     initrd /EFI/wootc/phase2-initramfs.img
+}
+
+menuentry "Windows" {
+    insmod part_gpt
+    insmod chain
+    search --no-floppy --set=root --file /EFI/Microsoft/Boot/bootmgfw.efi
+    chainloader /EFI/Microsoft/Boot/bootmgfw.efi
 }
 GRUBEOF
 )
@@ -3081,9 +3292,20 @@ DEPLOY_OK=1   # success — the EXIT trap shows "starting Linux", not the failur
 log "Verification complete. Deployer requested reboot..."
 log "  [wootc] VERIFICATION_SUMMARY: deployer ready for migration phase"
 log "deployer requested reboot"
-# Let the "All set! Starting your new Linux system..." splash sit for a beat so
-# the reboot doesn't yank a mid-progress screen away from the user.
-splash_set 100 100 "All set! Starting your new Linux system..."
+# Close the loop the splash is about to promise: without a re-arm the
+# one-shot was consumed booting THIS deployer, and "Starting your new Linux
+# system..." would be followed by Windows — the journey's happy ending
+# looking exactly like its failure. Observed (E2E) runs skip this; the
+# harness re-arms from Windows between deploy and Phase 2.
+rearm_bootnext
+# Let the final splash sit for a beat so the reboot doesn't yank a
+# mid-progress screen away from the user — and say only what is true: the
+# "starting your new Linux system" line belongs to a boot we actually armed.
+if [[ -n "$WOOTC_OBSERVED" || -n "$WOOTC_REARMED" ]]; then
+    splash_set 100 100 "All set! Starting your new Linux system..."
+else
+    splash_set 100 100 "All set! Restarting into Windows - open the installer there to start ${DISTRO_NAME}."
+fi
 sleep 2 2>/dev/null || true
 splash_stop
 sync || true

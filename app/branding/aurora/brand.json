@@ -1,0 +1,18 @@
+{
+  "name": "Aurora",
+  "productName": "Aurora Installer",
+  "exeName": "Aurora-Installer",
+  "tagline": "Simply delightful — a clean, reliable desktop, and your Windows files come along.",
+  "logoEmoji": "",
+  "fontFamily": "Geist",
+  "accent": "#2eb9df",
+  "accentText": "#06222b",
+  "background": "#18181b",
+  "card": "#27272a",
+  "text": "#f4f4f5",
+  "installVerb": "Install",
+  "catalog": ["aurora"],
+  "defaultImage": "aurora",
+  "hideCustomImage": true,
+  "preloadImage": true
+}

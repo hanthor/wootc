@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"fmt"
 	"os"
 
 	"github.com/wailsapp/wails/v2"
@@ -24,14 +25,27 @@ func main() {
 
 	// Wails paints this before WebView2 renders, so it must agree with the
 	// theme the page is about to choose or the window flashes the wrong colour
-	// on launch (#173). Values mirror the --bg tokens in style.css.
+	// on launch (#173). Values mirror the --bg tokens in style.css. A branded
+	// build commits to its brand's ground colour in both Windows themes (the
+	// injected theme.css overrides the light block), so it pre-paints that.
 	background := &options.RGBA{R: 0x0a, G: 0x0a, B: 0x0f, A: 255} // dark  #0a0a0f
 	if !systemPrefersDark() {
 		background = &options.RGBA{R: 0xf6, G: 0xf6, B: 0xfa, A: 255} // light #f6f6fa
 	}
+	if bg, ok := parseHexRGB(app.GetBranding().Background); ok && brandID != "wootc" {
+		background = bg
+	}
+
+	// The generic build keeps its historical title; a branded build's window
+	// is named for the product alone — "wootc" never appears there.
+	brand := app.GetBranding()
+	title := brand.ProductName
+	if brand.ProductName == "wootc" {
+		title = "wootc — Windows bootc Installer"
+	}
 
 	err := wails.Run(&options.App{
-		Title:            "wootc — Windows bootc Installer",
+		Title:            title,
 		Width:            820,
 		Height:           620,
 		MinWidth:         820,
@@ -75,4 +89,16 @@ func main() {
 	if err != nil {
 		println("Error:", err.Error())
 	}
+}
+
+// parseHexRGB turns "#rrggbb" into the Wails background colour.
+func parseHexRGB(s string) (*options.RGBA, bool) {
+	if len(s) != 7 || s[0] != '#' {
+		return nil, false
+	}
+	var r, g, b uint8
+	if _, err := fmt.Sscanf(s[1:], "%02x%02x%02x", &r, &g, &b); err != nil {
+		return nil, false
+	}
+	return &options.RGBA{R: r, G: g, B: b, A: 255}, true
 }

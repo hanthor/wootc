@@ -1,0 +1,33 @@
+/* Aurora deep theme — tokens from getaurora.dev (Geist, zinc
+   #18181b/#27272a ground, aurora gradient #2eb9df → #9e00ff, pill-shaped
+   controls — the site's rounded-3xl). Injected after style.css, so these
+   token overrides win in BOTH light and dark Windows themes. */
+:root {
+  --bg:          #18181b;
+  --bg-card:     #27272a;
+  --bg-input:    #2e2e33;
+  --bg-hover:    #35353b;
+  --border:      #3f3f46;
+  --border-focus:#2eb9df;
+  --text:        #f4f4f5;
+  --text-muted:  #a1a1aa;
+  --text-dim:    #d4d4d8;
+  --accent:      #2eb9df;
+  --accent-light:#66b9f2;
+  --accent-glow: rgba(46, 185, 223, 0.28);
+  --radius:      18px;
+  --radius-sm:   12px;
+}
+
+.btn { border-radius: 999px; }
+.btn-primary {
+  background: linear-gradient(100deg, #2eb9df 0%, #9e00ff 100%);
+  color: #ffffff;
+  border: none;
+  font-weight: 600;
+}
+.btn-primary:hover { filter: brightness(1.12); box-shadow: 0 0 0 3px var(--accent-glow); }
+
+.image-card.selected { border-color: #2eb9df; box-shadow: 0 0 0 3px rgba(46, 185, 223, 0.22); }
+
+.screen-title { font-weight: 600; letter-spacing: -0.02em; }

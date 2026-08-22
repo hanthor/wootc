@@ -18,6 +18,17 @@ install() {
     # dracut defines moddir before invoking module install hooks.
     # shellcheck disable=SC2154
     inst "$moddir/deploy-hook.sh" /usr/lib/dracut/hooks/initqueue/online/99-wootc-deploy.sh
+    # The SAME hook at initqueue/settled, so a machine with no network — a
+    # laptop whose Wi-Fi does not exist in this initramfs — still starts
+    # deploying (docs/branding-and-distribution.md §3). The hook's
+    # /run/wootc-deployer-started guard keeps the two instances from
+    # double-starting, and deploy.sh owns the decision from there: offline
+    # bundle found → proceed with zero network; none → bounded network wait.
+    inst "$moddir/deploy-hook.sh" /usr/lib/dracut/hooks/initqueue/settled/99-wootc-deploy.sh
+    # First paint happens BEFORE udev settle + network wait: the black-screen
+    # stretch between GRUB and the deployer's animated splash is the moment a
+    # nervous user is most primed to see "my PC is broken".
+    inst "$moddir/early-splash.sh" /usr/lib/dracut/hooks/pre-trigger/10-wootc-early-splash.sh
     inst /usr/bin/fisherman
 
     # Drop systemd's GPT auto-discovery generator.
@@ -131,6 +142,12 @@ install() {
     inst /usr/lib/wootc/migration/wootc-manifest
     inst /usr/lib/wootc/migration/wootc-manifest-gui
     inst /usr/lib/wootc/migration/wootc-manifest.desktop
+    # First-login welcome (North Star landing). Omitting a migration payload
+    # here while deploy.sh stages it is exactly how the whole 7d45616 smoke
+    # matrix died ("ABORT: line 2616: install ... wootc-welcome"): the file
+    # was referenced by every deploy and present in none of the initramfses.
+    inst /usr/lib/wootc/migration/wootc-welcome
+    inst /usr/lib/wootc/migration/wootc-welcome.desktop
     inst /usr/lib/wootc/migration/wootc-identity
     inst /usr/lib/wootc/migration/wootc-user-gui
     inst /usr/lib/wootc/migration/wootc-user.desktop

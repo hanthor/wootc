@@ -145,7 +145,7 @@ func TestOlderWootcInstallIsRecognisedByItsMarker(t *testing.T) {
 func TestPostDeployPhase2MenuIsRecognisedAsOurs(t *testing.T) {
 	esp := t.TempDir()
 	writeFile(t, filepath.Join(esp, "EFI", "fedora", "grub.cfg"),
-		"# wootc Phase 2 — boot installed system from root.disk\nset default=0\nmenuentry \"wootc Linux\" { ... }")
+		"# wootc Phase 2 — boot installed system from root.disk\nset default=0\nmenuentry \"TunaOS\" { ... }")
 	writeFile(t, filepath.Join(esp, "EFI", "fedora", "grubx64.efi"), "target-signed grub staged by deploy.sh")
 	if err := guardESPDestinations(esp, []string{filepath.Join("EFI", "fedora", "grubx64.efi")}); err != nil {
 		t.Fatalf("a post-deploy Phase-2 ESP is wootc's own; reinstall must proceed, got: %v", err)

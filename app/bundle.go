@@ -33,6 +33,12 @@ type BundleInfo struct {
 	// saves them downloading.
 	StoreBytes int64  `json:"storeBytes"`
 	CreatedAt  string `json:"createdAt"`
+	// Source distinguishes how the bundle got here: "" for a bundle shipped
+	// beside the installer (make-bundle.sh), "predownload" for one the app
+	// pulled itself for the offline deploy (ocipull.go). A shipped bundle
+	// pins the catalog to its one image (#177); a pre-download must NOT —
+	// it records a choice, it doesn't remove the others.
+	Source string `json:"source,omitempty"`
 }
 
 // bundleDir is where the deployer looks: C:\wootc\bundle.
@@ -60,10 +66,18 @@ func readBundleInfoAt(dir string) *BundleInfo {
 	if b.Image == "" {
 		return nil
 	}
-	if st, err := os.Stat(filepath.Join(dir, "store")); err != nil || !st.IsDir() {
-		return nil
+	// The payload must actually be here, in either supported form: a
+	// containers-storage store (shipped bundles) or an OCI layout (Windows
+	// pre-download). bundle.json alone describes a bundle that never made it
+	// across, and trusting it would make the deployer skip the pull and then
+	// find no image.
+	if st, err := os.Stat(filepath.Join(dir, "store")); err == nil && st.IsDir() {
+		return &b
 	}
-	return &b
+	if _, err := os.Stat(filepath.Join(dir, "oci", "index.json")); err == nil {
+		return &b
+	}
+	return nil
 }
 
 // GetBundleInfo reports the staged offline bundle to the GUI, or nil. The

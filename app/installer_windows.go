@@ -161,6 +161,7 @@ func getUninstallInfo() UninstallInfo {
 			info := UninstallInfo{
 				Found: true, StorageDrive: d, DiskPath: p,
 				DiskSizeGB: float64(st.Size()) / (1 << 30),
+				Deployed:   deployHasCompleted(d),
 			}
 			if d != "C" {
 				info.OnDedicatedVol, info.ReclaimGB = dedicatedVolumeInfo(d)
@@ -168,7 +169,53 @@ func getUninstallInfo() UninstallInfo {
 			return info
 		}
 	}
+	// No disk anywhere — but leftover arming means there is still something
+	// to clean up, and previously NO GUI path could reach it: a hand-deleted
+	// C:\wootc dropped the user on the launchpad with a stale boot entry
+	// forever. Surface it so the control panel can offer the uninstall.
+	for _, marker := range []string{
+		`C:\wootc\install\bcd-guid.txt`,
+		`C:\wootc\state.json`,
+	} {
+		if _, err := os.Stat(marker); err == nil {
+			return UninstallInfo{Found: true, StorageDrive: "C", Orphaned: true}
+		}
+	}
 	return UninstallInfo{Found: false}
+}
+
+// deployHasCompleted reports whether the deployer has finished at least once
+// on this machine: its staged journal is the physical evidence, the
+// lifecycle state the declared one. Either suffices — this only unlocks a
+// "restart into TunaOS" offer, and arming a one-shot at a non-deployed ESP
+// still just boots the deployer.
+func deployHasCompleted(drive string) bool {
+	if _, err := os.Stat(drive + `:\wootc\logs\deployer-last-journal.log`); err == nil {
+		return true
+	}
+	if s, ok := readState(); ok && (s.State == StateDeployed || s.State == StateHealthy) {
+		return true
+	}
+	return false
+}
+
+// armOneShotFromPersistedGUID re-arms the existing wootc firmware entry for
+// exactly one boot (bootsequence, never displayorder — Windows stays the
+// default). The entry survives the deploy; the ESP behind it now boots
+// Phase-2 TunaOS.
+func armOneShotFromPersistedGUID() error {
+	b, err := os.ReadFile(filepath.Join(wootcDir(), "install", "bcd-guid.txt"))
+	if err != nil {
+		return fmt.Errorf("no boot entry is recorded for this install (bcd-guid.txt): %w — reinstalling repairs this", err)
+	}
+	guid := strings.TrimSpace(string(b))
+	if !strings.HasPrefix(guid, "{") {
+		return fmt.Errorf("recorded boot entry id looks invalid (%q) — reinstalling repairs this", guid)
+	}
+	if out, err := runCmd("bcdedit", "/set", "{fwbootmgr}", "bootsequence", guid, "/addfirst"); err != nil {
+		return fmt.Errorf("could not arm the one-time TunaOS boot: %w (output: %s)", err, out)
+	}
+	return nil
 }
 
 // ctx is accepted for signature symmetry with the install path but is
@@ -181,6 +228,12 @@ func getUninstallInfo() UninstallInfo {
 func uninstallWith(ctx context.Context, opts UninstallOptions) error {
 	_ = ctx
 	info := getUninstallInfo()
+
+	// 0. Put back what install changed outside its folder: hibernation /
+	// Fast Startup (read the marker BEFORE the install dir is removed), and
+	// the Add/Remove Programs entry. "Windows is unchanged" must be true.
+	restorePriorPowerState()
+	unregisterUninstallEntry()
 
 	// 1. Remove all wootc BCD entries.
 	deleteWootcBCDEntries()
@@ -219,10 +272,51 @@ func uninstallWith(ctx context.Context, opts UninstallOptions) error {
 	return nil
 }
 
+// ── Add/Remove Programs ───────────────────────────────────────────────────────
+// The audit's discoverability finding: wootc registered itself nowhere
+// Windows looks, so "how do I remove this?" had no answer a normal user
+// could find. One Uninstall registry entry fixes that; the string points at
+// the documented headless `wootc.exe uninstall` (keep-root.disk default).
+
+const uninstallRegKey = `HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\wootc`
+
+func registerUninstallEntry() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	// The generic build keeps its documented "TunaOS (wootc)" listing;
+	// branded builds list under the distribution's own name — a Bazzite user
+	// searching Apps for "wootc" would find nothing, because nothing ever
+	// told them that word.
+	b := effectiveBranding()
+	displayName := b.Name
+	if strings.EqualFold(b.ProductName, "wootc") {
+		displayName = b.Name + " (wootc)"
+	}
+	_ = runPowerShell(fmt.Sprintf(
+		`New-Item -Path %q -Force | Out-Null; `+
+			`Set-ItemProperty -Path %q -Name DisplayName -Value %q; `+
+			`Set-ItemProperty -Path %q -Name Publisher -Value "tuna-os"; `+
+			`Set-ItemProperty -Path %q -Name DisplayIcon -Value %q; `+
+			`Set-ItemProperty -Path %q -Name InstallLocation -Value "C:\wootc"; `+
+			`Set-ItemProperty -Path %q -Name UninstallString -Value %q; `+
+			`Set-ItemProperty -Path %q -Name NoModify -Value 1 -Type DWord; `+
+			`Set-ItemProperty -Path %q -Name NoRepair -Value 1 -Type DWord`,
+		uninstallRegKey, uninstallRegKey, displayName, uninstallRegKey, uninstallRegKey, exe,
+		uninstallRegKey, uninstallRegKey, fmt.Sprintf(`"%s" uninstall`, exe),
+		uninstallRegKey, uninstallRegKey))
+}
+
+func unregisterUninstallEntry() {
+	_ = runPowerShell(fmt.Sprintf(
+		`Remove-Item -Path %q -Recurse -Force -ErrorAction SilentlyContinue`, uninstallRegKey))
+}
+
 // ── Reboot ────────────────────────────────────────────────────────────────────
 
 func rebootWindows() error {
 	_, err := runCmd("shutdown", "/r", "/t", "5", "/f",
-		"/c", "wootc is rebooting to start the installer")
+		"/c", effectiveBranding().ProductName+" is rebooting to start the installer")
 	return err
 }
