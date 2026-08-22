@@ -24,9 +24,37 @@ WELCOME="payload/migration/wootc-welcome"
     grep -q 'notify-send' "$WELCOME"
 }
 
-@test "the deployer stages the welcome as an autostart" {
+@test "the deployer stages the welcome as an autostart — tolerantly, and the initramfs ships it" {
     grep -q 'wootc-welcome.desktop' "$DEPLOY"
     grep -q 'etc/xdg/autostart/wootc-welcome.desktop' "$DEPLOY"
+    # Both sides of the contract that killed the whole 7d45616 smoke matrix
+    # ("ABORT: line 2616"): the initramfs must actually carry the payload...
+    grep -q '^\s*inst /usr/lib/wootc/migration/wootc-welcome$' payload/deployer/module-setup.sh
+    grep -q '^\s*inst /usr/lib/wootc/migration/wootc-welcome.desktop$' payload/deployer/module-setup.sh
+    # ...and the staging must be mig_opt (WARN), never a bare install (ABORT):
+    # a missing welcome screen is not worth a dead migration.
+    run grep -E '^\s*install .*wootc-welcome' "$DEPLOY"
+    [ "$status" -ne 0 ]
+}
+
+@test "every migration payload deploy.sh stages is shipped in the initramfs" {
+    # The generalized lesson: deploy.sh referencing /usr/lib/wootc/migration/X
+    # that module-setup.sh never inst's means X exists in the repo, passes
+    # every static test, and is absent at runtime — an abort (or a silent
+    # mig_opt skip) on every real deploy. Scan BOTH reference styles: full
+    # paths (install/inst lines) and bare mig_opt names.
+    refs=$( { grep -oE 'migration/wootc-[A-Za-z0-9.@_-]+' "$DEPLOY" | sed 's|migration/||';
+              grep -oE 'mig_opt [0-9]+ [A-Za-z0-9.@_-]+' "$DEPLOY" | awk '{print $3}'; } | sort -u )
+    [ -n "$refs" ]
+    missing=""
+    for f in $refs; do
+        grep -qE "^\s*inst /usr/lib/wootc/migration/${f}$" payload/deployer/module-setup.sh \
+            || missing="$missing $f"
+    done
+    if [ -n "$missing" ]; then
+        echo "deploy.sh stages these, but module-setup.sh never puts them in the initramfs:$missing"
+        return 1
+    fi
 }
 
 @test "every bridged home gets a Windows-drive bookmark" {

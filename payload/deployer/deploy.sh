@@ -2700,10 +2700,13 @@ QGAEOF
     # One-time first-login welcome: opens the migration dashboard so the
     # user is greeted and the tools are discovered, instead of landing on a
     # silent desktop with everything unannounced (North Star audit).
-    install -m755 /usr/lib/wootc/migration/wootc-welcome \
-        "$DEPLOY_ROOT/var/usrlocal/bin/wootc-welcome"
-    install -D -m644 /usr/lib/wootc/migration/wootc-welcome.desktop \
-        "$DEPLOY_ROOT/etc/xdg/autostart/wootc-welcome.desktop"
+    # mig_opt, NOT a bare install: a raw `install` here ABORTED every deploy
+    # on the whole smoke matrix (run 32551962548, "ABORT: line 2616") the
+    # first time an initramfs without the payload met it — a missing welcome
+    # screen is never worth a dead migration. module-setup.sh now ships the
+    # files, and the landing bats pin both sides of that contract.
+    mig_opt 755 wootc-welcome "$DEPLOY_ROOT/var/usrlocal/bin/wootc-welcome"
+    mig_opt 644 wootc-welcome.desktop "$DEPLOY_ROOT/etc/xdg/autostart/wootc-welcome.desktop"
     # Slurped Windows look (wallpaper/theme/timezone), if the installer
     # collected it. Timezone applies system-wide right here.
     if [[ -d /mnt/ntfs/wootc/install/slurp ]]; then

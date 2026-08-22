@@ -142,6 +142,12 @@ install() {
     inst /usr/lib/wootc/migration/wootc-manifest
     inst /usr/lib/wootc/migration/wootc-manifest-gui
     inst /usr/lib/wootc/migration/wootc-manifest.desktop
+    # First-login welcome (North Star landing). Omitting a migration payload
+    # here while deploy.sh stages it is exactly how the whole 7d45616 smoke
+    # matrix died ("ABORT: line 2616: install ... wootc-welcome"): the file
+    # was referenced by every deploy and present in none of the initramfses.
+    inst /usr/lib/wootc/migration/wootc-welcome
+    inst /usr/lib/wootc/migration/wootc-welcome.desktop
     inst /usr/lib/wootc/migration/wootc-identity
     inst /usr/lib/wootc/migration/wootc-user-gui
     inst /usr/lib/wootc/migration/wootc-user.desktop
