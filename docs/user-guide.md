@@ -194,16 +194,29 @@ exists — you can't accidentally delete something that hadn't moved yet.
 
 ## 9. Uninstall — put everything back
 
-Changed your mind? wootc is fully reversible up until Phase 3 stage 6. The
-uninstaller:
+Changed your mind? wootc is fully reversible up until Phase 3 stage 6.
+
+**Where to find it:** open **Settings → Apps → Installed apps** (or Control
+Panel → Programs) and uninstall **TunaOS (wootc)** — or simply run
+`wootc.exe` again as Administrator, which opens the Manage screen with an
+**Uninstall** button.
+
+What it does:
 
 - Removes the wootc boot entry from Windows.
-- Deletes `C:\wootc\` (including your Linux disk file).
-- Removes the Linux bootloader from the ESP.
-- If Linux was on a dedicated partition, reclaims it and gives the space back to
-  Windows.
+- Removes the Linux bootloader files from the boot partition.
+- Deletes wootc's installer files.
+- **Keeps your Linux disk file (`root.disk`) by default**, so your Linux data
+  survives in case you come back. Tick *"Also delete my Linux data"* in the
+  uninstaller to remove it too — that is the only step that deletes anything
+  of yours.
+- If Linux was on a dedicated partition, can reclaim it and give the space
+  back to Windows.
+- Restores the Windows power settings (Fast Startup / hibernation) that
+  setup turned off.
 
-Your Windows install is left exactly as it was.
+With the Linux data box ticked, your Windows install is back exactly as it
+was.
 
 ---
 
@@ -218,6 +231,10 @@ Your Windows install is left exactly as it was.
   passwords or tokens. Sign in once and cloud sync brings the rest.
 - **My PC has no TPM / old firmware.** Choose GRUB2 + passphrase (or no)
   encryption in Advanced options.
+- **Windows wants to "scan and fix" the drive after I used Linux.** Linux
+  hands the drive back cleanly on every normal shutdown, but a power cut or
+  forced power-off while Linux is running can leave Windows wanting a check.
+  Let it run — it's Windows being careful, and your files are fine.
 
 ---
 
