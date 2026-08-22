@@ -235,6 +235,23 @@ setup() {
     grep -q 'the injection below will fail for that reason, not a repo one' "$DEPLOY"
 }
 
+@test "ntfs-3g injection self-heals a broken rpmdb before escalating" {
+    # yellowfin:gnome shipped an rpmdb whose sqlite reported "database disk
+    # image is malformed" / "database table is locked", so EVERY dnf
+    # transaction failed — deterministically, on every runner (runs
+    # 32534827767 / 32538672432) — and the injection chain fell all the way
+    # through to rpm-ostree's useless "not booted via libostree". The chain
+    # must try dropping stale WAL sidecars + `rpm --rebuilddb` BEFORE the
+    # EPEL rung, so an image-shipped db defect is repaired rather than
+    # misread as a missing repo.
+    grep -q 'rpm --rebuilddb && dnf install -y ntfs-3g' "$DEPLOY"
+    grep -q 'rpmdb.sqlite-wal' "$DEPLOY"
+    # The rebuild rung must come before the EPEL rung in the same chain.
+    chain=$(grep -n 'rpm --rebuilddb' "$DEPLOY" | head -1 | cut -d: -f1)
+    epel=$(grep -n 'dnf install -y epel-release' "$DEPLOY" | head -1 | cut -d: -f1)
+    [ "$chain" -lt "$epel" ]
+}
+
 @test "an image without an NTFS driver is not refused when the deployer has one" {
     # Both Phase-2 paths already take ntfs-3g from the DEPLOYER when the image
     # lacks it: composefs via the early cpio, ostree via the NTFS_BINS fallback.

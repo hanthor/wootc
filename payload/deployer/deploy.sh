@@ -790,8 +790,19 @@ ensure_ntfs_support() {
     inj_err="${TMPDIR:-/tmp}/wootc-ntfs-inject.err"
     for attempt in 1 2 3; do
         timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
+        # Second rung: self-heal a broken rpmdb before escalating to EPEL.
+        # yellowfin:gnome started failing EVERY transaction with sqlite
+        # "database disk image is malformed" / "database table is locked"
+        # (runs 32534827767 / 32538672432, deterministic across runner VMs
+        # and Windows editions — the IMAGE ships the bad state, likely stale
+        # sqlite WAL files or a db written on a corrupted build runner).
+        # Dropping leftover -shm/-wal sidecars and rebuilding the db from the
+        # Packages table clears both; when the db is truly unreadable the
+        # rung fails and the chain degrades exactly as before.
         if timeout 300 podman run --name "$cname" --network=host "$IMAGE" sh -c \
             'dnf install -y ntfs-3g qemu-guest-agent || \
+             { d=$(rpm --eval %_dbpath); rm -f "$d/rpmdb.sqlite-shm" "$d/rpmdb.sqlite-wal" 2>/dev/null; \
+               rpm --rebuilddb && dnf install -y ntfs-3g qemu-guest-agent; } || \
              { { dnf install -y epel-release || \
                  dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-10.noarch.rpm; } && \
                { dnf config-manager --set-enabled crb 2>/dev/null || true; } && \
