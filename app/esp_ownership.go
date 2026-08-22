@@ -216,60 +216,89 @@ func recordESPOwnership(espPath string, relPaths []string) error {
 // any point leaves one of those two on disk.
 func writeESPManifest(espPath, content string) error {
 	final := espManifestPath(espPath)
-	tmp := final + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	return persistManifest(final+".tmp", final, content)
+}
+
+// persistManifest gets content into final via write-tmp + rename, surviving
+// every way this Windows ESP has actually fought back:
+//
+//   - A scanner/indexer briefly holds a fresh file and the rename fails with
+//     a sharing violation (run 32550338286). Retrying covers it.
+//   - The rename REPORTS failure after the move in fact happened — two runs
+//     (32556250889 and the v0.1.0-alpha.1 gate, both bluefin-lts) died on
+//     "rename ...tmp -> wootc-owned.txt: The system cannot find the file
+//     specified" while the ESP dump minutes later showed the manifest
+//     complete, containing the very claim being written. So the destination's
+//     CONTENT is the verdict, checked before anything else every iteration.
+//   - The killer the first retry loop could not survive: once tmp is gone
+//     (consumed by the phantom move, or eaten by the scanner), every further
+//     rename is GUARANTEED file-not-found — the loop spun 20 times against a
+//     vanished source. So each iteration recreates tmp when it is missing;
+//     the loop always has a move source and always recognizes success.
+//
+// The first and last errors both survive into the failure message, because
+// this path has now produced three distinct wrong diagnoses from single
+// error codes.
+func persistManifest(tmp, final, content string) error {
+	var firstErr, lastErr error
+	note := func(err error) {
+		if firstErr == nil {
+			firstErr = err
+		}
+		lastErr = err
+	}
+	for attempt := 0; attempt < 40; attempt++ {
+		if attempt > 0 {
+			time.Sleep(250 * time.Millisecond)
+		}
+		// Content on disk is success, whatever any error code claimed.
+		if manifestLanded(final, content) {
+			os.Remove(tmp) //nolint:errcheck — may already be gone; that's fine
+			return nil
+		}
+		if _, err := os.Stat(tmp); err != nil {
+			// tmp missing (first pass, phantom-consumed, or scanner-eaten):
+			// recreate it, synced — the ESP is FAT32 on a device the
+			// installer is about to reboot, and an unflushed manifest is a
+			// lost manifest.
+			if err := writeFileSynced(tmp, content); err != nil {
+				note(fmt.Errorf("writing %s: %w", tmp, err))
+				continue
+			}
+		}
+		if err := os.Rename(tmp, final); err != nil {
+			note(err)
+			continue
+		}
+		return nil
+	}
+	if manifestLanded(final, content) {
+		os.Remove(tmp) //nolint:errcheck
+		return nil
+	}
+	os.Remove(tmp) //nolint:errcheck
+	if firstErr != nil && firstErr.Error() != lastErr.Error() {
+		return fmt.Errorf("replacing the boot-file manifest kept failing (first: %v; last: %w)", firstErr, lastErr)
+	}
+	return fmt.Errorf("replacing the boot-file manifest kept failing: %w", lastErr)
+}
+
+func writeFileSynced(path, content string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
 	if _, err := f.WriteString(content); err != nil {
 		f.Close()
-		os.Remove(tmp)
+		os.Remove(path) //nolint:errcheck
 		return err
 	}
-	// The ESP is FAT32 on a device the installer is about to reboot: an
-	// unflushed manifest is a lost manifest.
 	if err := f.Sync(); err != nil {
 		f.Close()
-		os.Remove(tmp)
+		os.Remove(path) //nolint:errcheck
 		return err
 	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	// Windows quirk: a virus scanner or the search indexer often has a
-	// just-written file open for a moment, and the rename then fails with a
-	// sharing violation ("The process cannot access the file because it is
-	// being used by another process") — seen live on the E2E ESP the first
-	// time a GUI install crossed this path (run 32550338286). The hold is
-	// measured in milliseconds; a short bounded retry converts a hard
-	// install failure into a wait nobody notices.
-	//
-	// Second Windows quirk, seen the first time the RETRY crossed this path
-	// (run 32556250889, bluefin-lts): the rename can REPORT failure after
-	// the move has in fact happened — the ESP dump taken seconds after the
-	// "failed" install showed the manifest complete, containing the very
-	// claim whose rename supposedly died with "The system cannot find the
-	// file specified" (the tmp was gone because it had been moved). So the
-	// return code is not the verdict: after every failed attempt, read the
-	// destination back — content equal to what we just wrote IS success,
-	// whoever's error code says otherwise.
-	var renameErr error
-	for attempt := 0; attempt < 20; attempt++ {
-		if renameErr = os.Rename(tmp, final); renameErr == nil {
-			return nil
-		}
-		if manifestLanded(final, content) {
-			os.Remove(tmp) //nolint:errcheck — may already be gone; that's fine
-			return nil
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	os.Remove(tmp)
-	if manifestLanded(final, content) {
-		return nil
-	}
-	return renameErr
+	return f.Close()
 }
 
 // manifestLanded reports whether final already holds exactly the content this
