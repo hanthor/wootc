@@ -11,6 +11,19 @@ Grab the latest `wootc.exe` from the
 anywhere — Downloads is fine. There is nothing to "install"; wootc is a
 single program you run.
 
+Prefer a specific distribution? The same release page carries branded
+builds of the identical engine — `Bazzite-Installer.exe`,
+`Bluefin-Installer.exe`, `Aurora-Installer.exe`, `TunaOS-Installer.exe`.
+They pre-select their own images and download the whole OS while still on
+Windows, which is the right choice on a Wi-Fi-only laptop.
+
+Command-line folks can use winget once the package clears Microsoft's
+one-time review: `winget install TunaOS.wootc`.
+
+Want to check your download? Every release ships a `SHA256SUMS` file;
+compare with PowerShell's `Get-FileHash .\wootc.exe` — the app performs the
+same verification on every boot artifact it downloads for itself.
+
 Your browser may say something like *"wootc.exe isn't commonly downloaded"*
 and hide the file behind a menu. That message means exactly what it says —
 not many people have downloaded this exact file yet — and nothing more.

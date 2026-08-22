@@ -28,14 +28,34 @@ have never touched a partition editor.
 
 ## Get wootc
 
-Download `wootc.exe` from the
+**Download** (simplest): grab `wootc.exe` from the
 [latest release](https://github.com/tuna-os/wootc/releases/latest) and run
-it as Administrator. Because the binary is not yet code-signed, Windows
-shows a SmartScreen warning and an "unknown publisher" prompt on the way —
+it as Administrator. That is the whole install — one file, no setup wizard;
+the app downloads and verifies its boot pieces itself (every artifact is
+checked against the release's `SHA256SUMS` before it is trusted).
+
+**winget** (once the first submission clears Microsoft's review):
+
+```
+winget install TunaOS.wootc
+```
+
+**Branded installers**: every release also ships the same engine wearing
+each distribution's own identity — `Bazzite-Installer.exe`,
+`Bluefin-Installer.exe`, `Aurora-Installer.exe`, `TunaOS-Installer.exe` —
+which pre-select that distribution's images and pre-download the OS while
+still on Windows (no network needed after the reboot). Pick the one for the
+Linux you want; they are otherwise identical.
+
+Because the binaries are not yet code-signed, Windows shows a SmartScreen
+warning and an "unknown publisher" prompt on the way —
 **[Getting started](docs/getting-started.md)** walks through both screens
 and explains why they appear. The
 [user guide](docs/user-guide.md) covers everything after that, including
 [how to put everything back](docs/user-guide.md#9-uninstall--put-everything-back).
+Testing on your own machine? Read
+**[Manual testing](docs/manual-testing.md)** first — a five-minute
+pre-flight that makes the try safe and the feedback useful.
 
 ## Why
 
