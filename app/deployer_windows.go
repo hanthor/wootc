@@ -52,6 +52,17 @@ func downloadDeployer(ctx context.Context, progress func(float64)) error {
 		dest := filepath.Join(installDir, name)
 		want, inManifest := sums[name]
 		if !inManifest {
+			// wubildr.efi is the one genuinely optional artifact: the release
+			// pipeline builds it best-effort (the signed shim+grub chain is
+			// the real boot path), so a release may legitimately ship
+			// without it. Absent from the manifest → skip it; PRESENT in the
+			// manifest, it is verified exactly like everything else. Every
+			// other artifact stays fail-closed (#53): no manifest entry, no
+			// install.
+			if isOptionalArtifact(name) {
+				progress(float64(i+1) / float64(len(files)))
+				continue
+			}
 			return fmt.Errorf("checksum not found in manifest for %s: refusing to install an unverified boot artifact", name)
 		}
 
@@ -89,6 +100,12 @@ func downloadDeployer(ctx context.Context, progress func(float64)) error {
 	}
 	return nil
 }
+
+// isOptionalArtifact names the boot artifacts an install can proceed
+// without. Only wubildr.efi qualifies — it serves the legacy NTFS fallback
+// path; the Secure Boot chain (shim+grub) and the deployer pair are the
+// install.
+func isOptionalArtifact(name string) bool { return name == "wubildr.efi" }
 
 // fetchChecksums returns the SHA256SUMS manifest as a filename→hash map.
 // Fail-closed (#53): every error aborts the install rather than silently

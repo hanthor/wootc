@@ -1,0 +1,78 @@
+name: winget publish
+
+# Submits (or updates) TunaOS.wootc in microsoft/winget-pkgs whenever a FULL
+# release is published — pre-releases (the auto-v* nightly channel) are
+# skipped, because winget users should land on E2E-gated, human-blessed
+# builds only. See packaging/winget/README.md for the one-time setup
+# (WINGET_TOKEN secret) and why branded installers are not auto-submitted.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to (re)submit, e.g. v0.1.0'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  submit:
+    runs-on: windows-latest
+    steps:
+      - name: Skip pre-releases
+        if: ${{ github.event_name == 'release' && github.event.release.prerelease }}
+        run: |
+          echo "Pre-release — winget submission skipped by design."
+          echo "skip=true" >> $env:GITHUB_ENV
+
+      - uses: actions/checkout@v7
+        if: ${{ env.skip != 'true' }}
+
+      - name: Render manifests from the release
+        if: ${{ env.skip != 'true' }}
+        shell: pwsh
+        run: |
+          $tag = if ('${{ github.event_name }}' -eq 'release') { '${{ github.event.release.tag_name }}' } else { '${{ inputs.tag }}' }
+          $version = $tag -replace '^v',''
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/wootc.exe"
+          Write-Host "tag=$tag version=$version"
+          Write-Host "url=$url"
+          # Hash the ACTUAL published bytes — never trust a locally rebuilt exe.
+          Invoke-WebRequest -Uri $url -OutFile wootc.exe
+          $sha = (Get-FileHash wootc.exe -Algorithm SHA256).Hash
+          Write-Host "sha256=$sha"
+          $out = "rendered/manifests/t/TunaOS/wootc/$version"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Get-ChildItem packaging/winget/*.yaml.in | ForEach-Object {
+            $dest = Join-Path $out ($_.Name -replace '\.in$','')
+            (Get-Content $_ -Raw) `
+              -replace '\{\{VERSION\}\}', $version `
+              -replace '\{\{TAG\}\}', $tag `
+              -replace '\{\{URL\}\}', $url `
+              -replace '\{\{SHA256\}\}', $sha `
+              | Set-Content -NoNewline $dest
+            Write-Host "rendered $dest"
+          }
+          Get-ChildItem $out | ForEach-Object { Write-Host "--- $($_.Name)"; Get-Content $_.FullName }
+          echo "MANIFEST_DIR=$out" >> $env:GITHUB_ENV
+
+      - name: Submit to winget-pkgs
+        if: ${{ env.skip != 'true' }}
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if (-not $env:WINGET_TOKEN) {
+            Write-Host "::notice::WINGET_TOKEN secret is not set — manifests were rendered and printed above, but not submitted."
+            Write-Host "::notice::Add a classic PAT with public_repo scope as the WINGET_TOKEN secret to enable automatic submission (packaging/winget/README.md)."
+            exit 0
+          }
+          # wingetcreate validates the manifests, forks microsoft/winget-pkgs,
+          # and opens the PR. Works for both the first submission (creates the
+          # package) and later version updates.
+          Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          .\wingetcreate.exe submit --token $env:WINGET_TOKEN --prtitle "TunaOS.wootc: update" $env:MANIFEST_DIR

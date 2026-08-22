@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.6.0.schema.json
+PackageIdentifier: TunaOS.wootc
+PackageVersion: "{{VERSION}}"
+PackageLocale: en-US
+Publisher: TunaOS
+PublisherUrl: https://github.com/tuna-os
+PublisherSupportUrl: https://github.com/tuna-os/wootc/issues
+PackageName: wootc
+PackageUrl: https://github.com/tuna-os/wootc
+License: GPL-2.0 OR MIT
+LicenseUrl: https://github.com/tuna-os/wootc/blob/main/LICENSE-GPL-2.0
+ShortDescription: Try Linux alongside Windows — no USB, no repartitioning, fully undoable.
+Description: |-
+  wootc installs a bootc-based Linux (TunaOS, Bluefin, and friends) from
+  inside Windows. Everything lives in one folder on your Windows drive —
+  no partitions are touched, Windows stays the default boot, your files are
+  bridged into Linux, and one uninstall puts everything back.
+Moniker: wootc
+Tags:
+  - linux
+  - dual-boot
+  - migration
+  - bootc
+  - installer
+ReleaseNotesUrl: "https://github.com/tuna-os/wootc/releases/tag/{{TAG}}"
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

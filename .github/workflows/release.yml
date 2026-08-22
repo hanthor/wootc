@@ -97,6 +97,16 @@ jobs:
         with: { node-version: '24' }
       - uses: ./.github/actions/podman-runtime
 
+      - name: Reclaim disk (the deployer image build needs the room)
+        run: |
+          df -h / || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" \
+                      /usr/local/lib/node_modules /usr/share/swift || true
+          sudo apt-get clean
+          docker image prune -af 2>/dev/null || true
+          echo "--- after cleanup ---"; df -h /
+
       - name: Resolve channel + tag
         id: chan
         run: |
@@ -105,10 +115,16 @@ jobs:
             echo "tag=auto-v$(date -u +%Y%m%d)-${sha::7}" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
             echo "channel=auto" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "channel=tagged" >> "$GITHUB_OUTPUT"
+          else
+            # workflow_dispatch from a branch: synthesize a tag rather than
+            # publishing a release literally named "main".
+            echo "tag=manual-v$(date -u +%Y%m%d)-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "channel=manual" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build brand installers (one exe per brand)
@@ -199,7 +215,7 @@ jobs:
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.chan.outputs.tag }}
-          target_commitish: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || '' }}
+          target_commitish: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || (github.ref_type != 'tag' && github.sha || '') }}
           prerelease: ${{ steps.chan.outputs.prerelease }}
           files: release-assets/*
           body_path: NOTES.md

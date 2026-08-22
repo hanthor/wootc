@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+# Template — {{VERSION}}, {{URL}}, {{SHA256}} are filled by
+# .github/workflows/winget-publish.yml from the GitHub release being published.
+PackageIdentifier: TunaOS.wootc
+PackageVersion: "{{VERSION}}"
+InstallerType: portable
+Commands:
+  - wootc
+Installers:
+  - Architecture: x64
+    InstallerUrl: "{{URL}}"
+    InstallerSha256: "{{SHA256}}"
+ManifestType: installer
+ManifestVersion: 1.6.0
