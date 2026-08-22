@@ -1,6 +1,7 @@
 import { Reboot } from '../../wailsjs/go/main/App';
 import { Quit } from '../../wailsjs/runtime/runtime';
 import { state } from '../lib/state.js';
+import { distroName } from '../lib/branding.js';
 import { el, btn } from '../lib/ui.js';
 
 // ── Screen 3: Done ────────────────────────────────────────────────────────────
@@ -13,11 +14,11 @@ export function renderDoneScreen() {
   const hero = el('div', 'done-hero');
   hero.innerHTML = `
     <div class="done-icon">🎉</div>
-    <div class="done-title">TunaOS is ready!</div>
+    <div class="done-title">${distroName()} is ready!</div>
     <div class="done-body">
-      ${state.selected?.name || 'TunaOS'} ${state.selected?.desktopName || ''} has been configured.<br>
+      ${state.selected?.name || distroName()} ${state.selected?.desktopName || ''} has been configured.<br>
       Click <strong>Reboot Now</strong> to start the setup. The first boot takes 5–15 minutes
-      while it downloads and installs TunaOS. After that, starting Linux is fast.
+      while it downloads and installs ${distroName()}. After that, starting Linux is fast.
     </div>
     <div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--text-muted);margin-top:14px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:9px 12px;text-align:left;max-width:460px">
       <span>🛡️</span><span>This is a one-time setup boot. If anything at all goes wrong,

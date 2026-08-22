@@ -70,6 +70,9 @@ func writeVault(cfg InstallConfig) error {
 		"hostname":      cfg.Hostname,
 		"image":         cfg.ImageRef,
 		"password_hash": hash,
+		// The deployer names the Phase-2 boot menu entry after this, so a
+		// Bazzite install boots "Bazzite", not another product's name.
+		"distro_name": effectiveBranding().Name,
 	}
 
 	// Every other Windows profile gets an account so its data has somewhere to

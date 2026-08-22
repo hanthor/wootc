@@ -69,9 +69,10 @@ func configureBCD(bootloader string) error    { return nil }
 
 func writeVault(cfg InstallConfig) error {
 	vault := map[string]string{
-		"username": cfg.Username,
-		"hostname": cfg.Hostname,
-		"image":    cfg.ImageRef,
+		"username":    cfg.Username,
+		"hostname":    cfg.Hostname,
+		"image":       cfg.ImageRef,
+		"distro_name": effectiveBranding().Name,
 	}
 	return marshalJSONToFile("/tmp/wootc/install/vault.json", vault)
 }

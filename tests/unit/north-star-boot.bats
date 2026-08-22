@@ -18,12 +18,19 @@ MODSETUP="payload/deployer/module-setup.sh"
 }
 
 @test "the Linux entry is named for the product, and stays the default" {
-    # "TunaOS", not the internal codename — and default=0 so unattended
-    # boots (and every E2E flow that boots the default entry) are unchanged.
+    # The distribution's name, not the internal codename — and default=0 so
+    # unattended boots (and every E2E flow that boots the default entry) are
+    # unchanged. The name arrives via the vault (branded installers,
+    # docs/branding-and-distribution.md); everything else stays TunaOS.
     run grep 'menuentry "wootc Linux"' "$DEPLOY"
     [ "$status" -ne 0 ]
-    [ "$(grep -c 'menuentry "TunaOS" {' "$DEPLOY")" -ge 2 ]
-    [ "$(grep -c '^title TunaOS$' "$DEPLOY")" -ge 2 ]
+    [ "$(grep -c 'menuentry "${DISTRO_NAME}" {' "$DEPLOY")" -ge 2 ]
+    [ "$(grep -c '^title ${DISTRO_NAME}$' "$DEPLOY")" -ge 2 ]
+    # The default when no brand rode along, and the injection guard: a menu
+    # title has no quoting escape hatch, so the vault-supplied name is
+    # stripped of grub metacharacters before it lands in one.
+    grep -q 'DISTRO_NAME="${VAULT_DISTRO_NAME:-TunaOS}"' "$DEPLOY"
+    grep -q "tr -d '\"\$\`" "$DEPLOY"
 }
 
 @test "product Phase-2 boots quiet; observed runs keep the verbose consoles" {
@@ -34,7 +41,7 @@ MODSETUP="payload/deployer/module-setup.sh"
     grep -q 'PHASE2_CONSOLE_FULL="console=tty1 console=ttyS0,115200 earlycon=uart8250,io,0x3f8,115200n8 ignore_loglevel"' "$DEPLOY"
     grep -q 'PHASE2_CONSOLE_FULL="quiet"' "$DEPLOY"
     # No menu writer may hardcode the karg policy any more.
-    run grep -E 'menuentry "TunaOS"|^options ' "$DEPLOY"
+    run grep '^options ' "$DEPLOY"
     [ "$status" -eq 0 ]
     run bash -c "grep -E 'linux /EFI/wootc/phase2-vmlinuz .*ignore_loglevel' '$DEPLOY'"
     [ "$status" -ne 0 ]

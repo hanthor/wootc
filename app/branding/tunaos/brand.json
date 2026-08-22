@@ -1,0 +1,22 @@
+{
+  "name": "TunaOS",
+  "productName": "TunaOS Installer",
+  "exeName": "TunaOS-Installer",
+  "tagline": "Your friendly Linux desktop — your Windows files come along.",
+  "logoEmoji": "🐟",
+  "accent": "#2f9e8f",
+  "accentText": "#ffffff",
+  "installVerb": "Install",
+  "catalog": [
+    "yellowfin-gnome",
+    "yellowfin-kde",
+    "yellowfin-xfce",
+    "bonito-gnome",
+    "bonito-kde",
+    "bonito-xfce",
+    "bonito-niri"
+  ],
+  "defaultImage": "yellowfin-gnome",
+  "hideCustomImage": true,
+  "preloadImage": true
+}

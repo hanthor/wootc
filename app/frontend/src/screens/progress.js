@@ -1,6 +1,7 @@
 import { CancelInstall } from '../../wailsjs/go/main/App';
 import { state } from '../lib/state.js';
 import { render } from '../lib/render.js';
+import { distroName, productName } from '../lib/branding.js';
 import { el, btn } from '../lib/ui.js';
 
 // ── Screen 2: Progress ────────────────────────────────────────────────────────
@@ -15,6 +16,7 @@ export const INSTALL_STEPS = [
   'Finding your files',
   'Making room for Linux',
   'Downloading Linux',
+  'Downloading your Linux system',
   'Preparing the startup menu',
   'Getting Linux prepared',
   'Making Linux bootable on your machine',
@@ -45,7 +47,7 @@ export function renderProgressScreen() {
 function renderProgressInner() {
   const frag = document.createDocumentFragment();
   const hdr = el('div');
-  hdr.innerHTML = `<div class="screen-title">Installing TunaOS</div>
+  hdr.innerHTML = `<div class="screen-title">Installing ${distroName()}</div>
     <div class="screen-subtitle">${state.selected?.name || ''} ${state.selected?.desktopName || ''} — ${state.selected?.base || ''}</div>`;
   frag.appendChild(hdr);
 
@@ -60,7 +62,7 @@ function renderProgressInner() {
   // Disclosure, not surprise: the BitLocker key step stores a copy on disk,
   // and the audit found that never said anywhere on screen.
   const bitlockerNote = /BitLocker/i.test(state.progress.step || '')
-    ? 'A copy of your recovery key is stored at C:\\wootc\\install so Linux can reach your files. Uninstalling wootc removes it.'
+    ? `A copy of your recovery key is stored at C:\\wootc\\install so Linux can reach your files. Uninstalling ${productName()} removes it.`
     : '';
 
   const track = el('div', 'progress-bar-track');
@@ -125,7 +127,7 @@ function renderProgressInner() {
   const calm = el('div');
   calm.style.cssText = 'display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--text-muted);margin-top:12px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:9px 12px';
   calm.innerHTML = pastArm
-    ? `<span>🛡️</span><span>Your files and Windows stay untouched. wootc has added a one-time startup entry for the setup boot — everything else lives in one folder, Windows stays your default, and you can undo this at any time.</span>`
+    ? `<span>🛡️</span><span>Your files and Windows stay untouched. ${productName()} has added a one-time startup entry for the setup boot — everything else lives in one folder, Windows stays your default, and you can undo this at any time.</span>`
     : `<span>🛡️</span><span>Your files and Windows stay untouched. Everything here goes into one folder — until Linux is proven working, nothing permanent changes, and you can undo this at any time.</span>`;
   pw.appendChild(calm);
   frag.appendChild(pw);

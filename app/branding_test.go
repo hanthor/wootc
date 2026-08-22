@@ -7,8 +7,10 @@ package main
 // and partner branding depend on.
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -132,7 +134,125 @@ func TestGetBranding_MissingFileUsesDefaults(t *testing.T) {
 	_ = os.Remove(filepath.Join(wootcDir(), "brand.json"))
 	a := NewApp()
 	b := a.GetBranding()
-	if b.Name != "wootc" {
-		t.Errorf("GetBranding() = %+v, want default branding", b)
+	// Generic build: the distribution is TunaOS, the installer is wootc.
+	if b.Name != "TunaOS" || b.ProductName != "wootc" {
+		t.Errorf("GetBranding() = %+v, want generic TunaOS/wootc branding", b)
+	}
+}
+
+// ── Brand builds (docs/branding-and-distribution.md) ─────────────────────────
+
+// Every embedded brand config must parse and be internally consistent: its
+// catalog ids must exist in images.json (a typo would blank the launchpad),
+// its default must be in its catalog, and — the point of the whole system —
+// a branded build must never surface the word "wootc".
+func TestEmbeddedBrands_ValidAndConsistent(t *testing.T) {
+	entries, err := brandFS.ReadDir("branding")
+	if err != nil {
+		t.Fatalf("read embedded branding dir: %v", err)
+	}
+	if len(entries) < 5 {
+		t.Fatalf("expected at least the five shipped brands, got %d", len(entries))
+	}
+	var catalog []Image
+	if err := json.Unmarshal(catalogJSON, &catalog); err != nil {
+		t.Fatalf("parse catalog: %v", err)
+	}
+	known := map[string]bool{}
+	for _, img := range catalog {
+		known[img.ID] = true
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue // README etc.
+		}
+		id := e.Name()
+		data, err := brandFS.ReadFile("branding/" + id + "/brand.json")
+		if err != nil {
+			t.Errorf("brand %s: missing brand.json: %v", id, err)
+			continue
+		}
+		var b Branding
+		if err := json.Unmarshal(data, &b); err != nil {
+			t.Errorf("brand %s: unparseable brand.json: %v", id, err)
+			continue
+		}
+		if b.Name == "" || b.ProductName == "" || b.ExeName == "" || b.Tagline == "" {
+			t.Errorf("brand %s: identity incomplete: %+v", id, b)
+		}
+		for _, imgID := range b.Catalog {
+			if !known[imgID] {
+				t.Errorf("brand %s: catalog names unknown image %q", id, imgID)
+			}
+		}
+		if b.DefaultImage != "" {
+			found := false
+			for _, imgID := range b.Catalog {
+				if imgID == b.DefaultImage {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("brand %s: defaultImage %q not in its catalog", id, b.DefaultImage)
+			}
+		}
+		if id == "wootc" {
+			continue // the generic build owns the word
+		}
+		for field, v := range map[string]string{
+			"name": b.Name, "productName": b.ProductName,
+			"exeName": b.ExeName, "tagline": b.Tagline,
+		} {
+			if strings.Contains(strings.ToLower(v), "wootc") {
+				t.Errorf("brand %s: %s %q contains 'wootc' — branded builds must not use the project name", id, field, v)
+			}
+		}
+		if !b.HideCustomImage || !b.PreloadImage || len(b.Catalog) == 0 {
+			t.Errorf("brand %s: branded builds must set catalog, hideCustomImage and preloadImage: %+v", id, b)
+		}
+	}
+}
+
+func TestBrandCatalogImages(t *testing.T) {
+	catalog := []Image{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+	if got := brandCatalogImages(catalog, nil); got != nil {
+		t.Errorf("empty ids should return nil, got %+v", got)
+	}
+	// Brand order wins, unknown ids are skipped rather than failing.
+	got := brandCatalogImages(catalog, []string{"c", "nope", "a"})
+	if len(got) != 2 || got[0].ID != "c" || got[1].ID != "a" {
+		t.Errorf("brandCatalogImages order/skip wrong: %+v", got)
+	}
+}
+
+func TestMergeBranding_DistributionFields(t *testing.T) {
+	base := defaultBranding()
+	over := Branding{ProductName: "Bazzite Installer", ExeName: "Bazzite-Installer",
+		Catalog: []string{"bazzite"}, DefaultImage: "bazzite",
+		HideCustomImage: true, PreloadImage: true}
+	mergeBranding(&base, over)
+	if base.ProductName != "Bazzite Installer" || base.ExeName != "Bazzite-Installer" ||
+		base.DefaultImage != "bazzite" || len(base.Catalog) != 1 ||
+		!base.HideCustomImage || !base.PreloadImage {
+		t.Errorf("distribution fields not merged: %+v", base)
+	}
+	// An empty later overlay (the runtime brand.json) must not clear them.
+	mergeBranding(&base, Branding{Name: "Acme"})
+	if base.ProductName != "Bazzite Installer" || len(base.Catalog) != 1 || !base.HideCustomImage {
+		t.Errorf("empty overlay clobbered distribution fields: %+v", base)
+	}
+}
+
+// A branded build must refuse a custom OCI ref on every channel: the frontend
+// hides the field, but this is the enforcement.
+func TestHideCustomImage_TightensPolicy(t *testing.T) {
+	old := brandID
+	brandID = "bazzite"
+	t.Cleanup(func() { brandID = old })
+	_ = os.Remove(filepath.Join(wootcDir(), "brand.json"))
+	t.Setenv("WOOTC_CHANNEL", "stable") // the loosest channel
+	pol := NewApp().GetSupportPolicy()
+	if pol.CustomImageAllowed {
+		t.Errorf("bazzite build allows custom images on stable: %+v", pol)
 	}
 }

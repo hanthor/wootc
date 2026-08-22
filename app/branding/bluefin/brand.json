@@ -1,0 +1,18 @@
+{
+  "name": "Bluefin",
+  "productName": "Bluefin Installer",
+  "exeName": "Bluefin-Installer",
+  "tagline": "The next generation Linux workstation — your Windows files come along.",
+  "logoEmoji": "",
+  "fontFamily": "Inter",
+  "accent": "#3550ec",
+  "accentText": "#ffffff",
+  "background": "#10151f",
+  "card": "#161d2b",
+  "text": "#e2e8f0",
+  "installVerb": "Install",
+  "catalog": ["bluefin", "dakota", "bluefin-lts"],
+  "defaultImage": "bluefin-lts",
+  "hideCustomImage": true,
+  "preloadImage": true
+}

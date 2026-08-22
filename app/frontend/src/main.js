@@ -16,7 +16,7 @@ import { renderMigrateScreen, renderMigrateRows, refreshCategories } from './scr
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 async function init() {
-  try { applyBranding(await GetBranding()); } catch { applyBranding({ name: 'wootc', tagline: '', logoEmoji: '🐠', version: '0.1.0', installVerb: 'Install' }); }
+  try { applyBranding(await GetBranding()); } catch { applyBranding({ name: 'TunaOS', productName: 'wootc', tagline: '', logoEmoji: '🐠', version: '0.1.0', installVerb: 'Install' }); }
   // Listen for progress events from Go backend
   EventsOn('install:progress', (e) => {
     state.progress.step = e.step;
@@ -91,7 +91,11 @@ async function init() {
   state.images = images || [];
   state.sysinfo = sysinfo;
   state.sessionCandidates = sessionCandidates || [];
-  state.selected = state.images[0] || null;
+  // A brand can name its pre-selected card; otherwise the first offered
+  // image is the default, as before.
+  state.selected = (state.brand?.defaultImage
+    && state.images.find(i => i.id === state.brand.defaultImage))
+    || state.images[0] || null;
   applyImageDefaults(state.selected);
 
   // Default the Linux identity from this Windows machine so the launchpad

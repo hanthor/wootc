@@ -10,7 +10,7 @@ window.__wootcInstallEmitters = [];
 function makeApp(mock) {
   const P = (v) => Promise.resolve(v);
   return {
-    GetBranding: () => P(mock.brand || { name: 'wootc', tagline: 'Bring Windows to Linux — keep everything.', logoEmoji: '🐠', version: '0.1.0', accent: '#5b6ee1', accentText: '#ffffff', background: '#0a0a0f', card: '#13131e', text: '#e8e8f0', installVerb: 'Install' }),
+    GetBranding: () => P(mock.brand || { name: 'TunaOS', productName: 'wootc', exeName: 'wootc', tagline: 'Bring Windows to Linux — keep everything.', logoEmoji: '🐠', version: '0.1.0', accent: '#5b6ee1', accentText: '#ffffff', background: '#0a0a0f', card: '#13131e', text: '#e8e8f0', installVerb: 'Install' }),
     GetMode: () => P(mock.mode || 'installer'),
     GetImages: () => P(mock.images || []),
     GetSystemInfo: () => P(mock.sysinfo || {}),

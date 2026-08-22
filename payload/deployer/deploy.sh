@@ -83,6 +83,8 @@ phase() {
     case "$1" in
         ntfs-mounted)       splash_set  6 12 "Preparing your disk..." ;;
         scratch-setup)      splash_set 12 18 "Preparing your disk..." ;;
+        network-wait)       splash_set 16 18 "Waiting for a network connection - plug in a network cable if this takes a while..." ;;
+        bundle-ingest)      splash_set 18 24 "Loading your downloaded system - no internet needed..." ;;
         registry-preflight) splash_set 18 24 "Connecting to the software library..." ;;
         fisherman)          splash_set 26 86 "Downloading and installing your Linux system..." ;;
         verification)       splash_set 88 95 "Almost there - making sure everything is perfect..." ;;
@@ -672,9 +674,70 @@ mount --bind /var/fisherman-tmp/host-containers /var/lib/containers
 mkdir -p /var/fisherman-tmp/var-tmp /var/tmp
 mount --bind /var/fisherman-tmp/var-tmp /var/tmp
 
+# ── Offline bundle ingest (OCI layout) ──────────────────────────────────────
+# Windows does all networking; the deployer must not need any
+# (docs/branding-and-distribution.md §3): a laptop's Wi-Fi does not exist in
+# this initramfs, and the E2E VM's virtio ethernet has been masking that.
+# The app pre-downloads the selected image into C:\wootc\bundle\oci — a
+# plain-file OCI layout (NTFS-safe: no xattrs, no whiteouts, digest-addressed
+# so verification is inherent). Ingesting it into local containers-storage
+# HERE, before anything network-shaped runs, makes every downstream consumer
+# offline for free: the capability probes run the local image, fisherman's
+# CheckImage finds it (no pull), and its skopeo containers-storage → OCI
+# export is pure local I/O.
+WOOTC_OFFLINE=0
+BUNDLE_OCI="/mnt/ntfs/wootc/bundle/oci"
+if [[ -f "$BUNDLE_OCI/index.json" ]]; then
+    _bundle_ref=$(jq -r '.image // empty' /mnt/ntfs/wootc/bundle/bundle.json 2>/dev/null || echo "")
+    if [[ -n "$_bundle_ref" && "$_bundle_ref" == "$IMAGE" ]]; then
+        phase "bundle-ingest"
+        log "Offline bundle for ${IMAGE} found — ingesting the OCI layout (no network needed)..."
+        _bundle_digest=$(jq -r '.digest // empty' /mnt/ntfs/wootc/bundle/bundle.json 2>/dev/null || echo "")
+        [[ -n "$_bundle_digest" ]] && log "  bundle pinned at ${_bundle_digest}"
+        _iid=$(timeout 1800 podman pull -q "oci:${BUNDLE_OCI}" 2>/dev/null || true)
+        if [[ -n "$_iid" ]] && timeout 60 podman tag "$_iid" "$IMAGE"; then
+            WOOTC_OFFLINE=1
+            log "  [PASS] bundle ingested as ${IMAGE} (${_iid})"
+        else
+            # Best-effort by design: a broken bundle must degrade to the
+            # network path, not strand the machine.
+            log "  [WARN] bundle ingest failed — falling back to the network"
+        fi
+    elif [[ -n "$_bundle_ref" ]]; then
+        log "Bundle holds ${_bundle_ref}, not ${IMAGE}; ignoring it and pulling instead"
+    fi
+fi
+
+# ── Wait for a network (only when one is actually needed) ───────────────────
+# The deploy hook fires from initqueue/settled as well as initqueue/online,
+# so an offline machine still starts deploying. With a matching bundle there
+# is nothing to wait for; without one, wait — bounded — for the online path,
+# and if it never comes, say exactly what to do about it.
+if [[ "$WOOTC_OFFLINE" != 1 ]]; then
+    _net_waited=0
+    while ! ip route show default 2>/dev/null | grep -q .; do
+        if (( _net_waited == 0 )); then
+            phase "network-wait"
+            log "No network yet — waiting for a connection (wired networks connect automatically)..."
+        fi
+        sleep 5
+        _net_waited=$(( _net_waited + 5 ))
+        if (( _net_waited >= 300 )); then
+            err "No network connection after 5 minutes and no pre-downloaded system was staged."
+            err "Connect a network cable and try again — or reinstall using an installer that downloads the system on Windows first."
+            splash_set 100 100 "No internet connection. Restarting into Windows - connect a network cable and try again."
+            sleep 5 2>/dev/null || true
+            if [[ "$DEBUG" ]]; then exec /bin/bash; else exit 1; fi
+        fi
+    done
+fi
+
 # ── Registry pre-flight ─────────────────────────────────────────────────────
 # Surface DNS/TLS/registry problems with a real error message on the console
 # instead of a bare podman exit status buried inside fisherman.
+if [[ "$WOOTC_OFFLINE" == 1 ]]; then
+    log "Registry pre-flight skipped — ${IMAGE} is already local (offline bundle)"
+else
 phase "registry-preflight"
 log "Registry pre-flight for ${IMAGE}..."
 if [[ ! -s /etc/resolv.conf ]]; then
@@ -694,6 +757,7 @@ if ! skopeo inspect --retry-times 3 "docker://${IMAGE}" >/dev/null; then
         err "cannot reach registry for ${IMAGE} (see skopeo error above)"
         if [[ "$DEBUG" ]]; then exec /bin/bash; else exit 1; fi
     fi
+fi
 fi
 
 # ── Attach the RAW image through losetup ───────────────────────────────────
@@ -730,6 +794,7 @@ VAULT_USER=""
 VAULT_PASSWORD_HASH=""
 VAULT_SECONDARY_USERS=""
 VAULT_PROFILE_MAP=""
+VAULT_DISTRO_NAME=""
 if [[ -n "$VAULT_PATH" ]]; then
     VAULT_FILE="/mnt/ntfs${VAULT_PATH}"
     if [[ -f "$VAULT_FILE" ]]; then
@@ -745,6 +810,9 @@ if [[ -n "$VAULT_PATH" ]]; then
         # during verification so the first-boot bridge can match directories
         # whose names sanitization changed ("Alice Smith" → alice-smith).
         VAULT_PROFILE_MAP=$(jq -r '.profile_map // {} | to_entries[] | "\(.key)\t\(.value)"' "$VAULT_FILE" 2>/dev/null || true)
+        # Branded installers (docs/branding-and-distribution.md) name the
+        # Phase-2 boot menu after the distribution they installed.
+        VAULT_DISTRO_NAME=$(jq -r '.distro_name // empty' "$VAULT_FILE" 2>/dev/null || true)
         if [[ -n "$VAULT_HOSTNAME" ]]; then
             HOSTNAME="$VAULT_HOSTNAME"
         fi
@@ -786,6 +854,16 @@ MIRRORCONF
     fi
 fi
 
+# What the Phase-2 boot menu calls the installed system. Branded installers
+# pass their distribution's name through the vault; everything else (older
+# vaults, headless runs) keeps the TunaOS default. grub.cfg menu titles have
+# no quoting escape hatch, so strip the metacharacters that could break one —
+# the name comes from our own brand.json, but the vault sits on NTFS where
+# anything could have edited it.
+DISTRO_NAME="${VAULT_DISTRO_NAME:-TunaOS}"
+DISTRO_NAME=$(printf '%s' "$DISTRO_NAME" | tr -d '"$`\\')
+[[ -n "$DISTRO_NAME" ]] || DISTRO_NAME="TunaOS"
+
 # ╔═══════════════════════════════════════════════════════════════════════════
 # ║ PROVISIONER: bootc/fisherman — begins here.
 # ║ Everything above this line is generic orchestration (disk discovery, NTFS,
@@ -821,6 +899,15 @@ ensure_ntfs_support() {
     # mount NTFS all along. Treat injection as best-effort belt — the braces
     # are the hook's runtime ntfs3 -> ntfs-3g fallback plus the loop-attach
     # guard. Making these failures fatal broke deploys that worked.
+    # Offline: dnf cannot reach any repo, and burning its retry timeouts
+    # against a network that does not exist only delays the deploy. The
+    # injection is best-effort belt anyway (see above) — the braces are the
+    # hook's runtime ntfs3 → ntfs-3g fallback plus the staged early-cpio
+    # closure, both of which work offline.
+    if [[ "${WOOTC_OFFLINE:-0}" == 1 ]]; then
+        log "  [WARN] offline: skipping ntfs-3g injection — relying on the image's NTFS support / staged closure"
+        return 0
+    fi
     log "No NTFS driver in ${IMAGE}; injecting ntfs-3g (persisted layer)…"
     local derived="localhost/wootc-ntfs-injected:latest" cname="wootc-ntfs-inject"
     timeout 60 podman rm -f "$cname" >/dev/null 2>&1 || true
@@ -2823,7 +2910,7 @@ SMODSH
                 cfs_opts=$(printf '%s' "$cfs_opts" | tr ' ' '\n' | grep -v '\$' | grep -vE '^(quiet|rhgb)$' | tr '\n' ' ' || true)
                 mkdir -p /mnt/esp/loader/entries
                 cat > /mnt/esp/loader/entries/wootc.conf <<BLSEOF
-title TunaOS
+title ${DISTRO_NAME}
 linux /EFI/wootc/phase2-vmlinuz
 initrd /EFI/wootc/phase2-initramfs.img
 options ${cfs_opts} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} ${PHASE2_CONSOLE_FULL} ${PHASE2_KARGS}
@@ -2849,7 +2936,7 @@ BLSEOF
 set default=0
 set timeout=5
 
-menuentry "TunaOS" {
+menuentry "${DISTRO_NAME}" {
     linux ${PHASE2_LINUX}
     initrd /EFI/wootc/phase2-initramfs.img
 }
@@ -2907,7 +2994,7 @@ GRUBCFGEOF
                     ROOT_OPTIONS=$(printf '%s' "$ROOT_OPTIONS" | tr ' ' '\n' | grep -v '\$' | grep -v -E '^(quiet|rhgb)$' | tr '\n' ' ' || true)
                     mkdir -p /mnt/esp/loader/entries
                     cat > /mnt/esp/loader/entries/wootc.conf <<BLSEOF
-title TunaOS
+title ${DISTRO_NAME}
 linux /EFI/wootc/phase2-vmlinuz
 initrd /EFI/wootc/phase2-initramfs.img
 options ${ROOT_OPTIONS} ${PHASE2_CONSOLE_BASIC} ${PHASE2_KARGS}
@@ -3045,7 +3132,7 @@ BLSEOF
 set default=0
 set timeout=5
 
-menuentry "TunaOS" {
+menuentry "${DISTRO_NAME}" {
     linux /EFI/wootc/phase2-vmlinuz ${ROOT_OPTIONS} loop=/wootc/disks/root.disk wootc.host_uuid=${HOST_UUID} ${PHASE2_CONSOLE_FULL} ${PHASE2_KARGS}
     initrd /EFI/wootc/phase2-initramfs.img
 }
@@ -3214,7 +3301,7 @@ rearm_bootnext
 if [[ -n "$WOOTC_OBSERVED" || -n "$WOOTC_REARMED" ]]; then
     splash_set 100 100 "All set! Starting your new Linux system..."
 else
-    splash_set 100 100 "All set! Restarting into Windows - open wootc there to start Linux."
+    splash_set 100 100 "All set! Restarting into Windows - open the installer there to start ${DISTRO_NAME}."
 fi
 sleep 2 2>/dev/null || true
 splash_stop

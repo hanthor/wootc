@@ -2,7 +2,7 @@ import { StartInstall, CreateDataPartition, DefragDrive } from '../../wailsjs/go
 import { Quit } from '../../wailsjs/runtime/runtime';
 import { state } from '../lib/state.js';
 import { render } from '../lib/render.js';
-import { installVerb } from '../lib/branding.js';
+import { installVerb, distroName, productName } from '../lib/branding.js';
 import { el, btn, chip, warningBanner, inputField } from '../lib/ui.js';
 import { renderProgress } from './progress.js';
 import { tryInVM } from './vmpreview.js';
@@ -17,8 +17,8 @@ export function renderLaunchpad() {
   // else asks them to make a choice.
   const hdr = el('div');
   hdr.innerHTML = `
-    <div class="screen-title">${installVerb()} TunaOS</div>
-    <div class="screen-subtitle">${state.brand?.tagline || 'Try Linux alongside Windows — no repartitioning, nothing deleted, and fully undoable. Pick a look, set a password, and wootc does the rest.'}</div>
+    <div class="screen-title">${installVerb()} ${distroName()}</div>
+    <div class="screen-subtitle">${state.brand?.tagline || `Try Linux alongside Windows — no repartitioning, nothing deleted, and fully undoable. Pick a look, set a password, and ${productName()} does the rest.`}</div>
   `;
   screen.appendChild(hdr);
 
@@ -45,7 +45,7 @@ export function renderLaunchpad() {
       // and explained nothing. Say what happens about it.
       const fs = chip('⚠ Fast Startup on', true);
       fs.title = 'Windows Fast Startup keeps the disk half-asleep between boots, which would ' +
-        'corrupt files shared with Linux. wootc turns it off during setup — startup may look ' +
+        `corrupt files shared with Linux. ${productName()} turns it off during setup — startup may look ` +
         'slightly different afterwards, and everything else is unaffected.';
       si.appendChild(fs);
     }
@@ -98,9 +98,14 @@ export function renderLaunchpad() {
   const grid = el('div', 'image-grid');
   state.images.forEach(img => {
     const card = el('div', 'image-card' + (state.selected?.id === img.id ? ' selected' : ''));
+    // A branded build shows its real mark on its own catalog cards; emoji
+    // remain only where they are the actual branding (generic TunaOS build).
+    const art = state.brand?.logoDataUri
+      ? `<img class="image-emoji" src="${state.brand.logoDataUri}" alt="">`
+      : `<span class="image-emoji">${img.emoji}</span>`;
     card.innerHTML = `
       <div class="image-card-header">
-        <span class="image-emoji">${img.emoji}</span>
+        ${art}
         <span>${img.name}</span>
         <span class="image-desktop">${img.desktopName}</span>
       </div>
@@ -113,7 +118,9 @@ export function renderLaunchpad() {
   });
   screen.appendChild(grid);
 
-  const customRef = state.policy?.customImageAllowed !== false ? inputField('Custom supported OCI image', 'text', state.config.customImageRef || '', v => {
+  // A branded installer installs its own distribution — the custom-ref field
+  // is hidden outright (hideCustomImage), on top of the channel gate.
+  const customRef = (state.policy?.customImageAllowed !== false && !state.brand?.hideCustomImage) ? inputField('Custom supported OCI image', 'text', state.config.customImageRef || '', v => {
     state.config.customImageRef = v.trim();
     if (/^ghcr\.io\/(tuna-os|ublue-os|projectbluefin)\/[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9._-]+|@sha256:[a-f0-9]{64})$/.test(state.config.customImageRef)) {
       // Default a custom ref to the grub2/ostree path — the measured backend
@@ -278,7 +285,7 @@ export function renderLaunchpad() {
 
   const bootChoice = el('label');
   bootChoice.style.cssText = 'display:flex;gap:8px;margin-top:8px;font-size:12px;align-items:flex-start';
-  bootChoice.innerHTML = `<input type="checkbox" ${state.config.bootloader === 'systemd-boot' ? 'checked' : ''}><span>Force systemd-boot<br><span style="color:var(--text-muted)">Off (recommended): wootc detects the image's boot method automatically and uses the Secure-Boot-signed chain. On: boots the installer with a bundled systemd-boot EFI binary instead.</span></span>`;
+  bootChoice.innerHTML = `<input type="checkbox" ${state.config.bootloader === 'systemd-boot' ? 'checked' : ''}><span>Force systemd-boot<br><span style="color:var(--text-muted)">Off (recommended): ${productName()} detects the image's boot method automatically and uses the Secure-Boot-signed chain. On: boots the installer with a bundled systemd-boot EFI binary instead.</span></span>`;
   bootChoice.querySelector('input').onchange = e => { state.config.bootloader = e.target.checked ? 'systemd-boot' : 'auto'; render(); };
   advanced.appendChild(bootChoice);
   if (state.config.bootloader === 'systemd-boot') {
@@ -352,18 +359,18 @@ function refreshInstallValidity() {
   // than warning mid-run. Each names the single thing to fix.
   const si = state.sysinfo;
   if (si?.hibernated)
-    reason = 'Windows is hibernated, so the drive holds unsaved changes. Shut down fully (Start ▸ Power ▸ Shut down while holding Shift) and start wootc again — migrating now could damage your files.';
+    reason = `Windows is hibernated, so the drive holds unsaved changes. Shut down fully (Start ▸ Power ▸ Shut down while holding Shift) and start ${productName()} again — migrating now could damage your files.`;
   else if (si?.pendingReboot)
-    reason = `Windows has an update waiting to finish (${si.pendingRebootReason || 'servicing'}). Restart the PC, let it complete, then run wootc again — an update finishing mid-migration can break startup.`;
+    reason = `Windows has an update waiting to finish (${si.pendingRebootReason || 'servicing'}). Restart the PC, let it complete, then run ${productName()} again — an update finishing mid-migration can break startup.`;
   else if (si?.onBattery && si?.batteryKnown)
     reason = 'Plug in the power adapter first. Losing power partway through would leave the PC in a half-converted state.';
   else if (si && si.is64Bit === false)
-    reason = 'This PC has a 32-bit version of Windows. wootc installs 64-bit Linux, which this PC cannot start.';
+    reason = `This PC has a 32-bit version of Windows. ${productName()} installs 64-bit Linux, which this PC cannot start.`;
   else if (si && si.ramGB > 0 && si.ramGB < 3.5)
-    reason = `This PC has ${si.ramGB.toFixed(1)} GB of memory. wootc needs at least 3.5 GB for the installed system to run properly.`;
+    reason = `This PC has ${si.ramGB.toFixed(1)} GB of memory. ${distroName()} needs at least 3.5 GB to run properly.`;
   // Green-gate: block scenarios this channel has not proven (docs/RELEASING.md).
   else if (state.sysinfo?.bitLockerOn && state.policy && state.policy.bitlockerSupported === false)
-    reason = `BitLocker encryption isn't supported in the ${state.policy.channel} yet — it's coming soon. For now, wootc needs drive encryption turned off.`;
+    reason = `BitLocker encryption isn't supported in the ${state.policy.channel} yet — it's coming soon. For now, ${productName()} needs drive encryption turned off.`;
   else if (state.sysinfo && state.sysinfo.freeDiskGB > 0 && maxDiskSizeGB() < 20)
     reason = `C: has only ${Math.round(state.sysinfo.freeDiskGB)} GB free — not enough for Linux (20 GB) plus the ${DISK_HEADROOM_GB} GB Windows needs to keep working. Free up some space first.`;
   else if (state.sysinfo && state.sysinfo.freeDiskGB > 0 && c.diskSizeGB > maxDiskSizeGB())

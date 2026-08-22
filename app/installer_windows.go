@@ -285,16 +285,25 @@ func registerUninstallEntry() {
 	if err != nil {
 		return
 	}
+	// The generic build keeps its documented "TunaOS (wootc)" listing;
+	// branded builds list under the distribution's own name — a Bazzite user
+	// searching Apps for "wootc" would find nothing, because nothing ever
+	// told them that word.
+	b := effectiveBranding()
+	displayName := b.Name
+	if strings.EqualFold(b.ProductName, "wootc") {
+		displayName = b.Name + " (wootc)"
+	}
 	_ = runPowerShell(fmt.Sprintf(
 		`New-Item -Path %q -Force | Out-Null; `+
-			`Set-ItemProperty -Path %q -Name DisplayName -Value "TunaOS (wootc)"; `+
+			`Set-ItemProperty -Path %q -Name DisplayName -Value %q; `+
 			`Set-ItemProperty -Path %q -Name Publisher -Value "tuna-os"; `+
 			`Set-ItemProperty -Path %q -Name DisplayIcon -Value %q; `+
 			`Set-ItemProperty -Path %q -Name InstallLocation -Value "C:\wootc"; `+
 			`Set-ItemProperty -Path %q -Name UninstallString -Value %q; `+
 			`Set-ItemProperty -Path %q -Name NoModify -Value 1 -Type DWord; `+
 			`Set-ItemProperty -Path %q -Name NoRepair -Value 1 -Type DWord`,
-		uninstallRegKey, uninstallRegKey, uninstallRegKey, uninstallRegKey, exe,
+		uninstallRegKey, uninstallRegKey, displayName, uninstallRegKey, uninstallRegKey, exe,
 		uninstallRegKey, uninstallRegKey, fmt.Sprintf(`"%s" uninstall`, exe),
 		uninstallRegKey, uninstallRegKey))
 }
@@ -308,6 +317,6 @@ func unregisterUninstallEntry() {
 
 func rebootWindows() error {
 	_, err := runCmd("shutdown", "/r", "/t", "5", "/f",
-		"/c", "wootc is rebooting to start the installer")
+		"/c", effectiveBranding().ProductName+" is rebooting to start the installer")
 	return err
 }

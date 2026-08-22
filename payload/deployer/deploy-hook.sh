@@ -7,7 +7,9 @@ guard=/run/wootc-deployer-started
 [ -e "$guard" ] && return 0
 : >"$guard"
 
-echo "[wootc] Network is online; starting deployer..."
+# Fires from initqueue/online AND initqueue/settled (offline laptops have no
+# "online" moment); the guard above makes whichever comes first the only one.
+echo "[wootc] initqueue hook fired; starting deployer..."
 
 # Start the QEMU guest agent on the same virtio-serial channel Windows uses:
 # the host's qga.py control plane then works during the deployer phase too

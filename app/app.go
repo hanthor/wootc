@@ -311,22 +311,30 @@ func supportChannel() string {
 
 // GetSupportPolicy returns the gating policy for the active channel.
 func (a *App) GetSupportPolicy() SupportPolicy {
+	var pol SupportPolicy
 	switch supportChannel() {
 	case "beta":
 		// Full matrix green (the beta bar): everything is on the table; the
 		// axes that are still red stay explicitly false until their issue closes.
-		return SupportPolicy{Channel: "beta", ExperimentalImages: true,
+		pol = SupportPolicy{Channel: "beta", ExperimentalImages: true,
 			BitLockerSupported: false, CustomImageAllowed: true,
 			Reason: "Beta — most images and scenarios supported."}
 	case "stable":
-		return SupportPolicy{Channel: "stable", ExperimentalImages: true,
+		pol = SupportPolicy{Channel: "stable", ExperimentalImages: true,
 			BitLockerSupported: true, CustomImageAllowed: true,
 			Reason: ""}
 	default: // alpha
-		return SupportPolicy{Channel: "alpha", ExperimentalImages: false,
+		pol = SupportPolicy{Channel: "alpha", ExperimentalImages: false,
 			BitLockerSupported: false, CustomImageAllowed: false,
 			Reason: "Alpha — only fully-tested images and unencrypted disks are offered. More unlock as testing goes green."}
 	}
+	// A branded installer installs its own distribution: no custom OCI ref,
+	// on any channel. This is the backend side of the brand's
+	// hideCustomImage — the frontend hiding the field is not enforcement.
+	if effectiveBranding().HideCustomImage {
+		pol.CustomImageAllowed = false
+	}
+	return pol
 }
 
 // gateScenario refuses an install the active channel has not proven green.
@@ -387,7 +395,7 @@ func (a *App) GetImages() ([]Image, error) {
 	// If the bundled ref is not in the catalog (a partner image, a pinned
 	// digest), it is surfaced as a single entry rather than dropped, otherwise
 	// the launchpad would have nothing to show at all.
-	if b := readBundleInfo(); b != nil {
+	if b := readBundleInfo(); b != nil && b.Source != "predownload" {
 		for _, img := range catalog {
 			if img.ImageRef == b.Image {
 				return []Image{img}, nil
@@ -401,6 +409,15 @@ func (a *App) GetImages() ([]Image, error) {
 		}}, nil
 	}
 
+	// A branded build offers its own distribution's images and nothing else —
+	// in the brand's order, with the brand's default first-class. The green
+	// gate does not apply: the brand ships this installer FOR those images,
+	// and each card still shows its honest status ("experimental" stays
+	// visible), so nothing is smuggled past the user.
+	if picked := brandCatalogImages(catalog, effectiveBranding().Catalog); len(picked) > 0 {
+		return picked, nil
+	}
+
 	if a.GetSupportPolicy().ExperimentalImages {
 		return catalog, nil
 	}
@@ -411,6 +428,26 @@ func (a *App) GetImages() ([]Image, error) {
 		}
 	}
 	return green, nil
+}
+
+// brandCatalogImages resolves a brand's catalog ids against the embedded
+// catalog, preserving the brand's order. Unknown ids are skipped (a brand
+// naming a missing image must not blank the launchpad).
+func brandCatalogImages(catalog []Image, ids []string) []Image {
+	if len(ids) == 0 {
+		return nil
+	}
+	byID := make(map[string]Image, len(catalog))
+	for _, img := range catalog {
+		byID[img.ID] = img
+	}
+	picked := make([]Image, 0, len(ids))
+	for _, id := range ids {
+		if img, ok := byID[id]; ok {
+			picked = append(picked, img)
+		}
+	}
+	return picked
 }
 
 // ── System information ────────────────────────────────────────────────────────
@@ -427,6 +464,8 @@ func (a *App) GetSystemInfo() SystemInfo {
 // tagline, logo emoji, and a color palette applied as CSS variables at
 // runtime. The frontend calls GetBranding() on startup.
 type Branding struct {
+	// Name is the distribution being installed ("TunaOS", "Bazzite") — what
+	// the screens, the boot menu, and Add/Remove Programs call the result.
 	Name       string `json:"name"`
 	Tagline    string `json:"tagline"`
 	LogoEmoji  string `json:"logoEmoji"`
@@ -438,31 +477,75 @@ type Branding struct {
 	Text       string `json:"text"`
 	// InstallVerb personalizes CTA copy ("Install", "Migrate", "Switch").
 	InstallVerb string `json:"installVerb"`
+	// ProductName is the installer's own name (window title, title bar,
+	// "run <product> again" copy). The generic build is "wootc"; branded
+	// builds never surface that word (docs/branding-and-distribution.md).
+	ProductName string `json:"productName"`
+	// ExeName names the release asset ("Bazzite-Installer" → .exe). Consumed
+	// by the release workflow, carried here so one file defines a brand.
+	ExeName string `json:"exeName"`
+	// Catalog restricts the offered images to these ids from images.json, in
+	// this order. Empty = the full (channel-gated) catalog.
+	Catalog []string `json:"catalog"`
+	// DefaultImage pre-selects a catalog entry on the launchpad.
+	DefaultImage string `json:"defaultImage"`
+	// HideCustomImage removes the custom-OCI field regardless of channel:
+	// a branded installer installs its own distribution, nothing else.
+	HideCustomImage bool `json:"hideCustomImage"`
+	// PreloadImage asks the app to download the OCI image on Windows so the
+	// deployer never needs the network (laptops have no Wi-Fi in the
+	// initramfs — docs/branding-and-distribution.md §3).
+	PreloadImage bool `json:"preloadImage"`
+	// Real brand assets (deep branding). LogoDataURI replaces the emoji
+	// wherever a mark renders; FontDataURI + FontFamily bring the brand's
+	// actual typeface (embedded, never fetched); ThemeCSS is injected after
+	// style.css and restyles tokens and components (buttons, radii, palette).
+	// Populated from the embedded brand directory; an enterprise overlay may
+	// supply logoDataUri inline in brand.json and CSS via C:\wootc\brand.css.
+	FontFamily  string `json:"fontFamily"`
+	LogoDataURI string `json:"logoDataUri"`
+	FontDataURI string `json:"fontDataUri"`
+	ThemeCSS    string `json:"themeCss"`
 }
 
 func defaultBranding() Branding {
 	return Branding{
-		Name: "wootc", Tagline: "Bring Windows to Linux — keep everything.",
+		Name: "TunaOS", Tagline: "Bring Windows to Linux — keep everything.",
 		LogoEmoji: "🐠", Version: "0.1.0",
 		Accent: "#5b6ee1", AccentText: "#ffffff",
 		Background: "#0a0a0f", Card: "#13131e", Text: "#e8e8f0",
 		InstallVerb: "Install",
+		ProductName: "wootc", ExeName: "wootc",
 	}
 }
 
-// GetBranding returns the effective branding: the built-in default,
-// overlaid by C:\wootc\brand.json when present (enterprise / partner
-// re-skin). Unknown or empty fields fall back to the default.
-func (a *App) GetBranding() Branding {
+// effectiveBranding resolves branding in layers: hardcoded defaults, then the
+// brand compiled into this binary (-X main.brandID), then the runtime overlay
+// C:\wootc\brand.json (enterprise / partner re-skin). Later layers win
+// field-by-field.
+func effectiveBranding() Branding {
 	b := defaultBranding()
-	custom := filepath.Join(wootcDir(), "brand.json")
-	if data, err := os.ReadFile(custom); err == nil {
+	if emb, ok := embeddedBranding(); ok {
+		mergeBranding(&b, emb)
+	}
+	if data, err := os.ReadFile(filepath.Join(wootcDir(), "brand.json")); err == nil {
 		var over Branding
 		if json.Unmarshal(data, &over) == nil {
 			mergeBranding(&b, over)
 		}
 	}
+	// Enterprise CSS overlay: appended after the embedded theme so a partner
+	// can restyle beyond what brand.json's tokens reach.
+	if css, err := os.ReadFile(filepath.Join(wootcDir(), "brand.css")); err == nil && len(css) > 0 {
+		b.ThemeCSS += "\n" + string(css)
+	}
 	return b
+}
+
+// GetBranding returns the effective branding. The frontend calls this on
+// startup and keeps it in state.brand.
+func (a *App) GetBranding() Branding {
+	return effectiveBranding()
 }
 
 // mergeBranding overlays non-empty fields of over onto base.
@@ -482,6 +565,20 @@ func mergeBranding(base *Branding, over Branding) {
 	set(&base.Card, over.Card)
 	set(&base.Text, over.Text)
 	set(&base.InstallVerb, over.InstallVerb)
+	set(&base.ProductName, over.ProductName)
+	set(&base.ExeName, over.ExeName)
+	set(&base.DefaultImage, over.DefaultImage)
+	if len(over.Catalog) > 0 {
+		base.Catalog = over.Catalog
+	}
+	set(&base.FontFamily, over.FontFamily)
+	set(&base.LogoDataURI, over.LogoDataURI)
+	set(&base.FontDataURI, over.FontDataURI)
+	set(&base.ThemeCSS, over.ThemeCSS)
+	// Bools can only be turned ON by an overlay: JSON gives no way to tell
+	// "false" from "absent", and every overlay so far only wants to tighten.
+	base.HideCustomImage = base.HideCustomImage || over.HideCustomImage
+	base.PreloadImage = base.PreloadImage || over.PreloadImage
 }
 
 // ── Install ───────────────────────────────────────────────────────────────────
@@ -746,6 +843,31 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 					Message: fmt.Sprintf("Downloading Linux… %.0f%%", p*35),
 					Percent: 15 + p*35,
 				})
+			})
+		}},
+		{"Downloading your Linux system", 54, func() error {
+			// Offline-first (docs/branding-and-distribution.md §3): pull the
+			// selected image to C:\wootc\bundle\oci while the user's working
+			// Windows network still exists — the deployer initramfs has no
+			// Wi-Fi and must not need one. On for every brand that sets
+			// preloadImage (all branded builds); the generic build can opt in
+			// with WOOTC_PRELOAD=1 until the offline matrix axis proves it
+			// everywhere. Failing here is fatal ON PURPOSE: this machine's
+			// network already failed while Windows could still say so —
+			// discovering that after the reboot would strand the user at a
+			// splash screen instead of an error they can act on.
+			if !effectiveBranding().PreloadImage && os.Getenv("WOOTC_PRELOAD") == "" {
+				return nil
+			}
+			return stageImageBundle(ctx, cfg.ImageRef, func(done, total int64) {
+				pct := 50.0
+				msg := "Downloading your Linux system…"
+				if total > 0 {
+					pct = 50 + 4*float64(done)/float64(total)
+					msg = fmt.Sprintf("Downloading your Linux system… %.1f of %.1f GB",
+						float64(done)/1e9, float64(total)/1e9)
+				}
+				emit(ProgressEvent{Step: "Downloading your Linux system", Message: msg, Percent: pct})
 			})
 		}},
 		{"Preparing the startup menu", 55, func() error { return writeGrubConfig(cfg) }},

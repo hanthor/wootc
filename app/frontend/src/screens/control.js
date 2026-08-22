@@ -2,6 +2,7 @@ import { BootInVM, UninstallWith, BootIntoLinux } from '../../wailsjs/go/main/Ap
 import { Quit } from '../../wailsjs/runtime/runtime';
 import { state } from '../lib/state.js';
 import { render } from '../lib/render.js';
+import { distroName, brandMark } from '../lib/branding.js';
 import { el, btn, warningBanner } from '../lib/ui.js';
 
 // ── Screen 4: Control Panel ───────────────────────────────────────────────────
@@ -11,8 +12,8 @@ export function renderControlPanel() {
   wrap.style.cssText = 'display:flex;flex-direction:column;flex:1;overflow:hidden';
   const screen = el('div', 'screen');
   screen.innerHTML = `
-    <div class="screen-title">Manage TunaOS</div>
-    <div class="screen-subtitle">An existing TunaOS installation was found on this PC.</div>
+    <div class="screen-title">Manage ${distroName()}</div>
+    <div class="screen-subtitle">An existing ${distroName()} installation was found on this PC.</div>
   `;
 
   // A failed attempt often leaves a root.disk behind, which used to land the
@@ -42,7 +43,7 @@ export function renderControlPanel() {
     const sizeStr = u.diskSizeGB ? ` (${Math.round(u.diskSizeGB)} GB)` : '';
     card.innerHTML = `
       <div style="font-weight:600;font-size:14px">${path}${sizeStr}</div>
-      <div style="font-size:12.5px;color:var(--text-muted)">Your TunaOS installation lives here. Removing it leaves Windows completely intact.</div>
+      <div style="font-size:12.5px;color:var(--text-muted)">Your ${distroName()} installation lives here. Removing it leaves Windows completely intact.</div>
     `;
   }
   screen.appendChild(card);
@@ -53,13 +54,13 @@ export function renderControlPanel() {
   if (u.deployed) {
     const bootCard = el('div');
     bootCard.style.cssText = 'background:var(--bg-card);border:1.5px solid var(--accent);border-radius:8px;padding:14px 16px;margin-top:10px;display:flex;align-items:center;gap:12px';
-    bootCard.innerHTML = `<span style="font-size:20px">🐟</span>
+    bootCard.innerHTML = `${brandMark('bootcard-logo')}
       <div style="flex:1;min-width:0">
-        <div style="font-weight:600;font-size:13px">TunaOS is installed</div>
+        <div style="font-weight:600;font-size:13px">${distroName()} is installed</div>
         <div style="font-size:11.5px;color:var(--text-muted)">Restart to boot into it once. Windows stays your default — from Linux, the boot menu lists Windows too.</div>
       </div>`;
-    const bootBtn = btn('Restart into TunaOS →', 'btn btn-primary', async () => {
-      try { await BootIntoLinux(); } catch (e) { alert('Could not arm the TunaOS boot: ' + e); }
+    const bootBtn = btn(`Restart into ${distroName()} →`, 'btn btn-primary', async () => {
+      try { await BootIntoLinux(); } catch (e) { alert(`Could not arm the ${distroName()} boot: ` + e); }
     });
     bootBtn.style.flexShrink = '0';
     bootCard.appendChild(bootBtn);
@@ -98,7 +99,7 @@ export function renderControlPanel() {
       <div style="flex:1;min-width:0">
         <div style="font-weight:600;font-size:13px">Try Linux in a window</div>
         <div style="font-size:11.5px;color:var(--text-muted)">${vm.available
-          ? `Boot your installed TunaOS in a window using ${String(vm.accelerator || 'hardware acceleration').toUpperCase()}. Changes persist — it's the same system.`
+          ? `Boot your installed ${distroName()} in a window using ${String(vm.accelerator || 'hardware acceleration').toUpperCase()}. Changes persist — it's the same system.`
           : vm.reason}</div>
       </div>`;
     const vmBtn = btn('Boot in VM', 'btn btn-ghost', async () => {
@@ -112,7 +113,7 @@ export function renderControlPanel() {
 
   const footer = el('div', 'footer');
   footer.appendChild(btn('Reinstall', 'btn btn-ghost', () => { state.screen = 'launchpad'; render(); }));
-  footer.appendChild(btn('Uninstall TunaOS', 'btn btn-danger', () => confirmUninstall()));
+  footer.appendChild(btn(`Uninstall ${distroName()}`, 'btn btn-danger', () => confirmUninstall()));
   footer.appendChild(btn('Close', 'btn btn-primary', () => Quit()));
   wrap.appendChild(footer);
   return wrap;
@@ -120,14 +121,14 @@ export function renderControlPanel() {
 
 async function confirmUninstall() {
   const o = state.uninstallOpts || {};
-  let msg = 'Remove TunaOS?\n\nThis removes the boot entry, the ESP files, and the deployer files.';
+  let msg = `Remove ${distroName()}?\n\nThis removes the boot entry, the ESP files, and the deployer files.`;
   if (o.deleteRootDisk) msg += '\n\n⚠ Your Linux data (root.disk) will be permanently deleted.';
   else msg += '\n\nYour Linux data (root.disk) will be kept.';
   if (o.removePartition) msg += '\n⚠ The wootc-data drive will be removed and its space returned to C:.';
   if (!confirm(msg)) return;
   try {
     await UninstallWith({ deleteRootDisk: !!o.deleteRootDisk, removePartition: !!o.removePartition });
-    alert('TunaOS has been removed. Windows is unchanged.');
+    alert(`${distroName()} has been removed. Windows is unchanged.`);
     Quit();
   } catch (e) {
     alert('Uninstall hit a problem: ' + e);

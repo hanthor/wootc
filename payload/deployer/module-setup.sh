@@ -18,6 +18,13 @@ install() {
     # dracut defines moddir before invoking module install hooks.
     # shellcheck disable=SC2154
     inst "$moddir/deploy-hook.sh" /usr/lib/dracut/hooks/initqueue/online/99-wootc-deploy.sh
+    # The SAME hook at initqueue/settled, so a machine with no network — a
+    # laptop whose Wi-Fi does not exist in this initramfs — still starts
+    # deploying (docs/branding-and-distribution.md §3). The hook's
+    # /run/wootc-deployer-started guard keeps the two instances from
+    # double-starting, and deploy.sh owns the decision from there: offline
+    # bundle found → proceed with zero network; none → bounded network wait.
+    inst "$moddir/deploy-hook.sh" /usr/lib/dracut/hooks/initqueue/settled/99-wootc-deploy.sh
     # First paint happens BEFORE udev settle + network wait: the black-screen
     # stretch between GRUB and the deployer's animated splash is the moment a
     # nervous user is most primed to see "my PC is broken".

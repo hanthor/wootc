@@ -1,15 +1,16 @@
 import { Quit, WindowMinimise } from '../../wailsjs/runtime/runtime';
 import { state } from './state.js';
+import { brandMark } from './branding.js';
 import { el } from './ui.js';
 
 // ── Title bar ─────────────────────────────────────────────────────────────────
 
 export function renderTitleBar() {
-  const b = state.brand || { logoEmoji: '🐠', name: 'wootc', version: '0.1.0' };
+  const b = state.brand || { logoEmoji: '🐠', productName: 'wootc', version: '0.1.0' };
   const bar = el('div', 'titlebar');
   bar.innerHTML = `
-    <span class="titlebar-logo">${b.logoEmoji || '🐠'}</span>
-    <span class="titlebar-name">${b.name || 'wootc'}</span>
+    ${brandMark('titlebar-logo')}
+    <span class="titlebar-name">${b.productName || b.name || 'wootc'}</span>
     <span class="titlebar-version">${b.version || ''}</span>
     <span class="titlebar-step">${stepLabel()}</span>
     <div class="titlebar-controls">

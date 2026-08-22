@@ -14,6 +14,20 @@
     "status": "green"
   },
   {
+    "id": "bluefin",
+    "name": "Bluefin",
+    "emoji": "🐟",
+    "base": "Universal Blue (Fedora)",
+    "desktop": "gnome",
+    "desktopName": "GNOME",
+    "imageRef": "ghcr.io/projectbluefin/bluefin:stable",
+    "description": "The next generation Linux workstation — Bluefin's current release.",
+    "bootloader": "grub2",
+    "composeFs": false,
+    "family": "fedora",
+    "status": "experimental"
+  },
+  {
     "id": "dakota",
     "name": "Dakota",
     "emoji": "🐬",
@@ -151,6 +165,48 @@
     "bootloader": "systemd-boot",
     "composeFs": true,
     "family": "arch",
+    "status": "experimental"
+  },
+  {
+    "id": "aurora",
+    "name": "Aurora",
+    "emoji": "🌌",
+    "base": "Universal Blue (Fedora)",
+    "desktop": "kde",
+    "desktopName": "KDE Plasma",
+    "imageRef": "ghcr.io/ublue-os/aurora:stable",
+    "description": "Simply delightful — a clean, reliable KDE Plasma desktop for everyone.",
+    "bootloader": "grub2",
+    "composeFs": false,
+    "family": "fedora",
+    "status": "experimental"
+  },
+  {
+    "id": "bazzite",
+    "name": "Bazzite",
+    "emoji": "🎮",
+    "base": "Universal Blue (Fedora)",
+    "desktop": "kde",
+    "desktopName": "KDE Plasma",
+    "imageRef": "ghcr.io/ublue-os/bazzite:stable",
+    "description": "The next generation of Linux gaming — Steam and game-ready drivers out of the box.",
+    "bootloader": "grub2",
+    "composeFs": false,
+    "family": "fedora",
+    "status": "experimental"
+  },
+  {
+    "id": "bazzite-deck",
+    "name": "Bazzite Deck",
+    "emoji": "🕹️",
+    "base": "Universal Blue (Fedora)",
+    "desktop": "kde",
+    "desktopName": "Game Mode (KDE)",
+    "imageRef": "ghcr.io/ublue-os/bazzite-deck:stable",
+    "description": "Bazzite's console-like experience — boots straight into Steam.",
+    "bootloader": "grub2",
+    "composeFs": false,
+    "family": "fedora",
     "status": "experimental"
   },
   {
