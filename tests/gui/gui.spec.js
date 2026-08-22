@@ -324,3 +324,39 @@ test('every exit button reaches the runtime', async ({ page }) => {
   await page.locator('.footer').getByRole('button', { name: 'Close', exact: true }).click();
   expect(await page.evaluate(() => window.__wootcWindowCalls)).toContain('Quit');
 });
+
+// ── North Star honesty wave (audit 2026-08-22) ───────────────────────────────
+
+// The one number the user chooses must be the one number that is checked: a
+// 30-GB-free machine could previously request 500 GB and learn about it from
+// a raw allocation error mid-install.
+test('disk size larger than C: can hold gates the install button', async ({ page }) => {
+  await boot(page, { mode: 'installer', images: IMAGES,
+    sysinfo: { ...SYSINFO, freeDiskGB: 30 } });
+  await page.locator('.field:has-text("Linux Username") input').fill('alice');
+  const pw = page.locator('input[type=password]');
+  await pw.nth(0).fill('hunter2');
+  await pw.nth(1).fill('hunter2');
+  // 30 GB free - 15 GB headroom = 15 GB max, below the 20 GB minimum.
+  await expect(page.locator('#install-btn')).toBeDisabled();
+  await expect(page.locator('#install-hint')).toContainText('Free up some space');
+});
+
+// A failed attempt must greet the user as a failed attempt — with the calm
+// truth — not with silence or "an existing installation was found".
+test('a failed last run is acknowledged on relaunch', async ({ page }) => {
+  await boot(page, { mode: 'installer', images: IMAGES, sysinfo: SYSINFO,
+    lastRun: { state: 'failed', phase: 'Making room for Linux', error: 'disk full' } });
+  await expect(page.locator('body')).toContainText("didn't finish");
+  await expect(page.locator('body')).toContainText('Nothing outside the wootc folder was changed');
+});
+
+// Once the deployer has completed, the control panel closes the post-deploy
+// loop from the Windows side: a button that actually starts TunaOS.
+test('a deployed install offers Restart into TunaOS', async ({ page }) => {
+  await boot(page, { mode: 'installer', images: IMAGES, sysinfo: SYSINFO,
+    existing: true,
+    uninstall: { found: true, storageDrive: 'C', diskPath: 'C:\\wootc\\disks\\root.disk', diskSizeGB: 40, deployed: true } });
+  await expect(page.getByRole('button', { name: /Restart into TunaOS/ })).toBeVisible();
+  await expect(page.locator('body')).toContainText('Windows stays your default');
+});

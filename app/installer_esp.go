@@ -520,6 +520,25 @@ func configureBCD(bootloader string) error {
 	return nil
 }
 
+// disarmOneShot undoes the boot arming after a cancelled or failed install.
+// Without it, a user who cancelled at 82% — or whose install failed at
+// "Saving your settings" — still had a live one-shot pointing at a
+// half-configured deployer, and got a surprise Linux boot attempt on their
+// next restart while the UI told them "nothing permanent changes". The
+// deployer's own failure path returns safely to Windows either way, so this
+// is about keeping the promise, not about safety. Best-effort by design:
+// every command is harmless when the thing it removes is already gone.
+func disarmOneShot() {
+	runCmd("bcdedit", "/deletevalue", "{fwbootmgr}", "bootsequence") //nolint:errcheck
+	guidPath := filepath.Join(wootcDir(), "install", "bcd-guid.txt")
+	if b, err := os.ReadFile(guidPath); err == nil {
+		if g := strings.TrimSpace(string(b)); strings.HasPrefix(g, "{") {
+			runCmd("bcdedit", "/delete", g) //nolint:errcheck
+		}
+		os.Remove(guidPath) //nolint:errcheck
+	}
+}
+
 // tail returns the last n bytes of s, for embedding a bounded slice of a
 // command dump in an error without flooding the GUI.
 func tail(s string, n int) string {

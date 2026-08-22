@@ -675,6 +675,26 @@ type UninstallInfo struct {
 	DiskSizeGB     float64 `json:"diskSizeGB"`
 	OnDedicatedVol bool    `json:"onDedicatedVol"` // wootc-created data partition
 	ReclaimGB      float64 `json:"reclaimGB"`      // space freed if the volume is removed
+	// Orphaned: no root.disk anywhere, but leftover boot arming (bcd-guid /
+	// state.json) exists — the "user deleted the folder by hand" case, which
+	// previously had NO GUI path to clean up the boot entry.
+	Orphaned bool `json:"orphaned"`
+	// Deployed: the deployer has completed at least once (its staged journal
+	// exists, or the lifecycle state says deployed/healthy) — so this PC has
+	// a bootable TunaOS and the control panel can offer to restart into it.
+	Deployed bool `json:"deployed"`
+}
+
+// BootIntoLinux arms ONE more one-shot boot of the existing wootc entry and
+// restarts. Same mechanism as the install's arming: bootsequence only, so
+// Windows remains the default. This is the Windows-side half of closing the
+// post-deploy loop (North Star audit): even when the deployer could not
+// re-arm itself, the user has a button that actually starts their Linux.
+func (a *App) BootIntoLinux() error {
+	if err := armOneShotFromPersistedGUID(); err != nil {
+		return err
+	}
+	return rebootWindows()
 }
 
 // GetUninstallInfo inspects the machine for an existing wootc install.
@@ -812,26 +832,58 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			return nil
 		}},
 		{"Finishing up", 96, func() error {
+			// Discoverability: an Add/Remove Programs entry so "how do I
+			// remove this?" has the answer Windows users actually look for
+			// (best-effort, removed again by uninstall).
+			registerUninstallEntry()
 			// Small deliberate pause so the user sees "done"
 			time.Sleep(500 * time.Millisecond)
 			return nil
 		}},
 	}
 
+	// Track whether the one-shot boot entry is armed. From "Making Linux
+	// bootable on your machine" (configureBCD) onward, a failure or a
+	// cancel must DISARM it — otherwise a user who changed their mind, or
+	// hit an error at 85%, still gets a surprise Linux boot attempt on the
+	// next restart, while the UI is telling them "nothing permanent
+	// changes" (North Star audit 2026-08-22).
+	armed := false
 	for _, s := range steps {
 		select {
 		case <-ctx.Done():
+			if armed {
+				disarmOneShot()
+				writeState(StateStaged, "cancelled", "")
+			}
 			return ctx.Err()
 		default:
 		}
 		emit(ProgressEvent{Step: s.name, Message: s.name + "…", Percent: s.percent})
 		if err := s.fn(); err != nil {
+			if armed {
+				disarmOneShot()
+			}
 			writeState(StateFailed, s.name, err.Error())
 			return fmt.Errorf("%s: %w", s.name, err)
+		}
+		if s.name == "Making Linux bootable on your machine" {
+			armed = true
 		}
 	}
 	writeState(StateArmed, "", "")
 	return nil
+}
+
+// GetLastRun returns the persisted lifecycle state so the UI can be honest
+// on relaunch: a failed attempt must greet the user as a failed attempt,
+// not as "an existing TunaOS installation was found".
+func (a *App) GetLastRun() LifecycleState {
+	s, ok := readState()
+	if !ok {
+		return LifecycleState{}
+	}
+	return s
 }
 
 // emit sends a progress event to the frontend.

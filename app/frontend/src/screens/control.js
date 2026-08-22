@@ -1,8 +1,8 @@
-import { BootInVM, UninstallWith } from '../../wailsjs/go/main/App';
+import { BootInVM, UninstallWith, BootIntoLinux } from '../../wailsjs/go/main/App';
 import { Quit } from '../../wailsjs/runtime/runtime';
 import { state } from '../lib/state.js';
 import { render } from '../lib/render.js';
-import { el, btn } from '../lib/ui.js';
+import { el, btn, warningBanner } from '../lib/ui.js';
 
 // ── Screen 4: Control Panel ───────────────────────────────────────────────────
 
@@ -15,16 +15,56 @@ export function renderControlPanel() {
     <div class="screen-subtitle">An existing TunaOS installation was found on this PC.</div>
   `;
 
+  // A failed attempt often leaves a root.disk behind, which used to land the
+  // user here with no acknowledgement that anything went wrong (the audit's
+  // "relaunch after failure" gap). Say it plainly, with the honest scope.
+  if (state.lastRun?.state === 'failed') {
+    screen.appendChild(warningBanner(
+      `<b>Your last install attempt didn't finish</b> (stopped at "${state.lastRun.phase || 'an early step'}"). ` +
+      'Nothing outside the wootc folder was changed and no Linux boot is armed. ' +
+      'Choose Reinstall below to try again, or Uninstall to clean everything up.'
+    ));
+  }
+
   const u = state.uninstallInfo || {};
-  const path = u.diskPath || 'C:\\wootc\\disks\\root.vhdx';
-  const sizeStr = u.diskSizeGB ? ` (${Math.round(u.diskSizeGB)} GB)` : '';
   const card = el('div');
   card.style.cssText = 'background:var(--bg-card);border:1.5px solid var(--border);border-radius:var(--radius);padding:20px;display:flex;flex-direction:column;gap:12px;margin-top:8px';
-  card.innerHTML = `
-    <div style="font-weight:600;font-size:14px">${path}${sizeStr}</div>
-    <div style="font-size:12.5px;color:var(--text-muted)">Your TunaOS installation lives here. Removing it leaves Windows completely intact.</div>
-  `;
+  if (u.orphaned) {
+    // Leftover boot files with no Linux disk (the folder was deleted by
+    // hand). Previously this state had no GUI path at all — a stale boot
+    // entry forever. Name it and offer the cleanup.
+    card.innerHTML = `
+      <div style="font-weight:600;font-size:14px">Leftover boot files found</div>
+      <div style="font-size:12.5px;color:var(--text-muted)">The Linux disk file is gone, but a startup entry and boot files remain. Uninstall below removes them — Windows is unaffected either way.</div>
+    `;
+  } else {
+    const path = u.diskPath || 'C:\\wootc\\disks\\root.vhdx';
+    const sizeStr = u.diskSizeGB ? ` (${Math.round(u.diskSizeGB)} GB)` : '';
+    card.innerHTML = `
+      <div style="font-weight:600;font-size:14px">${path}${sizeStr}</div>
+      <div style="font-size:12.5px;color:var(--text-muted)">Your TunaOS installation lives here. Removing it leaves Windows completely intact.</div>
+    `;
+  }
   screen.appendChild(card);
+
+  // The Windows-side half of the post-deploy loop: once the deployer has
+  // finished, this PC has a bootable TunaOS — offer to start it. One-shot
+  // arming, so Windows remains the default if anything goes wrong.
+  if (u.deployed) {
+    const bootCard = el('div');
+    bootCard.style.cssText = 'background:var(--bg-card);border:1.5px solid var(--accent);border-radius:8px;padding:14px 16px;margin-top:10px;display:flex;align-items:center;gap:12px';
+    bootCard.innerHTML = `<span style="font-size:20px">🐟</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:13px">TunaOS is installed</div>
+        <div style="font-size:11.5px;color:var(--text-muted)">Restart to boot into it once. Windows stays your default — from Linux, the boot menu lists Windows too.</div>
+      </div>`;
+    const bootBtn = btn('Restart into TunaOS →', 'btn btn-primary', async () => {
+      try { await BootIntoLinux(); } catch (e) { alert('Could not arm the TunaOS boot: ' + e); }
+    });
+    bootBtn.style.flexShrink = '0';
+    bootCard.appendChild(bootBtn);
+    screen.appendChild(bootCard);
+  }
 
   // Uninstall options (§5) — checkboxes drive UninstallWith.
   state.uninstallOpts = state.uninstallOpts || { deleteRootDisk: false, removePartition: false };

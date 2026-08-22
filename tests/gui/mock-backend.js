@@ -16,6 +16,8 @@ function makeApp(mock) {
     GetSystemInfo: () => P(mock.sysinfo || {}),
     // Mock = dev harness: exercise the full UI unless a scenario overrides it.
     GetSupportPolicy: () => P(mock.policy || { channel: 'dev', experimentalImages: true, bitlockerSupported: true, customImageAllowed: true, reason: '' }),
+    GetLastRun: () => P(mock.lastRun || {}),
+    BootIntoLinux: () => P(undefined),
     ExistingInstallFound: () => P(!!mock.existing),
     GetStatus: () => P(mock.status || { running: false, done: false, existing: false }),
     StartInstall: (cfg) => {

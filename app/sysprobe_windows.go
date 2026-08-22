@@ -3,7 +3,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -144,6 +146,11 @@ func totalRAMGB() float64 {
 // ── Fast Startup ──────────────────────────────────────────────────────────────
 
 func disableFastStartup() error {
+	// Record what is about to change so uninstall can put it back. Without
+	// this, "Windows is unchanged" after uninstall was false: hibernation
+	// stayed permanently off (the audit's finding). Best-effort — a missing
+	// marker just means uninstall leaves power settings alone.
+	recordPriorPowerState()
 	// `powercfg /h off` is the part that matters and the part we were missing
 	// (#63): clearing HiberbootEnabled disables FAST STARTUP, but a genuinely
 	// hibernated machine still has hiberfil.sys and a stale on-disk NTFS
@@ -159,4 +166,46 @@ func disableFastStartup() error {
 	}
 	return runPowerShell(`Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" ` +
 		`-Name "HiberbootEnabled" -Value 0 -Type DWord -Force`)
+}
+
+// priorPowerPath records the pre-install hibernation/Fast Startup state, so
+// uninstall restores rather than assumes. Lives under install\ (removed by
+// uninstall itself, read first).
+func priorPowerPath() string {
+	return filepath.Join(wootcDir(), "install", "prior-power.txt")
+}
+
+func recordPriorPowerState() {
+	// Only the FIRST install on this machine gets to define "prior": a
+	// reinstall after wootc already turned things off must not record the
+	// off state as the thing to restore to.
+	if _, err := os.Stat(priorPowerPath()); err == nil {
+		return
+	}
+	hibernate, err1 := runPowerShellOutput(`(Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Power" -Name HibernateEnabled -ErrorAction SilentlyContinue).HibernateEnabled`)
+	hiberboot, err2 := runPowerShellOutput(`(Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" -Name HiberbootEnabled -ErrorAction SilentlyContinue).HiberbootEnabled`)
+	if err1 != nil && err2 != nil {
+		return
+	}
+	content := fmt.Sprintf("hibernate=%s\nhiberboot=%s\n",
+		strings.TrimSpace(hibernate), strings.TrimSpace(hiberboot))
+	_ = os.MkdirAll(filepath.Dir(priorPowerPath()), 0o755)
+	_ = os.WriteFile(priorPowerPath(), []byte(content), 0o644)
+}
+
+// restorePriorPowerState re-enables hibernation / Fast Startup if — and only
+// if — they were on before wootc touched them. Best-effort by design.
+func restorePriorPowerState() {
+	b, err := os.ReadFile(priorPowerPath())
+	if err != nil {
+		return
+	}
+	content := string(b)
+	if strings.Contains(content, "hibernate=1") {
+		_ = runPowerShell(`powercfg.exe /h on`)
+	}
+	if strings.Contains(content, "hiberboot=1") {
+		_ = runPowerShell(`Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power" ` +
+			`-Name "HiberbootEnabled" -Value 1 -Type DWord -Force`)
+	}
 }

@@ -22,6 +22,17 @@ export function renderLaunchpad() {
   `;
   screen.appendChild(hdr);
 
+  // Honesty on relaunch: if the last attempt failed, say so — the old
+  // behavior greeted a failed install with silence (or, when root.disk
+  // existed, with "an existing installation was found").
+  if (state.lastRun?.state === 'failed') {
+    screen.appendChild(warningBanner(
+      `<b>Your last install attempt didn't finish</b> (stopped at "${state.lastRun.phase || 'an early step'}"). ` +
+      'Nothing outside the wootc folder was changed and no Linux boot is armed. ' +
+      'You can simply try again below.'
+    ));
+  }
+
   // System info chips
   if (state.sysinfo) {
     const si = el('div', 'sysinfo');
@@ -29,7 +40,15 @@ export function renderLaunchpad() {
     si.appendChild(chip(state.sysinfo.isUefi ? '⚡ UEFI' : '🔌 BIOS', false));
     if (state.sysinfo.secureBootOn)  si.appendChild(chip('🔒 Secure Boot', false));
     if (state.sysinfo.bitLockerOn)   si.appendChild(chip('⚠ BitLocker On', true));
-    if (state.sysinfo.fastStartupOn) si.appendChild(chip('⚠ Fast Startup', true));
+    if (state.sysinfo.fastStartupOn) {
+      // A bare "⚠ Fast Startup" named a thing the user has never heard of
+      // and explained nothing. Say what happens about it.
+      const fs = chip('⚠ Fast Startup on', true);
+      fs.title = 'Windows Fast Startup keeps the disk half-asleep between boots, which would ' +
+        'corrupt files shared with Linux. wootc turns it off during setup — startup may look ' +
+        'slightly different afterwards, and everything else is unaffected.';
+      si.appendChild(fs);
+    }
     screen.appendChild(si);
   }
 
@@ -114,12 +133,19 @@ export function renderLaunchpad() {
   // Config fields
   const fields = el('div', 'fields');
 
-  // Disk size slider
+  // Disk size slider. The slider must not offer sizes C: cannot hold: the
+  // audit found a user with 30 GB free could drag to 500 GB and learn about
+  // it from a raw allocation error mid-install. Cap the range at what fits
+  // (leaving DISK_HEADROOM_GB for Windows itself), and gate the button too.
   const diskField = el('div', 'field');
   diskField.innerHTML = `<label>Virtual Disk Size</label>`;
   const sliderRow = el('div', 'slider-row');
   const slider = document.createElement('input');
-  slider.type = 'range'; slider.min = '20'; slider.max = '500'; slider.step = '5';
+  const maxFit = maxDiskSizeGB();
+  slider.type = 'range'; slider.min = '20'; slider.max = String(Math.max(20, Math.min(500, maxFit))); slider.step = '5';
+  if (state.config.diskSizeGB > maxFit && maxFit >= 20) {
+    state.config.diskSizeGB = Math.floor(maxFit / 5) * 5;
+  }
   slider.value = String(state.config.diskSizeGB);
   const sliderVal = el('span', 'slider-val');
   sliderVal.textContent = `${state.config.diskSizeGB} GB`;
@@ -299,6 +325,20 @@ export function renderLaunchpad() {
 
 // ── Actions ───────────────────────────────────────────────────────────────────
 
+// Windows needs working room on C: after the disk file lands; below this the
+// OS itself degrades (updates fail, hibernation file has no home). The same
+// number gates the slider range and the install button.
+const DISK_HEADROOM_GB = 15;
+
+// The largest root disk C: can actually hold, honoring the headroom. The
+// BitLocker carve path sizes from the same user choice, so one cap serves
+// both. Unknown free space (no sysinfo yet) imposes no cap.
+function maxDiskSizeGB() {
+  const free = state.sysinfo?.freeDiskGB;
+  if (!free || free <= 0) return 500;
+  return Math.floor(free - DISK_HEADROOM_GB);
+}
+
 // Gate the Install button on a valid form and show the reason why not.
 function refreshInstallValidity() {
   const btn = document.getElementById('install-btn');
@@ -324,6 +364,10 @@ function refreshInstallValidity() {
   // Green-gate: block scenarios this channel has not proven (docs/RELEASING.md).
   else if (state.sysinfo?.bitLockerOn && state.policy && state.policy.bitlockerSupported === false)
     reason = `BitLocker encryption isn't supported in the ${state.policy.channel} yet — it's coming soon. For now, wootc needs drive encryption turned off.`;
+  else if (state.sysinfo && state.sysinfo.freeDiskGB > 0 && maxDiskSizeGB() < 20)
+    reason = `C: has only ${Math.round(state.sysinfo.freeDiskGB)} GB free — not enough for Linux (20 GB) plus the ${DISK_HEADROOM_GB} GB Windows needs to keep working. Free up some space first.`;
+  else if (state.sysinfo && state.sysinfo.freeDiskGB > 0 && c.diskSizeGB > maxDiskSizeGB())
+    reason = `C: has ${Math.round(state.sysinfo.freeDiskGB)} GB free, and Windows needs about ${DISK_HEADROOM_GB} GB of that to keep working. Choose ${maxDiskSizeGB()} GB or less — or free up space first.`;
   else if (!state.selected) reason = 'Choose a variant above.';
   else if (!c.username.trim()) reason = 'Enter a Linux username.';
   else if (!/^[a-z_][a-z0-9_-]*$/.test(c.username)) reason = 'Username must be lowercase letters, digits, - or _.';

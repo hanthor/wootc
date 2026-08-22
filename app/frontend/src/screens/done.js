@@ -28,6 +28,14 @@ export function renderDoneScreen() {
   screen.appendChild(hero);
   wrap.appendChild(screen);
 
+  // "Reboot Now" runs a forced restart on a short timer — open documents in
+  // other apps do not get a save prompt. The audit flagged that nothing
+  // warned about it; one quiet line above the buttons does.
+  const saveNote = el('div');
+  saveNote.style.cssText = 'font-size:11.5px;color:var(--text-muted);text-align:center;margin-top:10px';
+  saveNote.textContent = 'Save any open work first — the restart closes other apps without asking.';
+  screen.appendChild(saveNote);
+
   const footer = el('div', 'footer');
   footer.appendChild(btn('Reboot Later', 'btn btn-ghost', () => Quit()));
   footer.appendChild(btn('Reboot Now →', 'btn btn-primary', () => Reboot()));
