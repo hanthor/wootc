@@ -95,21 +95,26 @@ jobs:
           # Auto channel: build the exact SHA the nightly proved, not
           # whatever main has moved to since.
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+      # Reclaim BEFORE the tool setups, and never touch the toolcache: the
+      # first publish run (32557070841) deleted $AGENT_TOOLSDIRECTORY and
+      # /usr/local/lib/node_modules AFTER setup-node had installed Node
+      # there — npm vanished, the brand build died, and a PASSED E2E gate
+      # was thrown away one job later. dotnet/android/ghc/boost/swift free
+      # ~25 GB, which is all the deployer image build needs.
+      - name: Reclaim disk (the deployer image build needs the room)
+        run: |
+          df -h / || true
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/share/swift || true
+          sudo apt-get clean
+          docker image prune -af 2>/dev/null || true
+          echo "--- after cleanup ---"; df -h /
+
       - uses: actions/setup-go@v7
         with: { go-version: '1.27', cache: false }
       - uses: actions/setup-node@v7
         with: { node-version: '24' }
       - uses: ./.github/actions/podman-runtime
-
-      - name: Reclaim disk (the deployer image build needs the room)
-        run: |
-          df -h / || true
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" \
-                      /usr/local/lib/node_modules /usr/share/swift || true
-          sudo apt-get clean
-          docker image prune -af 2>/dev/null || true
-          echo "--- after cleanup ---"; df -h /
 
       - name: Resolve channel + tag
         id: chan
@@ -141,19 +146,22 @@ jobs:
           fi
 
       - name: Build brand installers (one exe per brand)
+        # Subshells for every directory change: the first run interleaved a
+        # failed `cd`/build chain with a loop that then globbed from the
+        # wrong directory. Nothing here moves the step's own cwd.
         run: |
           set -euo pipefail
-          cd app/frontend && npm ci && npm run build && cd ..
-          mkdir -p ../release-assets
-          for dir in branding/*/; do
+          (cd app/frontend && npm ci && npm run build)
+          mkdir -p release-assets
+          for dir in app/branding/*/; do
             brand=$(basename "$dir")
             exe=$(jq -r '.exeName // empty' "$dir/brand.json")
             [ -n "$exe" ] || { echo "::error::$dir/brand.json has no exeName"; exit 1; }
-            GOOS=windows GOARCH=amd64 go build -tags desktop,production \
-              -ldflags "-w -s -X main.brandID=$brand" -o "../release-assets/$exe.exe" .
+            (cd app && GOOS=windows GOARCH=amd64 go build -tags desktop,production \
+              -ldflags "-w -s -X main.brandID=$brand" -o "../release-assets/$exe.exe" .)
             echo "built $exe.exe (brand: $brand)"
           done
-          ls -lh ../release-assets/
+          ls -lh release-assets/
 
       - name: Build deployer boot artifacts
         # The same builds the E2E harness performs (tests/e2e/run-e2e.sh):
