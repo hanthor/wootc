@@ -18,6 +18,10 @@ install() {
     # dracut defines moddir before invoking module install hooks.
     # shellcheck disable=SC2154
     inst "$moddir/deploy-hook.sh" /usr/lib/dracut/hooks/initqueue/online/99-wootc-deploy.sh
+    # First paint happens BEFORE udev settle + network wait: the black-screen
+    # stretch between GRUB and the deployer's animated splash is the moment a
+    # nervous user is most primed to see "my PC is broken".
+    inst "$moddir/early-splash.sh" /usr/lib/dracut/hooks/pre-trigger/10-wootc-early-splash.sh
     inst /usr/bin/fisherman
 
     # Drop systemd's GPT auto-discovery generator.

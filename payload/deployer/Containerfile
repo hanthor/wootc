@@ -21,6 +21,7 @@ RUN dnf install -y \
     NetworkManager iproute dhcp-client \
     curl ca-certificates jq ntfs-3g fuse \
     qemu-guest-agent qemu-img cryptsetup psmisc shadow-utils policycoreutils which \
+    efibootmgr \
     && dnf clean all
 
 # ── Build fisherman statically ──────────────────────────────────────────────
@@ -42,9 +43,10 @@ RUN chmod +x /usr/bin/wootc-deploy
 RUN mkdir -p /usr/lib/dracut/modules.d/99wootc
 COPY payload/deployer/module-setup.sh /usr/lib/dracut/modules.d/99wootc/module-setup.sh
 COPY payload/deployer/deploy-hook.sh /usr/lib/dracut/modules.d/99wootc/deploy-hook.sh
+COPY payload/deployer/early-splash.sh /usr/lib/dracut/modules.d/99wootc/early-splash.sh
 COPY platform/dracut/99wootc-boot /usr/lib/wootc/99wootc-boot
 COPY payload/migration /usr/lib/wootc/migration
-RUN chmod +x /usr/lib/dracut/modules.d/99wootc/module-setup.sh /usr/lib/dracut/modules.d/99wootc/deploy-hook.sh
+RUN chmod +x /usr/lib/dracut/modules.d/99wootc/module-setup.sh /usr/lib/dracut/modules.d/99wootc/deploy-hook.sh /usr/lib/dracut/modules.d/99wootc/early-splash.sh
 
 # ── Build the initramfs ─────────────────────────────────────────────────────
 RUN printf 'sysloglvl=0\n' > /etc/dracut.conf.d/99-wootc.conf && \
@@ -65,6 +67,7 @@ RUN printf 'sysloglvl=0\n' > /etc/dracut.conf.d/99-wootc.conf && \
                    parted mkfs.ext4 mkfs.vfat mkfs.xfs mkfs.btrfs \
                    losetup qemu-nbd dmsetup cryptsetup systemd-cryptenroll \
                     /usr/lib/systemd/systemd-cryptsetup \
+                    efibootmgr \
                     curl dhclient ip NetworkManager jq blkid chroot shred logger basename date mktemp" \
         --kernel-cmdline "rd.neednet=1 ip=dhcp quiet" \
         /out/deployer-initramfs.img \
@@ -85,7 +88,7 @@ RUN printf 'sysloglvl=0\n' > /etc/dracut.conf.d/99-wootc.conf && \
 # catch, so assert it here too.
 RUN for bin in conmon crun podman skopeo fisherman ostree cpio sfdisk mkfs.ext4 \
         mkfs.xfs qemu-ga qemu-img qemu-nbd cryptsetup systemd-cryptenroll \
-        ntfs-3g \
+        ntfs-3g efibootmgr \
         df sync truncate journalctl jq tee which basename date head; do \
         lsinitrd /out/deployer-initramfs.img | grep -q "bin/${bin}$" || \
             { echo "FATAL: ${bin} missing from initramfs"; exit 1; }; \
