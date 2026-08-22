@@ -1,0 +1,28 @@
+#!/bin/bash
+# /usr/local/bin/wootc-welcome — one-time first-login greeting.
+#
+# The North Star audit (2026-08-22) found the landing after migration to be
+# the product's proudest moment wrapped in silence: the user reaches a
+# desktop with their name, face, password and files already in place — and
+# nothing says hello, explains the dual-boot state, or points at the
+# migration tools sitting unannounced in the app grid.
+#
+# This runs from an autostart entry, once per user, and opens the "Bring
+# Over From Windows" dashboard — which explains what came over and offers
+# everything else. A marker file makes every later login silent.
+set -u
+marker="$HOME/.config/wootc/welcomed"
+[ -e "$marker" ] && exit 0
+mkdir -p "$HOME/.config/wootc" 2>/dev/null || exit 0
+: > "$marker"
+
+if command -v wootc-manifest-gui >/dev/null 2>&1; then
+    exec wootc-manifest-gui
+fi
+# No dashboard on this image: at least say hello and name the tools.
+if command -v notify-send >/dev/null 2>&1; then
+    notify-send "Welcome to TunaOS" \
+        "Your Windows files are already in your home folders. Open 'Bring Over From Windows' any time to bring more — and Windows itself is one reboot away." \
+        2>/dev/null || true
+fi
+exit 0

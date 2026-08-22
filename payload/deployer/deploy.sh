@@ -2610,6 +2610,13 @@ QGAEOF
         "$DEPLOY_ROOT/var/usrlocal/bin/wootc-apply-look"
     install -D -m644 /usr/lib/wootc/migration/wootc-apply-look.desktop \
         "$DEPLOY_ROOT/etc/xdg/autostart/wootc-apply-look.desktop"
+    # One-time first-login welcome: opens the migration dashboard so the
+    # user is greeted and the tools are discovered, instead of landing on a
+    # silent desktop with everything unannounced (North Star audit).
+    install -m755 /usr/lib/wootc/migration/wootc-welcome \
+        "$DEPLOY_ROOT/var/usrlocal/bin/wootc-welcome"
+    install -D -m644 /usr/lib/wootc/migration/wootc-welcome.desktop \
+        "$DEPLOY_ROOT/etc/xdg/autostart/wootc-welcome.desktop"
     # Slurped Windows look (wallpaper/theme/timezone), if the installer
     # collected it. Timezone applies system-wide right here.
     if [[ -d /mnt/ntfs/wootc/install/slurp ]]; then

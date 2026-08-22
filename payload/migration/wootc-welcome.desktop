@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Welcome to TunaOS
+Comment=A one-time hello on your first login — see what came over from Windows
+Exec=/var/usrlocal/bin/wootc-welcome
+Icon=preferences-desktop
+Terminal=false
+X-GNOME-Autostart-Delay=8
