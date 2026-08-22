@@ -27,6 +27,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      release_tag:
+        description: 'Publish as this tag (e.g. v0.1.0) — a FULL release, created by the workflow itself. Empty = manual-v* pre-release.'
+        type: string
+        default: ''
       skip_e2e:
         description: 'Emergency: publish WITHOUT the E2E gate (documents itself in the release notes)'
         type: boolean
@@ -117,6 +121,15 @@ jobs:
             echo "channel=auto" >> "$GITHUB_OUTPUT"
           elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "channel=tagged" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.release_tag }}" ]; then
+            # Dispatch with an explicit tag: a FULL release. The release
+            # action creates the tag at the dispatched SHA using the
+            # workflow's own token, so cutting a release needs no tag-push
+            # rights anywhere else — pick the branch, name the tag, and the
+            # same E2E gate stands in front of it.
+            echo "tag=${{ inputs.release_tag }}" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
             echo "channel=tagged" >> "$GITHUB_OUTPUT"
           else
