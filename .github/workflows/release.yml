@@ -95,8 +95,19 @@ jobs:
           } > NOTES.md
           cat NOTES.md
 
+      - name: Checksums for the release assets
+        # The installer's fail-closed verification (#53) and the
+        # getting-started doc both point users at a SHA256SUMS on the
+        # release. Publishing assets without one broke that promise — the
+        # live release 404'd it and every install died at "cannot verify
+        # boot artifacts" (run 32549251225).
+        run: |
+          cd app && sha256sum wootc.exe > SHA256SUMS && cat SHA256SUMS
+
       - uses: softprops/action-gh-release@v3
         with:
-          files: app/wootc.exe
+          files: |
+            app/wootc.exe
+            app/SHA256SUMS
           body_path: NOTES.md
           draft: false

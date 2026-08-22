@@ -85,6 +85,16 @@ MODSETUP="payload/deployer/module-setup.sh"
     grep -q '"$frame" -ge 450' "$DEPLOY"
 }
 
+@test "staged boot artifacts come with their manifest" {
+    # The app's fail-closed verification (#53/#194) needs a SHA256SUMS; the
+    # harness stages the artifacts itself, so it must stage the manifest
+    # beside them — and the app must prefer that pre-staged manifest (the
+    # offline-bundle contract) over a release fetch that 404s in E2E.
+    grep -q 'sha256sum "$f" >> SHA256SUMS' tests/e2e/run-e2e.sh
+    grep -q '"SHA256SUMS") { if (Test-Path' tests/e2e/run-e2e.sh
+    grep -q 'install", "SHA256SUMS"' app/deployer_windows.go
+}
+
 @test "something is on screen before the network is up" {
     # GRUB → network-online was an unmeasured black-screen stretch right
     # after the scariest click of the migration. A pre-trigger hook paints
