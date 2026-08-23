@@ -139,3 +139,39 @@ MODSETUP="payload/deployer/module-setup.sh"
     grep -q 'bcdedit /set {fwbootmgr} displayorder \$g /remove' tests/e2e/run-e2e.sh
     grep -q 'bcdedit /delete \$g' tests/e2e/run-e2e.sh
 }
+
+@test "the one-shot arm retries as a unit — bootsequence included" {
+    # bluefin run 32642504000: the "registry key marked for deletion"
+    # transient (#74) struck the bootsequence step, which sat OUTSIDE the
+    # /copy retry loop — one flake of an unprotected command killed the whole
+    # install. A fresh entry whose registry key went bad cannot be repaired
+    # by re-running one command against it; the retry must sweep and rebuild
+    # from /copy whenever ANY arm step fails. Pin: the bootsequence set and
+    # the between-attempts sweep both live inside the attempt loop.
+    local body
+    body=$(awk '/for attempt := 1; attempt <= 3/,/bcdedit arm:/' app/installer_esp.go)
+    printf '%s' "$body" | grep -q '"bootsequence", guid, "/addfirst"'
+    printf '%s' "$body" | grep -q 'deleteWootcBCDEntries()'
+}
+
+@test "the download shows live progress, not a parked bar" {
+    # Field review (aurora walkthrough, 2026-08-23): the fisherman splash
+    # band's easing reached its ceiling in ~2 minutes and PARKED there for
+    # the entire multi-GB pull — a frozen number next to a time promise
+    # reads as a hang, the exact fear the splash exists to prevent. The
+    # splash now ticks a real byte counter (scratch growth = blobs landing)
+    # and tracks the expected download size when the registry provides it.
+    local D=payload/deployer/deploy.sh
+    grep -q 'start_pull_progress_watch' "$D"
+    grep -q 'GB done so far' "$D"
+    # Evidence-driven, not animated: scratch usage delta as the numerator,
+    # skopeo-inspected layer sizes as the denominator.
+    grep -q 'LayersData' "$D"
+    grep -q 'df -Pk /var/fisherman-tmp' "$D"
+    # Monotonic and capped inside the band: an estimate may run slow but
+    # never claims more than reality earned, and never moves backwards.
+    grep -q '(( cand > lastpct )) && lastpct=' "$D"
+    grep -q '(( cand > 85 )) && cand=85' "$D"
+    # The watcher dies with the pull, and cleanup kills a stray one.
+    [ "$(grep -c 'PULL_WATCH_PID' "$D")" -ge 4 ]
+}
