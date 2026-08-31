@@ -73,7 +73,7 @@ if [ "$SKIP_BUILD" = false ]; then
     step "Building wootc.exe (frontend + windows/amd64)..."
     (cd "$APP_DIR/frontend" && npm install --silent && npm run build >/dev/null)
     (cd "$APP_DIR" && GOOS=windows GOARCH=amd64 \
-        go build -tags desktop,production,native_webview2loader -ldflags "-w -s" -o "$FILES_DIR/wootc.exe" .)
+        go build -tags desktop,production,native_webview2loader -ldflags "-H windowsgui -w -s" -o "$FILES_DIR/wootc.exe" .)
 fi
 [ -f "$FILES_DIR/wootc.exe" ] || fail "wootc.exe not found in $FILES_DIR"
 

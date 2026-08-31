@@ -74,7 +74,7 @@ jobs:
         run: |
           cd app/frontend && npm ci && npm run build && cd ..
           GOOS=windows GOARCH=amd64 go build -tags desktop,production \
-            -ldflags "-w -s" -o wootc.exe .
+            -ldflags "-H windowsgui -w -s" -o wootc.exe .
           ls -lh wootc.exe
 
       - name: Record what gated this build
