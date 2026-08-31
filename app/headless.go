@@ -28,6 +28,7 @@ func isHeadlessInvocation(args []string) bool {
 // runHeadless dispatches the CLI subcommand and returns the process exit
 // code. It never launches the webview.
 func runHeadless(args []string) int {
+	attachParentConsole()
 	switch args[1] {
 	case "install":
 		return headlessInstall(args[2:])

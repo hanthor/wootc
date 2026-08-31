@@ -28,6 +28,11 @@
 # but exposes no CDP endpoint. The native tag switches to Microsoft's
 # official loader, which honors the env var.
 #
+# Process behavior note: wootc.exe is linked with -H windowsgui so GUI launches
+# never flash or allocate a console window. Headless subcommands attach to the
+# parent console if present. In CDP mode, launching via `start "" C:\wootc\wootc.exe`
+# runs without a console window.
+#
 # Prerequisites: a running wootc-e2e-windows container on the host
 # (run-e2e.sh --keep) with QGA responsive and the "wootc" user logged on;
 # node+go here for the build (or --skip-build with a staged wootc.exe).
@@ -73,7 +78,7 @@ if [ "$SKIP_BUILD" = false ]; then
     step "Building wootc.exe (frontend + windows/amd64)..."
     (cd "$APP_DIR/frontend" && npm install --silent && npm run build >/dev/null)
     (cd "$APP_DIR" && GOOS=windows GOARCH=amd64 \
-        go build -tags desktop,production,native_webview2loader -ldflags "-w -s" -o "$FILES_DIR/wootc.exe" .)
+        go build -tags desktop,production,native_webview2loader -ldflags "-H windowsgui -w -s" -o "$FILES_DIR/wootc.exe" .)
 fi
 [ -f "$FILES_DIR/wootc.exe" ] || fail "wootc.exe not found in $FILES_DIR"
 
