@@ -2,7 +2,7 @@ name: Real hardware test report
 description: Report a wootc install and recovery run on physical Windows hardware.
 title: "[hardware] "
 labels:
-  - hardware
+  - field-report
 body:
   - type: markdown
     attributes:
@@ -12,11 +12,47 @@ body:
         for the preparation and log-collection steps.
 
   - type: input
+    id: build
+    attributes:
+      label: Build or tag tested
+      placeholder: "Example: v0.2.0-alpha.1 or commit SHA"
+    validations:
+      required: true
+
+  - type: input
+    id: brand
+    attributes:
+      label: Brand executable
+      description: Name the exe used, such as wootc.exe, Bluefin-Installer.exe, or Aurora-Installer.exe.
+      placeholder: "Example: Bluefin-Installer.exe"
+    validations:
+      required: true
+
+  - type: input
     id: hardware
     attributes:
       label: Hardware
       description: Vendor, model, CPU architecture, and firmware/BIOS version.
       placeholder: "Example: Framework 13 AMD, x86_64, UEFI 3.19"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and edition
+      placeholder: "Example: Windows 11 Pro 24H2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bitlocker
+    attributes:
+      label: BitLocker
+      options:
+        - Off
+        - On
+        - Unknown
     validations:
       required: true
 
@@ -72,10 +108,24 @@ body:
     validations:
       required: true
 
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Furthest journey phase
+      options:
+        - Windows preflight or installer
+        - Deployer boot
+        - First Linux boot
+        - Windows return
+        - Uninstall and restore
+        - Full journey
+    validations:
+      required: true
+
   - type: checkboxes
     id: journey
     attributes:
-      label: Journey checkpoints
+      label: Journey checkpoints completed
       options:
         - label: Installer completed and requested a reboot
         - label: Linux deployed and reached a login or desktop
@@ -95,21 +145,25 @@ body:
     validations:
       required: true
 
-  - type: textarea
-    id: symptoms
-    attributes:
-      label: Observed result and symptoms
-      description: Include timestamps, exact messages, and whether the problem reproduced.
-      placeholder: "Describe what happened at each failed checkpoint."
-    validations:
-      required: true
-
-  - type: textarea
+  - type: checkboxes
     id: logs
     attributes:
-      label: Sanitized evidence
-      description: Attach sanitized logs or a photo of the screen. Remove secrets and recovery keys.
-      placeholder: "List attached files and the relevant log paths/timestamps."
+      label: Evidence collected
+      description: Check each item attached or pasted below. Remove secrets and recovery keys.
+      options:
+        - label: Installer log and state (`C:\\wootc\\logs\\` and `C:\\wootc\\install\\state.json`)
+        - label: Deployer log (`C:\\wootc\\logs\\deployer.log`)
+        - label: Deployer journal snapshot (`C:\\wootc\\logs\\deployer-last-journal.log`)
+        - label: Photo or screenshot of what the screen said
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence and symptoms
+      description: Include timestamps, exact messages, links to attachments, and whether the problem reproduced.
+      placeholder: "Describe what happened and list attached files. Never include passwords, recovery keys, or private keys."
+    validations:
+      required: true
 
   - type: checkboxes
     id: safety
