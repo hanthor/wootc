@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+HOST = os.environ.get("WOOTC_HOST", "/run/wootc/host")
+WIN_USER = os.environ.get("WOOTC_WIN_USER", "")
+WIN_USER_DIR = os.environ.get("WOOTC_WIN_USER_DIR", os.path.join(HOST, "Users", WIN_USER) if WIN_USER else "")
+
+def count_files(path):
+    total = 0
+    for _root, _dirs, files in os.walk(path):
+        total += len(files)
+        if total > 100000:
+            break
+    return total
+
+def dir_bytes(path, cap=50000):
+    total = seen = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+            seen += 1
+            if seen > cap:
+                return total
+    return total
+
+items = []
+for base in ("Program Files (x86)", "Program Files"):
+    steam_root = os.path.join(HOST, base, "Steam")
+    vdf = os.path.join(steam_root, "steamapps", "libraryfolders.vdf")
+    if os.path.exists(vdf) or os.path.isdir(os.path.join(steam_root, "steamapps")):
+        p = os.path.dirname(os.path.dirname(vdf)) if os.path.exists(vdf) else steam_root
+        items.append({
+            "id": "steam",
+            "label": "Steam",
+            "detail": "libraries + saves",
+            "fileCount": count_files(p) if os.path.isdir(p) else 0,
+            "sizeBytes": dir_bytes(p) if os.path.isdir(p) else 0,
+        })
+        break
+
+detected = len(items) > 0
+result = {
+    "detected": detected,
+    "items": items,
+    "summary": "Steam" if detected else ""
+}
+
+print(json.dumps(result))
+sys.exit(0)

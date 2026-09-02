@@ -24,6 +24,10 @@ dnf install -y -q rsync python3 util-linux >/dev/null 2>&1 || true
 # calls resolve (mount-user-dirs invokes steam-bridge and detect-apps).
 install -m755 /scripts/wootc-* /usr/local/bin/ 2>/dev/null || \
     { cp /scripts/wootc-* /usr/local/bin/ && chmod +x /usr/local/bin/wootc-*; }
+if [ -d /scripts/plugins.d ]; then
+    mkdir -p /usr/lib/wootc/plugins.d
+    cp -a /scripts/plugins.d/* /usr/lib/wootc/plugins.d/ 2>/dev/null || true
+fi
 
 # ── Fixtures: fake Windows volume at /run/wootc/host + Linux user ────────────────────
 useradd -m -u 1000 alice

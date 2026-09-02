@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+HOST = os.environ.get("WOOTC_HOST", "/run/wootc/host")
+
+slurp = None
+for candidate in (
+    os.path.join(HOST, "wootc", "install", "slurp", "slurp.json"),
+    os.path.join(HOST, "wootc", "install", "slurp.json")
+):
+    if os.path.exists(candidate):
+        slurp = candidate
+        break
+
+items = []
+if slurp:
+    try:
+        keys = json.load(open(slurp)).keys()
+    except Exception:
+        keys = ("look",)
+    for key in keys:
+        items.append({
+            "id": f"look-{key}",
+            "label": key.replace("Apps", " apps"),
+            "detail": "Windows-style setting",
+            "fileCount": 1,
+            "sizeBytes": 0
+        })
+
+detected = len(items) > 0
+result = {
+    "detected": detected,
+    "items": items,
+    "summary": "wallpaper + theme" if detected else ""
+}
+
+print(json.dumps(result))
+sys.exit(0)

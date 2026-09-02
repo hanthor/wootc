@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+import json
+import os
+import re
+import sys
+
+HOST = os.environ.get("WOOTC_HOST", "/run/wootc/host")
+src = os.path.join(HOST, "wootc", "install", "wifi")
+
+items = []
+if os.path.isdir(src):
+    xmls = [f for f in os.listdir(src) if f.endswith(".xml")]
+    if xmls:
+        importable = enterprise = 0
+        for name in xmls:
+            try:
+                text = open(os.path.join(src, name), errors="ignore").read()
+            except OSError:
+                continue
+            auth = re.search(r"<authentication>([^<]+)", text, re.I)
+            if auth and auth.group(1).lower() in {"wpa2", "wpa3", "wpa2psk", "wpa3sae", "open", "shared"}:
+                importable += 1
+            elif auth:
+                enterprise += 1
+            else:
+                importable += 1
+        if importable:
+            items.append({
+                "id": "wifi-importable",
+                "label": "Open / PSK / SAE networks",
+                "detail": f"{importable} profile(s)",
+                "fileCount": importable,
+                "sizeBytes": 0
+            })
+        if enterprise:
+            items.append({
+                "id": "wifi-enterprise",
+                "label": "Enterprise networks",
+                "detail": f"{enterprise} detected; credentials are not copied",
+                "fileCount": enterprise,
+                "sizeBytes": 0
+            })
+
+detected = len(items) > 0
+result = {
+    "detected": detected,
+    "items": items,
+    "summary": ", ".join(i["detail"] for i in items) if detected else ""
+}
+
+print(json.dumps(result))
+sys.exit(0)

@@ -2,6 +2,14 @@
 # /usr/local/bin/wootc-manifest — discover everything wootc can migrate from a
 # mounted Windows volume and emit a catalog (JSON). Read-only: it only looks.
 #
+# Follows the Program Migrator Plugin Architecture (docs/plugin-architecture.md).
+# Discovers plugins from plugins.d directories in precedence order:
+#   1. WOOTC_PLUGINS_DIR (environment override)
+#   2. /etc/wootc/plugins.d/ (Enterprise / Custom stage path)
+#   3. $HOME/.local/share/wootc/plugins.d/ (User installed plugins)
+#   4. /usr/lib/wootc/plugins.d/ (First-party system plugins)
+#   5. Bundled plugins.d/ alongside this script
+#
 # The migration GUI (wootc-manifest-gui) turns this catalog into a checklist —
 # everything defaults ON; the user opts OUT of any item or whole category. The
 # selection is written to ~/.config/wootc/migration-selection.json, which the
@@ -9,14 +17,21 @@
 #
 #   wootc-manifest scan [winuser]     → catalog JSON for that Windows user
 #   wootc-manifest scan --all         → catalog for every Windows profile found
+#   wootc-manifest list-plugins       → JSON list of all discovered active plugins
 #
 # Env: WOOTC_HOST (mounted Windows volume, default /run/wootc/host) — set in tests to a
 # fixture tree so the whole scanner runs with no real Windows install.
+
 import json
 import os
+import re
+import subprocess
 import sys
 
 HOST = os.environ.get("WOOTC_HOST", "/run/wootc/host")
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+
+PLUGIN_ID_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
 
 
 def _exists(*parts):
@@ -48,9 +63,13 @@ def _dir_bytes(path, cap=50000):
 
 def _item(path, item_id, label, detail=""):
     """Return one stable discovery descriptor without touching its contents."""
-    return {"id": item_id, "label": label, "detail": detail,
-            "fileCount": _count_files(path) if os.path.isdir(path) else 0,
-            "sizeBytes": _dir_bytes(path) if os.path.isdir(path) else 0}
+    return {
+        "id": item_id,
+        "label": label,
+        "detail": detail,
+        "fileCount": _count_files(path) if os.path.isdir(path) else 0,
+        "sizeBytes": _dir_bytes(path) if os.path.isdir(path) else 0
+    }
 
 
 def _users():
@@ -62,10 +81,9 @@ def _users():
                   if u not in skip and os.path.isdir(os.path.join(base, u)))
 
 
-# ── per-category discovery ───────────────────────────────────────────────────
-# Each returns (present: bool, items: [ {label, detail} ], summary: str).
+# ── Built-in fallback discovery functions ────────────────────────────────────
 
-def cat_files(user):
+def builtin_cat_files(user):
     items = []
     root = os.path.join(HOST, "Users", user)
     for folder in ("Documents", "Pictures", "Downloads", "Music", "Videos", "Desktop"):
@@ -76,36 +94,35 @@ def cat_files(user):
     return bool(items), items, f"{len(items)} folder(s)"
 
 
-def cat_browsers(user):
+def builtin_cat_browsers(user):
     items = []
     ad = os.path.join(HOST, "Users", user, "AppData")
     if os.path.exists(os.path.join(ad, "Roaming", "Mozilla", "Firefox", "profiles.ini")):
         items.append(_item(os.path.join(ad, "Roaming", "Mozilla", "Firefox"), "firefox", "Firefox", "profile + logins"))
-    if os.path.exists(os.path.join(ad, "Local", "Google", "Chrome", "User Data",
-                                    "Default", "Bookmarks")):
+    if os.path.exists(os.path.join(ad, "Local", "Google", "Chrome", "User Data", "Default", "Bookmarks")):
         items.append(_item(os.path.join(ad, "Local", "Google", "Chrome", "User Data"), "chrome", "Chrome", "bookmarks + history"))
-    if os.path.exists(os.path.join(ad, "Local", "Microsoft", "Edge", "User Data",
-                                    "Default", "Bookmarks")):
+    if os.path.exists(os.path.join(ad, "Local", "Microsoft", "Edge", "User Data", "Default", "Bookmarks")):
         items.append(_item(os.path.join(ad, "Local", "Microsoft", "Edge", "User Data"), "edge", "Edge", "bookmarks + history"))
     return bool(items), items, ", ".join(i["label"] for i in items)
 
 
-def cat_office(user):
+def builtin_cat_office(user):
     items = []
     ms = os.path.join(HOST, "Users", user, "AppData", "Roaming", "Microsoft")
     if os.path.exists(os.path.join(ms, "UProof", "CUSTOM.DIC")):
         items.append(_item(os.path.join(ms, "UProof"), "dictionary", "Custom dictionary", "LibreOffice dictionary"))
     tpl = os.path.join(ms, "Templates")
-    if os.path.isdir(tpl) and any(f.lower().endswith((".dotx", ".dotm", ".dot"))
-                                  for f in os.listdir(tpl)):
+    if os.path.isdir(tpl) and any(f.lower().endswith((".dotx", ".dotm", ".dot")) for f in os.listdir(tpl)):
         items.append(_item(tpl, "templates", "Word templates", "LibreOffice templates"))
     fonts = os.path.join(ms, "Fonts")
+    if not os.path.isdir(fonts):
+        fonts = os.path.join(HOST, "Users", user, "AppData", "Local", "Microsoft", "Windows", "Fonts")
     if os.path.isdir(fonts):
         items.append(_item(fonts, "fonts", "Office fonts", "Fonts copied for document fidelity"))
     return bool(items), items, "LibreOffice dictionary, templates, fonts, and format defaults"
 
 
-def cat_games(user):
+def builtin_cat_games(_user):
     items = []
     for base in ("Program Files (x86)", "Program Files"):
         vdf = os.path.join(HOST, base, "Steam", "steamapps", "libraryfolders.vdf")
@@ -115,7 +132,7 @@ def cat_games(user):
     return bool(items), items, "Steam"
 
 
-def cat_wifi(_user):
+def builtin_cat_wifi(_user):
     items = []
     src = os.path.join(HOST, "wootc", "install", "wifi")
     if os.path.isdir(src):
@@ -144,15 +161,14 @@ def cat_wifi(_user):
     return bool(items), items, ", ".join(i["detail"] for i in items)
 
 
-def cat_wsl(user):
+def builtin_cat_wsl(user):
     items = []
     local = os.path.join(HOST, "Users", user, "AppData", "Local")
     found = os.path.isdir(os.path.join(local, "lxss"))
     if not found and os.path.isdir(os.path.join(local, "Packages")):
         for pkg in os.listdir(os.path.join(local, "Packages")):
             ls = os.path.join(local, "Packages", pkg, "LocalState")
-            if os.path.exists(os.path.join(ls, "ext4.vhdx")) or \
-               os.path.isdir(os.path.join(ls, "rootfs")):
+            if os.path.exists(os.path.join(ls, "ext4.vhdx")) or os.path.isdir(os.path.join(ls, "rootfs")):
                 found = True
                 break
     if found:
@@ -160,10 +176,9 @@ def cat_wsl(user):
     return bool(items), items, "dotfiles + packages"
 
 
-def cat_look(_user):
+def builtin_cat_look(_user):
     items = []
-    if _exists("wootc", "install", "slurp", "slurp.json") or \
-       _exists("wootc", "install", "slurp.json"):
+    if _exists("wootc", "install", "slurp", "slurp.json") or _exists("wootc", "install", "slurp.json"):
         slurp = os.path.join(HOST, "wootc", "install", "slurp", "slurp.json")
         if not os.path.exists(slurp):
             slurp = os.path.join(HOST, "wootc", "install", "slurp.json")
@@ -177,7 +192,7 @@ def cat_look(_user):
     return bool(items), items, "wallpaper + theme"
 
 
-def cat_identity(user):
+def builtin_cat_identity(user):
     root = os.path.join(HOST, "Users", user)
     if not os.path.isdir(root):
         return False, [], ""
@@ -186,46 +201,253 @@ def cat_identity(user):
     return True, items, "Password is never migrated"
 
 
-CATEGORIES = [
-    ("files",    "Your files",        cat_files),
-    ("browsers", "Browsers",          cat_browsers),
-    ("office",   "Office documents",  cat_office),
-    ("games",    "Games (Steam)",     cat_games),
-    ("wifi",     "Wi-Fi networks",    cat_wifi),
-    ("wsl",      "WSL / developer",   cat_wsl),
-    ("look",     "Windows look",      cat_look),
-    ("identity", "Identity",           cat_identity),
+STANDARD_CATEGORIES = [
+    ("files",    "Your files",        builtin_cat_files),
+    ("browsers", "Browsers",          builtin_cat_browsers),
+    ("office",   "Office documents",  builtin_cat_office),
+    ("games",    "Games (Steam)",     builtin_cat_games),
+    ("wifi",     "Wi-Fi networks",    builtin_cat_wifi),
+    ("wsl",      "WSL / developer",   builtin_cat_wsl),
+    ("look",     "Windows look",      builtin_cat_look),
+    ("identity", "Identity",           builtin_cat_identity),
 ]
 
 
-def scan_user(user):
-    cats = []
-    for cid, label, fn in CATEGORIES:
+# ── Plugin Discovery & Lifecycle Execution ───────────────────────────────────
+
+def get_plugin_search_dirs():
+    """Return list of directory search paths in descending order of precedence."""
+    dirs = []
+    # 1. Environment override (e.g. for testing)
+    env_dir = os.environ.get("WOOTC_PLUGINS_DIR")
+    if env_dir:
+        for p in env_dir.split(os.pathsep):
+            p = p.strip()
+            if p and os.path.isdir(p):
+                dirs.append(p)
+
+    # 2. Enterprise / Custom Stage Path
+    if os.path.isdir("/etc/wootc/plugins.d"):
+        dirs.append("/etc/wootc/plugins.d")
+
+    # 3. User Installed Plugins
+    home = os.environ.get("HOME")
+    if home:
+        user_plugins = os.path.join(home, ".local", "share", "wootc", "plugins.d")
+        if os.path.isdir(user_plugins):
+            dirs.append(user_plugins)
+
+    # 4. First-Party Built-In Distribution Plugins
+    if os.path.isdir("/usr/lib/wootc/plugins.d"):
+        dirs.append("/usr/lib/wootc/plugins.d")
+
+    # 5. Bundled plugins.d alongside this script / repository
+    bundled = os.path.join(SCRIPT_DIR, "plugins.d")
+    if os.path.isdir(bundled) and bundled not in dirs:
+        dirs.append(bundled)
+
+    return dirs
+
+
+def discover_plugins():
+    """Discover active plugins from search directories with shadow precedence."""
+    plugins = {}  # id -> dict of metadata + path
+    for search_dir in get_plugin_search_dirs():
         try:
-            present, items, summary = fn(user)
-        except Exception:
-            present, items, summary = False, [], ""
+            entries = sorted(os.listdir(search_dir))
+        except OSError:
+            continue
+        for entry in entries:
+            plugin_dir = os.path.join(search_dir, entry)
+            if not os.path.isdir(plugin_dir):
+                continue
+            manifest_path = os.path.join(plugin_dir, "plugin.json")
+            if not os.path.isfile(manifest_path):
+                continue
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    manifest = json.load(f)
+            except Exception as e:
+                print(f"[wootc-manifest] warning: invalid plugin.json in {plugin_dir}: {e}", file=sys.stderr)
+                continue
+
+            plugin_id = manifest.get("id") or entry
+            if not isinstance(plugin_id, str) or not PLUGIN_ID_RE.match(plugin_id):
+                print(f"[wootc-manifest] warning: invalid plugin id {plugin_id!r} in {plugin_dir}", file=sys.stderr)
+                continue
+
+            schema_ver = manifest.get("schemaVersion", 1)
+            if not isinstance(schema_ver, int) or schema_ver > 1:
+                print(f"[wootc-manifest] warning: unsupported schemaVersion {schema_ver} in {plugin_dir}", file=sys.stderr)
+                continue
+
+            # Higher precedence directory wins (shadowing)
+            if plugin_id in plugins:
+                continue
+
+            detect_bin = os.path.join(plugin_dir, "bin", "detect")
+            import_bin = os.path.join(plugin_dir, "bin", "import")
+            export_bin = os.path.join(plugin_dir, "bin", "export")
+
+            plugins[plugin_id] = {
+                "id": plugin_id,
+                "name": manifest.get("name", plugin_id),
+                "version": manifest.get("version", "1.0.0"),
+                "description": manifest.get("description", ""),
+                "category": manifest.get("category", plugin_id),
+                "author": manifest.get("author", ""),
+                "license": manifest.get("license", ""),
+                "homepage": manifest.get("homepage", ""),
+                "target": manifest.get("target", {}),
+                "execution": manifest.get("execution", {}),
+                "ui": manifest.get("ui", {}),
+                "dir": plugin_dir,
+                "detect_bin": detect_bin if os.path.exists(detect_bin) else None,
+                "import_bin": import_bin if os.path.exists(import_bin) else None,
+                "export_bin": export_bin if os.path.exists(export_bin) else None,
+                "manifest": manifest,
+            }
+
+    return plugins
+
+
+def run_plugin_detect(plugin, user):
+    """Execute plugin bin/detect with timeout and standard environment."""
+    detect_bin = plugin.get("detect_bin")
+    if not detect_bin:
+        return False, [], ""
+
+    timeout_sec = plugin.get("execution", {}).get("detectTimeoutSec", 10)
+    user_dir = os.path.join(HOST, "Users", user)
+
+    env = dict(os.environ)
+    env["WOOTC_HOST"] = HOST
+    env["WOOTC_WIN_USER"] = user
+    env["WOOTC_WIN_USER_DIR"] = user_dir
+
+    try:
+        proc = subprocess.run(
+            [detect_bin],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_sec
+        )
+        if proc.returncode != 0:
+            return False, [], ""
+        out = json.loads(proc.stdout.strip())
+        detected = bool(out.get("detected", False))
+        items = out.get("items", [])
+        summary = out.get("summary", "")
+        return detected, items, summary
+    except subprocess.TimeoutExpired:
+        print(f"[wootc-manifest] plugin {plugin['id']} detect timed out after {timeout_sec}s", file=sys.stderr)
+        return False, [], ""
+    except Exception as e:
+        print(f"[wootc-manifest] plugin {plugin['id']} detect failed: {e}", file=sys.stderr)
+        return False, [], ""
+
+
+def scan_user(user, active_plugins):
+    """Generate catalog for a Windows user combining plugin results and built-ins."""
+    cats = []
+    handled_categories = set()
+
+    # Map plugins by category and id
+    plugins_by_cat = {}
+    for p in active_plugins.values():
+        cat_key = p.get("category", p["id"])
+        plugins_by_cat[cat_key] = p
+        plugins_by_cat[p["id"]] = p
+
+    # 1. Standard canonical categories in standard order
+    for cid, label, fallback_fn in STANDARD_CATEGORIES:
+        handled_categories.add(cid)
+        plugin = plugins_by_cat.get(cid)
+        present, items, summary = False, [], ""
+        evaluated = False
+
+        if plugin and plugin.get("detect_bin"):
+            try:
+                present, items, summary = run_plugin_detect(plugin, user)
+                evaluated = True
+            except Exception:
+                evaluated = False
+
+        if not evaluated:
+            try:
+                present, items, summary = fallback_fn(user)
+            except Exception:
+                present, items, summary = False, [], ""
+
         cats.append({
-            "id": cid, "label": label, "present": present,
-            "defaultOn": present,          # discovered = on by default
-            "summary": summary, "items": items,
+            "id": cid,
+            "label": label,
+            "present": present,
+            "defaultOn": present,
+            "summary": summary,
+            "items": items,
         })
+
+    # 2. Any additional custom/enterprise plugins not in standard list
+    for p in active_plugins.values():
+        cat_id = p.get("category", p["id"])
+        if cat_id in handled_categories or p["id"] in handled_categories:
+            continue
+        handled_categories.add(cat_id)
+        handled_categories.add(p["id"])
+
+        present, items, summary = False, [], ""
+        if p.get("detect_bin"):
+            try:
+                present, items, summary = run_plugin_detect(p, user)
+            except Exception:
+                present, items, summary = False, [], ""
+
+        default_on = p.get("ui", {}).get("defaultOn", present) if present else False
+        cats.append({
+            "id": cat_id,
+            "label": p.get("name", cat_id),
+            "present": present,
+            "defaultOn": default_on,
+            "summary": summary,
+            "items": items,
+        })
+
     return {"winUser": user, "categories": cats}
 
 
 def main(argv):
     args = argv[1:]
-    if not args or args[0] != "scan":
-        print("usage: wootc-manifest scan [winuser|--all]", file=sys.stderr)
+    if not args:
+        print("usage: wootc-manifest <scan [winuser|--all] | list-plugins>", file=sys.stderr)
         return 2
-    rest = args[1:]
-    if rest and rest[0] == "--all":
-        out = {"host": HOST, "users": [scan_user(u) for u in _users()]}
-    else:
-        user = rest[0] if rest else (_users()[0] if _users() else "")
-        out = {"host": HOST, "users": [scan_user(user)] if user else []}
-    print(json.dumps(out, indent=2))
-    return 0
+
+    cmd = args[0]
+    plugins = discover_plugins()
+
+    if cmd == "list-plugins" or cmd == "plugins":
+        out = {
+            "searchDirs": get_plugin_search_dirs(),
+            "plugins": list(plugins.values())
+        }
+        print(json.dumps(out, indent=2))
+        return 0
+
+    if cmd == "scan":
+        rest = args[1:]
+        if rest and rest[0] == "--all":
+            out = {"host": HOST, "users": [scan_user(u, plugins) for u in _users()]}
+        else:
+            user = rest[0] if rest else (_users()[0] if _users() else "")
+            out = {"host": HOST, "users": [scan_user(user, plugins)] if user else []}
+        print(json.dumps(out, indent=2))
+        return 0
+
+    print(f"unknown command: {cmd}", file=sys.stderr)
+    print("usage: wootc-manifest <scan [winuser|--all] | list-plugins>", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

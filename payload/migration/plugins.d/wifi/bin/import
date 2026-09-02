@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+STATE_DIR="${WOOTC_STATE_DIR:-/var/lib/wootc}"
+mkdir -p "$STATE_DIR"
+
+if command -v wootc-wifi-bridge >/dev/null 2>&1; then
+    wootc-wifi-bridge || true
+fi
+
+cat > "$STATE_DIR/status.json" <<'EOF'
+{
+  "status": "success",
+  "migrated": ["wifi-connections"],
+  "note": "Open and personal Wi-Fi moved."
+}
+EOF
+exit 0

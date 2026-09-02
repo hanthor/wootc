@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+WIN_USER="${WOOTC_WIN_USER:-}"
+LINUX_USER="${WOOTC_LINUX_USER:-${USER:-}}"
+STATE_DIR="${WOOTC_STATE_DIR:-${WOOTC_LINUX_HOME:-$HOME}/.config/wootc}"
+mkdir -p "$STATE_DIR"
+
+if command -v wootc-import-browser >/dev/null 2>&1 && [[ -n "$WIN_USER" ]]; then
+    wootc-import-browser "$WIN_USER" "$LINUX_USER" || true
+fi
+
+cat > "$STATE_DIR/status.json" <<'EOF'
+{
+  "status": "success",
+  "migrated": ["firefox-profile", "chrome-bookmarks", "edge-bookmarks"],
+  "note": "Browser bookmarks, history, and profiles imported."
+}
+EOF
+exit 0

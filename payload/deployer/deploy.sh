@@ -2760,6 +2760,16 @@ QGAEOF
     mig_opt 644 wootc-user.desktop "$DEPLOY_ROOT/usr/share/applications/wootc-user.desktop"
     # Gates the bridges on the migration chooser's opt-out selection.
     mig_opt 755 wootc-selection "$DEPLOY_ROOT/var/usrlocal/bin/wootc-selection"
+    # Program migrator plugins and schemas (docs/plugin-architecture.md).
+    if [[ -d /usr/lib/wootc/migration/plugins.d ]]; then
+        mkdir -p "$DEPLOY_ROOT/usr/lib/wootc/plugins.d" "$DEPLOY_ROOT/var/usrlocal/lib/wootc/plugins.d"
+        cp -a /usr/lib/wootc/migration/plugins.d/* "$DEPLOY_ROOT/usr/lib/wootc/plugins.d/" 2>/dev/null || true
+        cp -a /usr/lib/wootc/migration/plugins.d/* "$DEPLOY_ROOT/var/usrlocal/lib/wootc/plugins.d/" 2>/dev/null || true
+    fi
+    if [[ -d /usr/lib/wootc/migration/schemas ]]; then
+        mkdir -p "$DEPLOY_ROOT/usr/lib/wootc/schemas"
+        cp -a /usr/lib/wootc/migration/schemas/* "$DEPLOY_ROOT/usr/lib/wootc/schemas/" 2>/dev/null || true
+    fi
     # Phase 3 (§4.2 stage 5-6): "move to Linux only" planner. Analysis path is
     # live; the destructive repartition path is guarded off until rung-3 proof.
     # fisherman is not in the migration directory (it is built from Go in the
