@@ -288,11 +288,19 @@ Extend `wootc-esp-sync`:
    is picked up before the next reboot rather than one late.
 
 ### Tasks
-- [ ] deployer mirrors the ESP manifest to `/etc/wootc/esp-manifest`
-- [ ] `wootc-esp-sync`: signed-chain source discovery + SBAT/CA gate + archive-then-atomic replace, shim last
-- [ ] `.path` trigger unit; ordering pins in bats
-- [ ] harness: after Phase 2, plant a newer shim in the bootupd path, reboot, assert the ESP trio changed and the archive exists and the system still boots
-- [ ] `docs/architecture-boundary.md` line about bootupd sourcing becomes true
+- [x] ownership without a new manifest: refresh only a vendor directory whose
+      `grub.cfg` carries the `# wootc` marker — the same rule the installer's
+      D1 guard already applies, re-checked on every boot because a second OS
+      can be installed after us
+- [x] `wootc-esp-sync`: signed-chain source discovery + SBAT/CA gate +
+      archive-then-atomic replace, shim last (`wootc-shim-trust` grades the
+      candidate against the firmware's own `db` and the installed SBAT
+      generation)
+- [x] `.path` trigger unit on bootupd's `EFI.json`; contract pins in bats and
+      behavioural coverage in `tests/unit/test_esp_chain_refresh.py`
+- [ ] harness: after Phase 2, plant a newer shim in the bootupd path, reboot,
+      assert the ESP trio changed, the archive exists, and the system still boots
+- [x] `docs/architecture-boundary.md` line about bootupd sourcing becomes true
 
 ## 5. One step catalogue, restated everywhere, diffed in CI
 
@@ -331,10 +339,17 @@ and every catalogue deployer id has a splash line; a Go test asserts the same
 for the pipeline; CI fails when a generated file is stale.
 
 ### Tasks
-- [ ] `payload/steps.tsv` + generator (`just steps`) + stale-check in CI
-- [ ] `app.go` pipeline and `progress.js` consume the generated labels
-- [ ] `deploy.sh` splash table generated; harness marker list generated
-- [ ] bats + Go parity tests
+- [x] `payload/steps.tsv` — the catalogue, with an owner and the on-screen
+      words for every id
+- [x] bats + Go parity tests. These found the drift the section predicted:
+      **five** pipeline steps were missing from the progress screen's list,
+      and one entry on the screen was never emitted, so it stayed grey for the
+      whole install — which reads as a step that did not happen. Fixed here.
+- [ ] generation (`just steps` writing the splash table and the frontend list)
+      — **deferred on purpose.** The value of this section is that drift
+      cannot survive CI, and the parity tests deliver that. Generating a
+      `case` table into `deploy.sh` is a mechanical rewrite of the file that
+      decides whether a user's machine boots, for no additional safety.
 
 ## 6. Signed catalogue and exe freshness
 
@@ -377,7 +392,8 @@ mode and it shows a permanent warning.
    today it is part of the signed exe.
 
 ### Tasks
-- [ ] embed the release tag; pin `deployerBaseURL`; harness override unchanged
+- [x] embed the release tag; pin `deployerBaseURL`; harness override unchanged
+      (`app/deployer_url.go`, `-X main.releaseTag=` in `release.yml`)
 - [ ] minisign the manifest in `release.yml`; verify in `fetchChecksums`; test key for the harness and the offline bundle
 - [ ] launchpad freshness notice
 - [ ] `docs/RELEASING.md`: key custody and rotation
