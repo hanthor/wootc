@@ -609,6 +609,62 @@ qga_probe() {
     WOOTC_QGA_CALL_TIMEOUT=5 qga_call_retry ping >/dev/null 2>&1 || return 1
 }
 
+# ── the QGA-channel-loss failure class (#220) ────────────────────────────────
+# A deaf virtio-serial channel and a stalled installer produce the SAME
+# observable — the drive-state file stops changing — and opposite verdicts.
+# guest-ping is the discriminator, and these two helpers are what the harness
+# does with the answer.
+#
+# qga_reconnect_cycle runs ONE bounded recovery attempt. The socket takes a
+# single client at a time, so a client our `timeout` wrapper killed on 124 can
+# still own it, with its unread reply queued behind — the next connection then
+# reads that reply as the answer to a question it never asked (agent-lessons
+# §20: a retried command is a second command). Reaping the stale clients and
+# reopening with a drained, 0xFF-delimited sync is the whole recovery.
+#
+# It is one cycle and not a loop on purpose. If a few clean reopens cannot get
+# a ping back, the channel is gone, and grinding away at it just re-buys the
+# 30-minute false verdict this exists to delete.
+WOOTC_QGA_RECONNECT_ATTEMPTS="${WOOTC_QGA_RECONNECT_ATTEMPTS:-3}"
+WOOTC_QGA_RECONNECT_SETTLE_S="${WOOTC_QGA_RECONNECT_SETTLE_S:-3}"
+qga_reconnect_cycle() {
+    local out rc=0
+    warn "  QGA channel is not answering — ONE bounded reconnect cycle before any verdict"
+    # Clients that outlived their `timeout` may still hold the single-client
+    # socket. Reaping them is a prerequisite for the reopen, not an extra.
+    $DOCKER exec "$CONTAINER_NAME" pkill -f '/tmp/qga.py' >/dev/null 2>&1 || true
+    sleep 1
+    out=$(timeout 60 $DOCKER exec "$CONTAINER_NAME" python3 /tmp/qga.py reconnect \
+        --attempts "$WOOTC_QGA_RECONNECT_ATTEMPTS" \
+        --settle "$WOOTC_QGA_RECONNECT_SETTLE_S" 2>&1) || rc=$?
+    # An `x && y` tail would be the last status of this block under `set -e`,
+    # and an empty $out would abort the whole run from inside the recovery path.
+    if [ -n "$out" ]; then
+        printf '%s\n' "$out" | sed 's/^/    reconnect: /'
+    fi
+    if [ "$rc" -eq 0 ]; then
+        pass "  QGA channel RECOVERED — the stall was the channel, and it is back"
+        return 0
+    fi
+    return 1
+}
+
+# qga_channel_lost writes the verdict for a channel that did not come back.
+# The WORDING is the deliverable, not decoration: run 32556250889 led with
+# "install stalled at Finding your files" and appended the dead-ping caveat
+# underneath, so the run read as a product red for a failure the harness had
+# no evidence about. Once the channel is deaf the harness knows nothing about
+# the install and must say exactly that. The ledger line NAMES the class, so
+# the re-dispatch decision needs no human to read the log.
+qga_channel_lost() {
+    local where="$1"
+    fail "CLASSIFICATION: qga-channel-lost — the QGA channel died during $where"
+    fail "  QGA does NOT answer ping, and one bounded reconnect cycle did not bring the channel back."
+    fail "  This run has NO verdict on the product: the install may have finished, stalled or failed,"
+    fail "  and with the channel deaf the harness cannot tell — so it does not guess."
+    note_flake "qga-channel-lost"
+}
+
 qga_wait() {
     local label="$1" timeout="$2" elapsed=0
     step "Waiting for QGA: $label..."
@@ -2791,6 +2847,10 @@ if ($left.Count -ne 1) { Write-Output ("SINGLE-INSTANCE-UNPROVEN: " + $left.Coun
     local drive_deadline drive_state="" driven=false
     local last_good="" last_screen="" empty_reads=0 total_empty=0 blocked_reads=0
     local dead_app_checks=0
+    # One reconnect cycle per run, not per stall: the second time the channel
+    # goes deaf we already know reopening is on the table, and the answer is a
+    # verdict rather than another round of dialling.
+    local reconnect_tried=false
     local WOOTC_DRIVE_APP_DEAD_THRESHOLD="${WOOTC_DRIVE_APP_DEAD_THRESHOLD:-12}"
     drive_deadline=$(deadline_in 1800)
     while ! past_deadline "$drive_deadline"; do
@@ -2844,6 +2904,24 @@ if ($left.Count -ne 1) { Write-Output ("SINGLE-INSTANCE-UNPROVEN: " + $left.Coun
                     fi
                 else
                     warn "  drive state unreadable AND QGA does not answer ping — lost the channel to the guest"
+                    # Do not wait this out. The remaining ~28 minutes cannot
+                    # make a deaf channel talk, and spending them produces a
+                    # verdict about the PRODUCT from a run that stopped being
+                    # able to observe it (#220). One bounded reconnect cycle,
+                    # then classify and hand the run to the retry gate.
+                    if [ "$reconnect_tried" = false ]; then
+                        reconnect_tried=true
+                        if qga_reconnect_cycle; then
+                            empty_reads=0
+                            sleep 10
+                            continue
+                        fi
+                    fi
+                    qga_channel_lost "the GUI-driven install"
+                    fail "  last screen reached: ${last_screen:-<none>} (install clicked: $driven)"
+                    fail "  last readable state: ${last_good:-<never read one>}"
+                    capture_vm_diagnostics
+                    exit 1
                 fi
             fi
             sleep 10
@@ -2936,18 +3014,27 @@ if (Test-Path $cfg) { Write-Output "grub.cfg first line:"; Write-Output ("  " + 
         sleep 10
     done
     printf '%s' "$drive_state" | grep -q '"screen":"done"' || {
+        # WHICH failure this is depends on the channel, so ask BEFORE writing a
+        # verdict. This used to lead with "did not reach the done screen in 30m"
+        # and append the dead-ping caveat underneath — a product red on top of
+        # the one fact that says the run has no standing to judge the product.
+        # The discriminator keeps it honest in both directions: an installer
+        # that stalled with a LIVE channel writes no flake verdict and stays a
+        # real red, which is why the reconnect cycle must fail too before the
+        # class is claimed.
+        if ! qga_probe && ! qga_reconnect_cycle; then
+            qga_channel_lost "the GUI-driven install"
+            fail "  last screen reached: ${last_screen:-<none>} (install clicked: $driven)"
+            fail "  last readable state: ${last_good:-<never read one>}"
+            fail "  unreadable reads: $total_empty of ~180"
+            capture_vm_diagnostics
+            exit 1
+        fi
         fail "GUI-driven install did not reach the done screen in 30m"
         fail "  last screen reached: ${last_screen:-<none>} (install clicked: $driven)"
         fail "  last readable state: ${last_good:-<never read one>}"
         fail "  unreadable reads: $total_empty of ~180"
-        if qga_probe; then
-            fail "  QGA answers ping NOW — so this is the installer, not the channel"
-        else
-            fail "  QGA does NOT answer ping — the verdict above may be a lost channel, not a stalled install"
-            # The discriminator that keeps this honest: an installer that
-            # stalled with a LIVE channel writes no verdict and is a real red.
-            note_flake "qga-channel-lost"
-        fi
+        fail "  QGA answers ping — so this is the installer, not the channel"
         capture_vm_diagnostics
         exit 1
     }

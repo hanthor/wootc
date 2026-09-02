@@ -24,12 +24,51 @@ SOCKET = "/run/shm/qga.sock"
 
 
 class GuestAgent:
-    def __init__(self, path=SOCKET, timeout=60.0):
+    def __init__(self, path=SOCKET, timeout=60.0, drain_grace=0.0):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.timeout = timeout
         self.sock.settimeout(timeout)
         self.sock.connect(path)
+        # Drain BEFORE makefile(): the bytes a dead client left behind are raw
+        # socket data, and once a buffered reader has joined them onto the head
+        # of our first real response there is no un-joining them.
+        self.drained = self._drain(drain_grace)
         self.file = self.sock.makefile("rwb")
         self._sync()
+
+    def _drain(self, grace=0.0):
+        """Discard whatever a previous client left in the channel.
+
+        The QGA virtio-serial socket takes ONE client at a time, so a client
+        that was KILLED mid-request (our `timeout` wrapper does exactly that on
+        124) leaves its reply queued: the next connection reads that reply as
+        the answer to a question it never asked, and every subsequent response
+        is off by one — the channel is open and useless. guest-sync-delimited
+        re-anchors the stream, but only once the backlog ahead of it is gone.
+
+        `grace` is a bounded blocking window: 0 means "take only what has
+        already arrived" (the hot path, no added latency), and the recovery
+        path in reconnect() pays a fraction of a second to also catch bytes
+        still in flight. Bounded either way — a channel that streams forever
+        must not turn a drain into the hang it exists to prevent.
+        """
+        discarded = 0
+        deadline = time.monotonic() + max(grace, 0.0) + 1.0
+        self.sock.settimeout(grace if grace > 0 else 0.0)
+        try:
+            while time.monotonic() < deadline and discarded < 4 * 1024 * 1024:
+                try:
+                    chunk = self.sock.recv(65536)
+                except (BlockingIOError, socket.timeout):
+                    break
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                discarded += len(chunk)
+        finally:
+            self.sock.settimeout(self.timeout)
+        return discarded
 
     def _sync(self):
         """Synchronize with QGA using guest-sync-delimited.
@@ -179,6 +218,47 @@ class GuestAgent:
         return written_total
 
 
+def reconnect(path=SOCKET, attempts=3, settle=3.0, timeout=10.0, log=None):
+    """One bounded reconnect cycle against a channel that stopped answering.
+
+    Returns True as soon as a freshly opened connection gets a guest-ping back,
+    False once the attempt budget is spent.  Each attempt is a full cycle:
+    open, drain what the previous client left, re-anchor with a 0xFF-delimited
+    sync, ping.
+
+    BOUNDED is the whole point.  A deaf virtio-serial channel does not heal by
+    being asked again for half an hour — el10-gnome-win11pro in run
+    32556250889 waited out its full 30-minute drive deadline and then reported
+    the product as broken on evidence it did not have (#220).  Either a small
+    number of clean reopens gets the channel back, or the caller must classify
+    the run `qga-channel-lost` and let the retry gate re-dispatch it.
+    """
+    def emit(message):
+        (log or (lambda m: print("QGA reconnect: %s" % m, file=sys.stderr)))(message)
+
+    for attempt in range(1, attempts + 1):
+        agent = None
+        try:
+            agent = GuestAgent(path, timeout=timeout, drain_grace=0.5)
+            agent.request("guest-ping")
+            emit(
+                "attempt %d/%d: channel answered guest-ping "
+                "(discarded %d stale bytes)" % (attempt, attempts, agent.drained)
+            )
+            return True
+        except (OSError, RuntimeError, ValueError) as error:
+            emit("attempt %d/%d: %s" % (attempt, attempts, error))
+        finally:
+            if agent is not None:
+                try:
+                    agent.close()
+                except OSError:
+                    pass
+        if attempt < attempts:
+            time.sleep(settle)
+    return False
+
+
 def powershell(agent, command):
     return agent.exec(
         r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
@@ -204,9 +284,38 @@ def main():
     write = sub.add_parser("write")
     write.add_argument("local_path")
     write.add_argument("guest_path")
+    recon = sub.add_parser("reconnect")
+    recon.add_argument("--attempts", type=int, default=3)
+    recon.add_argument("--settle", type=float, default=3.0)
+    recon.add_argument("--timeout", type=float, default=10.0)
     args = parser.parse_args()
 
-    agent = GuestAgent(args.socket)
+    if args.command == "reconnect":
+        if reconnect(
+            args.socket,
+            attempts=args.attempts,
+            settle=args.settle,
+            timeout=args.timeout,
+        ):
+            return 0
+        print(
+            "QGA: channel still deaf after %d reconnect attempts — qga-channel-lost"
+            % args.attempts,
+            file=sys.stderr,
+        )
+        return TRANSPORT_EXIT
+
+    # A socket that will not open is a TRANSPORT failure, and it used to exit
+    # 1: the connect() sat OUTSIDE this try, so ENOENT/ECONNREFUSED on a dead
+    # channel raised a bare traceback.  Exit 1 is indistinguishable from a
+    # guest command that ran and returned 1, so qga_call_retry refused to retry
+    # it (#40 forbids replaying guest exit codes) and every caller read a dead
+    # socket as a real, guest-side failure — the masquerade #220 is about.
+    try:
+        agent = GuestAgent(args.socket)
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"QGA: cannot open {args.socket}: {error}", file=sys.stderr)
+        return TRANSPORT_EXIT
     try:
         if args.command == "ping":
             agent.request("guest-ping")
@@ -241,7 +350,10 @@ def main():
         print(f"QGA: {error}", file=sys.stderr)
         return TRANSPORT_EXIT
     finally:
-        agent.close()
+        try:
+            agent.close()
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
