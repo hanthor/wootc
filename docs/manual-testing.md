@@ -60,7 +60,9 @@ in the pipeline) one one-time boot entry — and a failure or cancel removes
 the boot entry again. A failed deploy boot returns to Windows by itself
 after 30 seconds.
 
-Collect, in this order, and attach to a GitHub issue:
+Collect, in this order, and attach to a GitHub issue. The
+[real hardware test report form](../.github/ISSUE_TEMPLATE/manual-test-report.yml)
+asks for each item and records the machine details needed to triage it:
 
 | What | Where |
 |---|---|
