@@ -135,15 +135,15 @@ keys, tokens, or credential stores — you sign in again where it matters.
 
 ## 5. Try it first, commit later
 
-Not ready to reboot? Two ways to preview:
+Not ready to reboot?
 
-- **Boot in VM** — run your installed Linux in a window *without* rebooting,
-  right from Windows. It's the same disk, so any changes you make persist.
-- **Try in VM (fresh)** — build a preview of an image and try it in a window; if
-  you like it, **Install for Real** promotes the very same disk to your
-  permanent install (no re-download, no re-deploy).
+- **Boot in VM (Phase 1)** — run your installed Linux in a window *without*
+  rebooting, right from Windows. Because wootc installs into a single `root.disk`
+  file on your existing drive without repartitioning, you can test drive your
+  actual configured Linux system safely before ever rebooting. Any changes you
+  make persist to the same disk.
 
-Either way, you're always one reboot away from Windows.
+You're always one reboot away from Windows.
 
 ---
 

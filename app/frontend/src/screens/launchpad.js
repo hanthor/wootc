@@ -339,7 +339,8 @@ export function renderLaunchpad() {
   const installBtn = btn(`${installVerb()} →`, 'btn btn-primary', () => startInstall());
   installBtn.id = 'install-btn';
   footer.appendChild(btn('Cancel', 'btn btn-ghost', () => Quit()));
-  // Try-in-VM (§6.1): only when a fresh-build VM is possible on this host.
+  // Try-in-VM (§6.1): gated on fresh VM capability (deferred to post-1.0 per ADR 0001 / #231;
+  // available when builder artifacts are present in an offline bundle).
   if (state.freshVmCapability?.available && state.selected) {
     footer.appendChild(btn('Try in VM', 'btn btn-ghost', () => tryInVM()));
   }

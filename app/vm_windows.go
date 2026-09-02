@@ -130,6 +130,9 @@ const previewIPCPort = 9099
 // GetFreshVMCapability reports whether "Try in VM" (fresh build) can run. It
 // needs QEMU + firmware + an accelerator (like §6.2) plus the bundled Alpine
 // builder kernel/initramfs that does the OCI→disk work.
+// Note: In 1.0, pre-install Try-in-VM is cut from standard releases (ADR 0001, #231)
+// in favor of Phase 1 Boot-in-VM, but the capability check is retained for offline
+// bundles or developer workflows where builder artifacts are provisioned.
 func (a *App) GetFreshVMCapability() VMCapability {
 	qemuPath, bundled := findQEMU()
 	cap := VMCapability{QEMUPath: qemuPath, Bundled: bundled}

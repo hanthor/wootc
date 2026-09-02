@@ -970,9 +970,11 @@ The Windows installer (`wootc.exe`) has four screens:
 ```
 
 **Button actions:**
-- **[Try in VM]**: Bypasses BCD modification. Launches a background Alpine
-  builder VM to pull the OCI image into a local virtual disk and starts
-  QEMU immediately (§6.1). No reboot.
+- **[Try in VM]**: (Optional / Post-1.0 offline bundle; gated by `GetFreshVMCapability`).
+  Bypasses BCD modification. Launches a background Alpine builder VM to pull
+  the OCI image into a local virtual disk and starts QEMU immediately (§6.1).
+  No reboot. In standard 1.0 builds, this affordance is hidden in favor of
+  post-install Phase 1 VM Boot (ADR 0001, #231).
 - **[Install]**: Validates fields, proceeds to pre-flight checks.
 
 #### Screen 1.5: Pre-Flight Mitigation (Conditional)
@@ -1436,6 +1438,13 @@ wootc can boot bootc images directly on Windows using QEMU with WHPX
 performance. Two distinct modes:
 
 ### 6.1 Fresh VM from OCI Image (Two-Stage QEMU Handoff)
+
+> **Status (1.0 Scope)**: Deferred to post-1.0 per [ADR 0001](adr/0001-phase1-first-architecture.md)
+> and [#231](https://github.com/tuna-os/wootc/issues/231). The 1.0 distribution relies on
+> §6.2 (Phase 1 Boot-in-VM) against the installed `root.disk`, avoiding bundling ~100MB+
+> of builder/QEMU binaries in standard installer releases while providing a zero-risk VM
+> trial of the real system. The underlying capability check and builder scripts are preserved
+> for evaluation and potential post-1.0 offline bundles.
 
 "Try before you install" — the user clicks **[Try in VM]** on the
 Launchpad, and wootc builds a bootable disk image and launches it in
