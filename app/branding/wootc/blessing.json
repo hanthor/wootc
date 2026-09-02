@@ -1,0 +1,29 @@
+{
+  "brand": "wootc",
+  "selfOwned": true,
+  "status": "blessed",
+  "mark": {
+    "owner": "TunaOS (tuna-os/wootc) — this project",
+    "assetSource": "emoji placeholder; no third-party mark is used"
+  },
+  "decisions": {
+    "mark": "yes",
+    "name": "yes",
+    "tagline": "yes",
+    "distributeExe": "yes"
+  },
+  "winget": {
+    "identifier": "TunaOS.wootc",
+    "namespaceOwner": "TunaOS (tuna-os) — this project",
+    "identifierAgreed": true
+  },
+  "ask": {
+    "filed": false,
+    "venue": "",
+    "shown": [],
+    "openedAt": "",
+    "decidedAt": "",
+    "evidence": "https://github.com/tuna-os/wootc"
+  },
+  "notes": "The generic engine under its own name. Nothing to ask: the mark, the name and the namespace are this project's. Published to winget as TunaOS.wootc by .github/workflows/winget-publish.yml."
+}
