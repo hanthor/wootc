@@ -36,10 +36,15 @@ wootc runs a quick check when it starts and tells you in plain language if
 anything needs attention. Under the hood it wants:
 
 - **Windows 10 or 11**, 64-bit, UEFI (nearly all PCs since ~2015).
-- **~40 GB of free space** for a comfortable Linux install (you choose the size).
+- **At least 35 GB of free space** on `C:` — 20 GB for Linux plus the 15 GB
+  the app keeps back so Windows still has room. More is better; you choose the
+  size.
 - **Secure Boot** on is fine — wootc uses a Microsoft-trusted boot chain.
-- **BitLocker** is fine too — wootc never asks you to decrypt your drive
-  (see [§7](#7-encryption--bitlocker)).
+- **BitLocker off**, for now. wootc never asks you to decrypt your drive, but
+  the encrypted-drive path is not proven green yet, so the alpha stops before
+  installing on a BitLocker-protected PC and says so
+  ([#34](https://github.com/tuna-os/wootc/issues/34), see
+  [§7](#7-encryption--bitlocker)).
 
 You don't need to disable Secure Boot, make a bootable USB, or shrink partitions
 yourself. wootc handles all of it.
@@ -54,7 +59,8 @@ Download and run **wootc.exe**. You'll see the Launchpad:
 
 1. **Pick a desktop.** Choose from the catalog — GNOME, KDE Plasma, Niri, or
    XFCE, on an Enterprise Linux, Fedora, Arch, or Debian base. Not sure? The
-   default (Yellowfin GNOME) is a great, stable starting point.
+   first card is pre-selected for you — in the alpha that is Bluefin LTS, the
+   combination proven end-to-end (see [RELEASING](RELEASING.md#alpha-now)).
 2. **Set a password.** That's the whole form: your username and computer name
    are mirrored from this PC, the disk is sized from your free space, and
    TPM-backed encryption is picked for you. The form states the plan under the
@@ -95,7 +101,7 @@ boot menu; wootc doesn't remove it (until you ask it to — [§8](#8-go-linux-on
 
 ## 4. Bring your stuff over
 
-Open the **Bring your setup over** dashboard. wootc migrates honestly — it moves
+Open the **Bring Over From Windows** dashboard. wootc migrates honestly — it moves
 what it safely can and clearly says what needs a fresh sign-in. It follows three
 consent tiers:
 
@@ -157,6 +163,15 @@ drive — a second internal disk, an external/USB drive, or a backup? Open
 ---
 
 ## 7. Encryption & BitLocker
+
+> **Not yet available in the alpha.** The design below is built and the code
+> ships, but the BitLocker path has not been proven green end-to-end
+> ([#34](https://github.com/tuna-os/wootc/issues/34)), so every channel that
+> ships today refuses to install on a BitLocker-protected PC rather than walk
+> you into an unproven path: *"BitLocker encryption isn't supported in the
+> alpha yet — it's coming soon. For now, wootc needs drive encryption turned
+> off."* Turn BitLocker off, or wait for the gate to open. What follows is
+> what happens once it does.
 
 **Your Windows BitLocker is safe.** wootc never forces you to decrypt your
 Windows drive. If C: is BitLocker-protected, wootc offers to put Linux on an
@@ -251,6 +266,8 @@ was.
 
 *wootc is early, actively-developed software. The full
 Windows → deployer → native Linux → back-to-Windows loop is verified
-end-to-end on real hardware (UEFI + Secure Boot + TPM 2.0). See
-[docs/SPEC.md](SPEC.md) for the design and [docs/milestones.md](milestones.md)
-for what's proven.*
+end-to-end on the KVM E2E rig — a real Windows 11 VM with UEFI, Secure Boot
+and TPM 2.0. Real-hardware evidence is the next gate on the ladder
+([ROADMAP](../ROADMAP.md), v0.2.0-alpha), not something already banked. See
+[docs/SPEC.md](SPEC.md) for the design, [docs/status.md](status.md) for what
+each claim rests on, and [docs/milestones.md](milestones.md) for the ladder.*
