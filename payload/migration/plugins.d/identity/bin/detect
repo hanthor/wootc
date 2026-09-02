@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+HOST = os.environ.get("WOOTC_HOST", "/run/wootc/host")
+WIN_USER = os.environ.get("WOOTC_WIN_USER", "")
+WIN_USER_DIR = os.environ.get("WOOTC_WIN_USER_DIR", os.path.join(HOST, "Users", WIN_USER) if WIN_USER else "")
+
+if not WIN_USER_DIR or not os.path.isdir(WIN_USER_DIR):
+    print(json.dumps({"detected": False, "items": [], "summary": ""}))
+    sys.exit(0)
+
+items = [{
+    "id": "identity",
+    "label": "Name, locale, and avatar",
+    "detail": "Non-secret account preferences only",
+    "fileCount": 1,
+    "sizeBytes": 0
+}]
+
+result = {
+    "detected": True,
+    "items": items,
+    "summary": "Password is never migrated"
+}
+
+print(json.dumps(result))
+sys.exit(0)

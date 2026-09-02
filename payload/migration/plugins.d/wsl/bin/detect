@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+HOST = os.environ.get("WOOTC_HOST", "/run/wootc/host")
+WIN_USER = os.environ.get("WOOTC_WIN_USER", "")
+WIN_USER_DIR = os.environ.get("WOOTC_WIN_USER_DIR", os.path.join(HOST, "Users", WIN_USER) if WIN_USER else "")
+
+items = []
+if WIN_USER_DIR and os.path.isdir(WIN_USER_DIR):
+    local = os.path.join(WIN_USER_DIR, "AppData", "Local")
+    found = os.path.isdir(os.path.join(local, "lxss"))
+    if not found and os.path.isdir(os.path.join(local, "Packages")):
+        for pkg in os.listdir(os.path.join(local, "Packages")):
+            ls = os.path.join(local, "Packages", pkg, "LocalState")
+            if os.path.exists(os.path.join(ls, "ext4.vhdx")) or os.path.isdir(os.path.join(ls, "rootfs")):
+                found = True
+                break
+    if found:
+        items.append({
+            "id": "wsl",
+            "label": "WSL environment",
+            "detail": "dotfiles + package/Brewfile inventory",
+            "fileCount": 1,
+            "sizeBytes": 0
+        })
+
+detected = len(items) > 0
+result = {
+    "detected": detected,
+    "items": items,
+    "summary": "dotfiles + packages" if detected else ""
+}
+
+print(json.dumps(result))
+sys.exit(0)

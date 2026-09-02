@@ -162,6 +162,17 @@ install() {
     inst /usr/lib/wootc/migration/wootc-e2e-phase3.path
     inst /usr/lib/wootc/migration/wootc-firstboot-evidence
     inst /usr/lib/wootc/migration/wootc-firstboot-evidence.service
+    # Program migrator plugins and schemas (docs/plugin-architecture.md).
+    if [[ -d /usr/lib/wootc/migration/plugins.d ]]; then
+        while IFS= read -r pf; do
+            [[ -f "$pf" ]] && inst "$pf"
+        done < <(find /usr/lib/wootc/migration/plugins.d -type f 2>/dev/null || true)
+    fi
+    if [[ -d /usr/lib/wootc/migration/schemas ]]; then
+        while IFS= read -r sf; do
+            [[ -f "$sf" ]] && inst "$sf"
+        done < <(find /usr/lib/wootc/migration/schemas -type f 2>/dev/null || true)
+    fi
 
     # podman network backend for podman run (bootc install stage).
     inst_multiple -o \

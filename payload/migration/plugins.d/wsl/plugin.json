@@ -1,0 +1,25 @@
+{
+  "$schema": "https://tuna-os.github.io/wootc/schemas/v1/plugin.schema.json",
+  "schemaVersion": 1,
+  "id": "wsl",
+  "name": "WSL Developer Environment",
+  "version": "1.0.0",
+  "description": "Migrates WSL dotfiles, SSH public keys, and generates a Brewfile of installed packages.",
+  "category": "wsl",
+  "author": "TunaOS Contributors",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/tuna-os/wootc",
+  "target": {
+    "appType": "native",
+    "suggestedPackages": [],
+    "requiresHostMount": true
+  },
+  "execution": {
+    "detectTimeoutSec": 10,
+    "importTimeoutSec": 60,
+    "requiresAdmin": false
+  },
+  "ui": {
+    "defaultOn": true
+  }
+}

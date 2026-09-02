@@ -1,0 +1,25 @@
+{
+  "$schema": "https://tuna-os.github.io/wootc/schemas/v1/plugin.schema.json",
+  "schemaVersion": 1,
+  "id": "identity",
+  "name": "Identity",
+  "version": "1.0.0",
+  "description": "Pre-fills account name, locale, and avatar (never the password).",
+  "category": "identity",
+  "author": "TunaOS Contributors",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/tuna-os/wootc",
+  "target": {
+    "appType": "native",
+    "suggestedPackages": [],
+    "requiresHostMount": true
+  },
+  "execution": {
+    "detectTimeoutSec": 10,
+    "importTimeoutSec": 60,
+    "requiresAdmin": false
+  },
+  "ui": {
+    "defaultOn": true
+  }
+}
