@@ -201,9 +201,23 @@ func appMigrations() ([]AppMigration, error) {
 		return nil, err
 	}
 	consents := readSessionConsents(filepath.Join(u.HomeDir, ".config", "wootc", "session-consent.json"))
+	exports := readSessionExports()
 	for i := range parsed.Apps {
-		parsed.Apps[i].ConsentAvailable = tokenConsentApps[parsed.Apps[i].App] && parsed.Apps[i].Session == "signin"
-		parsed.Apps[i].Consent = parsed.Apps[i].ConsentAvailable && consents[parsed.Apps[i].App]
+		appKey := parsed.Apps[i].App
+		if exp, ok := exports[appKey]; ok {
+			switch exp.State {
+			case "staged":
+				parsed.Apps[i].Session = "staged"
+				parsed.Apps[i].Copied = true
+				parsed.Apps[i].Note = "Session key staged — you'll sign in once on Linux until target import is verified."
+			case "imported":
+				parsed.Apps[i].Session = "portable"
+				parsed.Apps[i].Copied = true
+				parsed.Apps[i].Note = "Session imported — opens signed in."
+			}
+		}
+		parsed.Apps[i].ConsentAvailable = tokenConsentApps[appKey] && (parsed.Apps[i].Session == "signin" || parsed.Apps[i].Session == "staged")
+		parsed.Apps[i].Consent = parsed.Apps[i].ConsentAvailable && (consents[appKey] || exports[appKey].State == "staged")
 	}
 	return parsed.Apps, nil
 }
@@ -247,6 +261,36 @@ func readSessionConsents(path string) map[string]bool {
 		return map[string]bool{}
 	}
 	return consents
+}
+
+func readSessionExports() map[string]SessionExport {
+	candidates := []string{
+		"/run/wootc/host/wootc/install/slurp/session/exports.json",
+		filepath.Join(wootcDir(), "install", "slurp", "session", "exports.json"),
+	}
+	for _, p := range candidates {
+		exports := readSessionExportsFrom(p)
+		if len(exports) > 0 {
+			return exports
+		}
+	}
+	return map[string]SessionExport{}
+}
+
+func readSessionExportsFrom(path string) map[string]SessionExport {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]SessionExport{}
+	}
+	var exports []SessionExport
+	if unmarshalJSON(data, &exports) != nil || len(exports) == 0 {
+		return map[string]SessionExport{}
+	}
+	res := make(map[string]SessionExport, len(exports))
+	for _, exp := range exports {
+		res[exp.App] = exp
+	}
+	return res
 }
 
 func reinstallApps() error {

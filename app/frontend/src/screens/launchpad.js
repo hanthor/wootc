@@ -268,7 +268,7 @@ export function renderLaunchpad() {
   if (movableSessions.length) {
     sessionBox = el('div');
     sessionBox.style.cssText = 'margin-top:8px;padding:8px;border:1.5px solid var(--border);border-radius:6px';
-    sessionBox.innerHTML = `<div style="font-size:12px;font-weight:600">Signed-in app sessions</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px">Optional: move these sessions while Windows is online. Off means you will sign in once on Linux.</div>`;
+    sessionBox.innerHTML = `<div style="font-size:12px;font-weight:600">App session staging (opt-in)</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px">Optional: stage session keys while Windows is online. Staged — you'll sign in once on Linux until target import is verified.</div>`;
     movableSessions.forEach(candidate => {
       const row = el('label');
       row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:12px;margin-top:7px';
