@@ -1,0 +1,8 @@
+{
+  "app": "chrome",
+  "kind": "chromium",
+  "portable": true,
+  "recommend": "copy",
+  "note": "Profiles and cookies can be migrated",
+  "consentRequired": true
+}

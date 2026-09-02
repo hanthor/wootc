@@ -13,8 +13,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // VM modes (SPEC §6.2): boot the installed root.disk directly in a QEMU
@@ -193,19 +191,6 @@ func (a *App) TryInVMFresh(imageRef string) error {
 			Message: "Preview is running. Try it out — if you like it, click Install for Real."})
 	}()
 	return nil
-}
-
-// VMEvent is a Try-in-VM progress event (frontend listens on "vm:progress").
-type VMEvent struct {
-	Stage   string  `json:"stage"` // pulling | installing | booting | ready | error
-	Percent float64 `json:"percent"`
-	Message string  `json:"message"`
-}
-
-func (a *App) emitVM(e VMEvent) {
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "vm:progress", e)
-	}
 }
 
 // runBuilderVM launches the headless Alpine builder and blocks until it powers

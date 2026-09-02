@@ -261,7 +261,8 @@ type DataPartition struct {
 // App is the Wails application backend. All exported methods are callable
 // from the frontend via the generated wailsjs bindings.
 type App struct {
-	ctx context.Context
+	ctx     context.Context
+	emitter EventEmitter
 	// mu guards status and cancel. GetStatus() is polled from the frontend
 	// on a timer while the install goroutine mutates status concurrently —
 	// without the lock that is a data race the Go race detector flags.
@@ -272,6 +273,13 @@ type App struct {
 
 func NewApp() *App {
 	return &App{}
+}
+
+// SetEmitter configures the event emitter (e.g. Wails runtime or stdio JSON-RPC).
+func (a *App) SetEmitter(e EventEmitter) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.emitter = e
 }
 
 // setStatus atomically replaces the install status.
@@ -290,6 +298,11 @@ func (a *App) mutateStatus(fn func(s *InstallStatus)) {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.mu.Lock()
+	if a.emitter == nil {
+		a.emitter = &wailsEmitter{ctx: ctx}
+	}
+	a.mu.Unlock()
 	// Check for existing install on startup — routes to Control Panel screen.
 	existing := a.existingInstallFound()
 	a.mutateStatus(func(s *InstallStatus) { s.Existing = existing })
@@ -911,9 +924,35 @@ func (a *App) GetLastRun() LifecycleState {
 	return s
 }
 
-// emit sends a progress event to the frontend.
+// VMEvent is a Try-in-VM progress event (frontend listens on "vm:progress").
+type VMEvent struct {
+	Stage   string  `json:"stage"` // pulling | installing | booting | ready | error
+	Percent float64 `json:"percent"`
+	Message string  `json:"message"`
+}
+
+// emit sends a progress event to the frontend or shell.
 func (a *App) emit(e ProgressEvent) {
-	runtime.EventsEmit(a.ctx, "install:progress", e)
+	a.mu.Lock()
+	em := a.emitter
+	a.mu.Unlock()
+	if em != nil {
+		em.Emit("install:progress", e)
+	} else if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "install:progress", e)
+	}
+}
+
+// emitVM sends a VM progress event to the frontend or shell.
+func (a *App) emitVM(e VMEvent) {
+	a.mu.Lock()
+	em := a.emitter
+	a.mu.Unlock()
+	if em != nil {
+		em.Emit("vm:progress", e)
+	} else if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vm:progress", e)
+	}
 }
 
 // runPreviewInstall scripts a fast, harmless progress run for UI testing.

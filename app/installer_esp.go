@@ -545,7 +545,7 @@ func configureBCD(bootloader string) error {
 	// GUI/headless-armed machine deploys fine but Phase 2 can never be
 	// scheduled. Best-effort: BCD itself is already armed at this point.
 	if err := os.WriteFile(`C:\wootc\install\bcd-guid.txt`, []byte(guid), 0o644); err != nil {
-		fmt.Printf("warning: could not persist bcd-guid.txt: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: could not persist bcd-guid.txt: %v\n", err)
 	}
 
 	// Enforce the bootsequence-only promise: /copy can register the clone in
