@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# wootc-firstboot-evidence — Phase-2 first-boot evidence and health marker.
+#
+# Runs as wootc-firstboot-evidence.service on the first successful boot into
+# Phase-2 Linux. Updates state.json on the Windows host NTFS to "healthy"
+# and writes the first-boot evidence file installed-linux-boot.json.
+#
+# Contract: docs/borrowed-from-libertix.md §2, §3
+
+set -euo pipefail
+
+HOST="/run/wootc/host"
+
+log() {
+    printf '[wootc-firstboot] %s\n' "$*"
+    printf '<27>[wootc-firstboot] %s\n' "$*" > /dev/kmsg 2>/dev/null || true
+}
+
+if ! mountpoint -q "$HOST"; then
+    log "ERROR: $HOST is not mounted (wootc-host-bind.service did not run first)"
+    exit 0
+fi
+
+INSTALL_DIR="$HOST/wootc/install"
+mkdir -p "$INSTALL_DIR" 2>/dev/null || true
+
+NOW=$(date -u +%FT%TZ 2>/dev/null || date)
+KERNEL_VER="$(uname -r 2>/dev/null || echo "unknown")"
+
+# 1. Persist installed-linux-boot.json (first-boot evidence)
+EVIDENCE_TMP="$INSTALL_DIR/installed-linux-boot.json.tmp"
+EVIDENCE_FINAL="$INSTALL_DIR/installed-linux-boot.json"
+
+cat <<JSONEOF > "$EVIDENCE_TMP"
+{
+  "state": "healthy",
+  "kernel": "$KERNEL_VER",
+  "writtenAt": "$NOW",
+  "updatedBy": "wootc-firstboot"
+}
+JSONEOF
+sync "$EVIDENCE_TMP" 2>/dev/null || sync || true
+mv -f "$EVIDENCE_TMP" "$EVIDENCE_FINAL" 2>/dev/null || true
+sync "$EVIDENCE_FINAL" 2>/dev/null || sync || true
+
+# 2. Persist state.json = healthy atomically
+STATE_TMP="$HOST/wootc/state.json.tmp"
+STATE_FINAL="$HOST/wootc/state.json"
+
+cat <<JSONEOF > "$STATE_TMP"
+{
+  "state": "healthy",
+  "updatedAt": "$NOW",
+  "updatedBy": "wootc-firstboot"
+}
+JSONEOF
+sync "$STATE_TMP" 2>/dev/null || sync || true
+mv -f "$STATE_TMP" "$STATE_FINAL" 2>/dev/null || true
+sync "$STATE_FINAL" 2>/dev/null || sync || true
+
+log "Phase-2 first-boot health reported: state.json -> healthy ($KERNEL_VER)"

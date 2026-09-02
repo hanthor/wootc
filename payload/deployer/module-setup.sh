@@ -158,6 +158,8 @@ install() {
     inst /usr/lib/wootc/migration/wootc-e2e-phase3-dispatch
     inst /usr/lib/wootc/migration/wootc-e2e-phase3.service
     inst /usr/lib/wootc/migration/wootc-e2e-phase3.path
+    inst /usr/lib/wootc/migration/wootc-firstboot-evidence
+    inst /usr/lib/wootc/migration/wootc-firstboot-evidence.service
 
     # podman network backend for podman run (bootc install stage).
     inst_multiple -o \

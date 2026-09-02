@@ -201,16 +201,17 @@ func getUninstallInfo() UninstallInfo {
 }
 
 // deployHasCompleted reports whether the deployer has finished at least once
-// on this machine: its staged journal is the physical evidence, the
-// lifecycle state the declared one. Either suffices — this only unlocks a
-// "restart into TunaOS" offer, and arming a one-shot at a non-deployed ESP
-// still just boots the deployer.
+// on this machine based on lifecycle state in state.json (written by deploy.sh
+// on completion as "deployed", or by first boot as "healthy").
 func deployHasCompleted(drive string) bool {
-	if _, err := os.Stat(drive + `:\wootc\logs\deployer-last-journal.log`); err == nil {
-		return true
-	}
 	if s, ok := readState(); ok && (s.State == StateDeployed || s.State == StateHealthy) {
 		return true
+	}
+	if drive != "" {
+		p := filepath.Join(drive+`:\wootc`, "state.json")
+		if s, ok := readStateFrom(p); ok && (s.State == StateDeployed || s.State == StateHealthy) {
+			return true
+		}
 	}
 	return false
 }

@@ -213,7 +213,7 @@ cleanup() {
         done
         err "──── end deployer log ────"
     fi
-    # Persist the boot journal to NTFS while it is still mounted: the VM has
+    # Persist the boot journal and lifecycle state to NTFS while it is still mounted: the VM has
     # no console input, so this is the only way to read fisherman/podman
     # errors after the fail-path reboot to Windows.
     if mountpoint -q /mnt/ntfs 2>/dev/null; then
@@ -221,6 +221,10 @@ cleanup() {
         { journalctl -b --no-pager 2>&1 | tail -c 2000000; } \
             > /mnt/ntfs/wootc/logs/deployer-last-journal.log || true
         cat /proc/mounts > /mnt/ntfs/wootc/logs/deployer-last-mounts.log 2>&1 || true
+        if [[ "$_rc" -ne 0 || "${DEPLOY_OK:-0}" -ne 1 ]]; then
+            _fail_phase=$(cat /run/wootc-phase 2>/dev/null || echo "unknown")
+            write_ntfs_state "failed" "$_fail_phase" "Deployer failed in phase $_fail_phase (exit $_rc)"
+        fi
         # reboot -f follows an unmount failure here; without an explicit sync
         # the log data never reaches the NTFS volume (observed as a
         # correct-size file full of zeros).
@@ -283,6 +287,67 @@ read_cmdline() {
         done
     done < "$source"
     echo "$default"
+}
+
+write_ntfs_state() {
+    local state="$1" phase="${2:-}" err_msg="${3:-}"
+    mountpoint -q /mnt/ntfs 2>/dev/null || return 0
+    mkdir -p /mnt/ntfs/wootc /mnt/ntfs/wootc/install 2>/dev/null || true
+    local now
+    now=$(date -u +%FT%TZ 2>/dev/null || date)
+    local tmp="/mnt/ntfs/wootc/state.json.tmp"
+    local final="/mnt/ntfs/wootc/state.json"
+    if [ -n "$phase" ] || [ -n "$err_msg" ]; then
+        cat <<EOF > "$tmp"
+{
+  "state": "$state",
+  "phase": "$phase",
+  "error": "$err_msg",
+  "updatedAt": "$now",
+  "updatedBy": "wootc-deployer"
+}
+EOF
+    else
+        cat <<EOF > "$tmp"
+{
+  "state": "$state",
+  "updatedAt": "$now",
+  "updatedBy": "wootc-deployer"
+}
+EOF
+    fi
+    sync "$tmp" 2>/dev/null || sync || true
+    mv -f "$tmp" "$final" 2>/dev/null || true
+    sync "$final" 2>/dev/null || sync || true
+}
+
+write_deployer_started() {
+    mountpoint -q /mnt/ntfs 2>/dev/null || return 0
+    mkdir -p /mnt/ntfs/wootc/install 2>/dev/null || true
+    local now
+    now=$(date -u +%FT%TZ 2>/dev/null || date)
+    local tmp="/mnt/ntfs/wootc/install/deployer-started.json.tmp"
+    local final="/mnt/ntfs/wootc/install/deployer-started.json"
+    cat <<EOF > "$tmp"
+{
+  "startedAt": "$now",
+  "image": "${IMAGE:-}"
+}
+EOF
+    sync "$tmp" 2>/dev/null || sync || true
+    mv -f "$tmp" "$final" 2>/dev/null || true
+    sync "$final" 2>/dev/null || sync || true
+}
+
+check_fault_injection() {
+    local stage="$1"
+    local fault
+    fault="$(read_cmdline wootc.fault "")"
+    [[ -z "$fault" ]] && return 0
+    if [[ "$fault" == "$stage" ]]; then
+        err "FAULT-INJECTION: triggering deliberate failure at ${stage}"
+        exit 1
+    fi
 }
 
 IMAGE="$(read_cmdline wootc.image)"
@@ -637,6 +702,8 @@ JOURNAL_STREAM_PID=$!
 ) &
 HEARTBEAT_PID=$!
 phase "ntfs-mounted"
+write_deployer_started
+write_ntfs_state "deploying" "ntfs-mounted"
 
 # ── Container storage scratch ───────────────────────────────────────────────
 # The initramfs root is ramfs: a multi-GB image pull there exhausts RAM.
@@ -646,6 +713,7 @@ phase "ntfs-mounted"
 # needs a real POSIX fs, so not NTFS directly). Deleted after deployment.
 SCRATCH_IMG="/mnt/ntfs/wootc/cache/deployer-scratch.img"
 phase "scratch-setup"
+check_fault_injection "scratch-setup"
 log "Creating fisherman scratch at ${SCRATCH_IMG}..."
 mkdir -p /mnt/ntfs/wootc/cache /var/fisherman-tmp /var/lib/containers
 # ntfs3 allocates the full size on truncate (no sparse support), so this
@@ -1407,6 +1475,7 @@ start_pull_progress_watch() {
 
 # ── Run fisherman ───────────────────────────────────────────────────────────
 phase "fisherman"
+check_fault_injection "fisherman"
 log "Running fisherman — this pulls the image and deploys it..."
 start_pull_progress_watch
 fisherman "$RECIPE"
@@ -2750,6 +2819,20 @@ QGAEOF
     mkdir -p "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants"
     ln -sf ../wootc-esp-sync.service \
         "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/wootc-esp-sync.service"
+
+    # Phase-2 first-boot evidence and health marker (§2, §3): updates state.json to healthy.
+    install -m755 /usr/lib/wootc/migration/wootc-firstboot-evidence \
+        "$DEPLOY_ROOT/var/usrlocal/bin/wootc-firstboot-evidence"
+    install -m644 /usr/lib/wootc/migration/wootc-firstboot-evidence.service \
+        "$DEPLOY_ROOT/etc/systemd/system/wootc-firstboot-evidence.service"
+    ln -sf ../wootc-firstboot-evidence.service \
+        "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/wootc-firstboot-evidence.service"
+    if [[ -f "$DEPLOY_ROOT/etc/systemd/system/wootc-firstboot-evidence.service" ]]; then
+        log "  [PASS] wootc-firstboot-evidence.service installed"
+    else
+        err "  [WARN] wootc-firstboot-evidence.service install failed"
+    fi
+
     install -m755 /usr/lib/wootc/migration/wootc-detect-apps \
         "$DEPLOY_ROOT/var/usrlocal/bin/wootc-detect-apps"
     install -m755 /usr/lib/wootc/migration/wootc-office-bridge \
@@ -3342,6 +3425,8 @@ GRUBEOF
     fi
 
     vstage "verify-complete (all stages passed; Phase-2 ESP is staged)"
+    write_ntfs_state "deployed" "verify-complete"
+    check_fault_injection "verify-complete"
     # The composefs target ESP is mounted UNDER boot/, so it must go first or
     # the boot umount fails busy.
     [[ -n "${ESP_BOUND_AT:-}" ]] && umount "$ESP_BOUND_AT" 2>/dev/null || true
