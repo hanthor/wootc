@@ -1,0 +1,29 @@
+{
+  "brand": "tunaos",
+  "selfOwned": true,
+  "status": "blessed",
+  "mark": {
+    "owner": "TunaOS (tuna-os) — this project",
+    "assetSource": "emoji placeholder; that IS the TunaOS branding today"
+  },
+  "decisions": {
+    "mark": "yes",
+    "name": "yes",
+    "tagline": "yes",
+    "distributeExe": "yes"
+  },
+  "winget": {
+    "identifier": "TunaOS.Installer",
+    "namespaceOwner": "TunaOS (tuna-os) — this project",
+    "identifierAgreed": true
+  },
+  "ask": {
+    "filed": false,
+    "venue": "",
+    "shown": [],
+    "openedAt": "",
+    "decidedAt": "",
+    "evidence": "https://github.com/tuna-os/wootc"
+  },
+  "notes": "In-family and self-owned: TunaOS is this project's own distribution. TunaOS.Installer is reserved in our own winget namespace and is not submitted yet — only TunaOS.wootc is."
+}

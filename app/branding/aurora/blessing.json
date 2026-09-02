@@ -1,0 +1,29 @@
+{
+  "brand": "aurora",
+  "selfOwned": false,
+  "status": "pending",
+  "mark": {
+    "owner": "Universal Blue — ublue-os/aurora (getaurora.dev)",
+    "assetSource": "https://getaurora.dev"
+  },
+  "decisions": {
+    "mark": "pending",
+    "name": "pending",
+    "tagline": "pending",
+    "distributeExe": "pending"
+  },
+  "winget": {
+    "identifier": "Aurora.Installer",
+    "namespaceOwner": "Universal Blue — ublue-os",
+    "identifierAgreed": false
+  },
+  "ask": {
+    "filed": false,
+    "venue": "https://github.com/ublue-os/aurora/issues",
+    "shown": [],
+    "openedAt": "",
+    "decidedAt": "",
+    "evidence": ""
+  },
+  "notes": "A real ask (#227). Aurora's mark, name, tagline and a branded exe are Universal Blue's to grant, and Aurora.Installer is theirs to own. docs/upstream-blessings.md carries the request to file and the manifests to offer."
+}

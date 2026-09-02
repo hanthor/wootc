@@ -146,22 +146,32 @@ jobs:
             echo "channel=manual" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Build brand installers (one exe per brand)
+      - name: Build brand installers (one exe per blessed brand)
         # Subshells for every directory change: the first run interleaved a
         # failed `cd`/build chain with a loop that then globbed from the
         # wrong directory. Nothing here moves the step's own cwd.
+        #
+        # WHICH brands is no longer "whatever directories exist". Every exe
+        # here wears somebody's mark, so packaging/brands.sh reads the
+        # recorded decision (app/branding/*/blessing.json, #227) and answers:
+        # a declined project's exe drops from this matrix, a brand with no
+        # record at all is a hard error, and a pending one builds but says so.
         run: |
           set -euo pipefail
           (cd app/frontend && npm ci && npm run build)
           mkdir -p release-assets
-          for dir in app/branding/*/; do
-            brand=$(basename "$dir")
-            exe=$(jq -r '.exeName // empty' "$dir/brand.json")
-            [ -n "$exe" ] || { echo "::error::$dir/brand.json has no exeName"; exit 1; }
+          bash packaging/brands.sh explain
+          # Capture, THEN loop. `done < <(brands.sh list)` would swallow a
+          # non-zero exit from the selector — a tree with one unusable record
+          # would build the brands printed before it died and pass. The same
+          # silent-skip the selector refuses internally.
+          brands=$(bash packaging/brands.sh list)
+          [ -n "$brands" ] || { echo "::error::no brand is buildable"; exit 1; }
+          while IFS=$'\t' read -r brand exe; do
             (cd app && GOOS=windows GOARCH=amd64 go build -tags desktop,production \
               -ldflags "-w -s -X main.brandID=$brand" -o "../release-assets/$exe.exe" .)
             echo "built $exe.exe (brand: $brand)"
-          done
+          done <<< "$brands"
           ls -lh release-assets/
 
       - name: Build deployer boot artifacts
