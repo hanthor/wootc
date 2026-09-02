@@ -78,3 +78,63 @@ Add `wootc.debug` to the deployer's GRUB entry (press `e` in the boot menu)
 to keep verbose consoles and get a shell instead of the auto-return on
 failure. This is the observed/E2E behavior; normal runs stay calm on
 purpose.
+
+---
+
+## Fresh-eyes usability protocol (Milestone M5.1 / 1.0 Criterion 1)
+
+**Milestone**: [#213](https://github.com/tuna-os/wootc/issues/213) (v1.0.0) — criterion 1  
+**Tracking**: [#236](https://github.com/tuna-os/wootc/issues/236)  
+**Goal**: Prove a person who has never seen or used wootc completes download → install → Linux → files found → back to Windows using **only what is on screen**.
+
+Automated E2E tests prove the software executes; developer runs prove it works for experts. This protocol proves that the user experience, copy, safety explanations, and visual affordances are self-explanatory to the target audience with zero external guidance.
+
+### 1. Participant recruitment & target profile
+
+- **Recruit**: $\ge$ 2 participants who have never used or seen wootc.
+- **Target profile**: Curious, non-technical Windows users (everyday computer users; **not** software engineers, Linux sysadmins, or wootc contributors).
+- **Test environment**: A real Windows machine (Windows 10 or 11) with a normal user profile, existing files on `C:`, and an active internet connection.
+
+### 2. Facilitator rules (Zero instructions)
+
+1. **The single briefing sentence**: Hand the participant the download URL and say only:
+   > *"This installs Linux next to your Windows; try it."*
+2. **Silent observation**: The facilitator must remain completely silent throughout the run.
+3. **No coaching or prompting**:
+   - Do **not** point at the screen, explain terms, or suggest what button to click.
+   - If the participant asks for help (e.g. *"Is this safe?"*, *"What password do I enter?"*, *"How do I get back?"*), give only a neutral response: *"Do whatever you think makes sense based on what's on the screen."*
+4. **Log every detail**: Note every hesitation ($\ge 5$ seconds), pause, confused expression, reread sentence, or misclick, paired with the exact screen where it occurred.
+
+### 3. Core participant journey & tasks
+
+The participant must attempt and complete four core tasks unaided:
+
+1. **Install**: Download the binary, launch it, navigate settings (distribution choice, password, disk size), start installation, and initiate the reboot when prompted.
+2. **Linux first boot & file access**: Boot into Linux, log in with the credentials they configured, encounter the welcome / migration dashboard, and locate and open a familiar file from their Windows profile (via the User Data Bridge / "Windows drive" bookmark).
+3. **Return to Windows**: Restart the computer and successfully return to the Windows desktop.
+4. **Removal discovery**: In Windows, find how they would remove wootc / uninstall Linux if they wanted to reclaim disk space (e.g. Windows Settings ▸ Installed apps, Start menu, or app Manage screen).
+
+### 4. Observation ledger template
+
+Record observations using the following structure and attach the results to [#236](https://github.com/tuna-os/wootc/issues/236):
+
+| Stage / Screen | Target outcome | Observed action & hesitations | Finding type (Blocker / Friction / Note) |
+|---|---|---|---|
+| **Download & launch** | Downloads exe, navigates SmartScreen/UAC calmly | | |
+| **Launchpad & settings** | Understands disk/safety guarantees, sets password, clicks Install | | |
+| **Deploy boot splash** | Waits through reboot and progress screen without panic | | |
+| **First Linux login** | Logs into Linux desktop, notices Welcome / migration guide | | |
+| **Windows file access** | Finds and opens known file via Windows drive bookmark | | |
+| **Return to Windows** | Reboots back to Windows desktop unaided | | |
+| **Uninstall discovery** | Identifies how to uninstall / remove wootc | | |
+
+### 5. Exit criteria & triage
+
+The fresh-eyes usability gate is satisfied when:
+
+1. **Two observed runs complete unaided** from download through Windows return and uninstall discovery.
+2. **Zero blockers remain**: Any issue that prevents a participant from completing the journey without facilitator intervention is a 1.0 blocker and must be fixed.
+3. **Every hesitation triaged**: Every noted hesitation, confusing copy passage, or awkward interaction has either:
+   - a linked GitHub issue filed to refine copy or workflow; or
+   - an explicit maintainer won't-fix note with justification recorded in [#236](https://github.com/tuna-os/wootc/issues/236).
+
