@@ -67,10 +67,21 @@ Beta means the support policy stops saying "alpha" because the evidence exists.
 
 ### v0.9.0-rc — "Ship-shaped" *(tracking: milestone issue M4)*
 - **Code signing** (EV cert / Azure Trusted Signing): kills the SmartScreen wall — the single biggest first-impression fix, and a spend decision that needs the maintainer.
-- Try-in-VM (#178) productized (QEMU bundle in the release) or explicitly cut from 1.0.
+- **Try-in-VM (#178, #231)**: Explicitly cut from 1.0; Phase 1 Boot-in-VM on `root.disk` ([ADR 0001](docs/adr/0001-phase1-first-architecture.md)) provides the primary zero-risk VM test path without bundling ~100MB+ of QEMU/builder binaries.
 - Program-migrator plugin architecture (#203): interface decision made; in or out of 1.0 scope, documented either way.
 - Docs complete and truthful end-to-end; walkthrough imagery regenerated from the shipping build.
 - Soak begins: consecutive green nightlies counting toward the 1.0 gate, release-blocking regressions only.
+
+### Scope decisions
+
+#### Try-in-VM vs. Phase 1 Boot-in-VM (#178, #231)
+
+**Decision**: Pre-install "Try in VM" fresh image preview is **explicitly cut from 1.0**. Phase 1 **Boot in VM** is the supported 1.0 VM experience.
+
+- **Background**: Issue #178 and SPEC §6.1 initially proposed a pre-install "Try in VM" mode using a two-stage handoff (a headless Alpine builder VM synthesizing a temporary `preview.raw` virtual disk from an OCI image before booting an interactive preview).
+- **Architectural Rationale**: Under the accepted Phase 1-first architecture ([ADR 0001](docs/adr/0001-phase1-first-architecture.md)), wootc populates a single `root.disk` file directly on the NTFS volume without repartitioning. Upon install completion, the user can immediately choose **Boot in VM now** (SPEC §6.2) on Windows. Because `root.disk` is self-contained and uncommitted to firmware boot until Phase 2, Phase 1 provides the exact same "try before rebooting" safety guarantee on the real installed system.
+- **Distribution Footprint**: Shipping the builder kernel (`builder-vmlinuz`), initramfs (`builder-initramfs.img`), and a complete Windows QEMU runtime adds ~100+ MB of non-vendored binaries to the release installer without delivering safety or capabilities beyond Phase 1.
+- **Surfaces**: In 1.0 releases, the pre-install builder VM is cut from default user paths (`GetFreshVMCapability` remains capability-gated and unbundled, keeping the button hidden on standard builds). 1.0 documentation (`docs/user-guide.md`) directs users to Phase 1 Boot-in-VM. Pre-install builder bundling and offline packaging (#178) are deferred to post-1.0.
 
 ### v1.0.0 — "The North Star, checkable" *(tracking: milestone issue M5)*
 The four criteria at the top of this file, verified: 30 days of green nightlies, the real-hardware report corpus with zero data-loss incidents, signed + winget-stable binaries, blessed brands. Cut from the soak's final green SHA.
@@ -84,6 +95,7 @@ The four criteria at the top of this file, verified: 30 days of green nightlies,
 | Session token rewrap, target side | #1 | P1 (beta gate) |
 | Program migrator plugin architecture | #203 | P2 (rc decision) |
 | E2E runs as systemd user units instead of nohup jobs | #57 | P2 |
+| Try-in-VM pre-install builder VM | #178 | P3 (post-1.0; cut for 1.0 per #231 / ADR 0001) |
 
 ## How to contribute
 
