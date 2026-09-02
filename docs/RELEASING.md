@@ -33,7 +33,7 @@ else the built-in default (`alpha`).
 |---|---|---|
 | **alpha** | one image green end-to-end (incl. GUI-driven) | green images only; encryption off; no BitLocker; no custom refs |
 | **beta** | the **full matrix** green | all images; custom refs; still gates any axis whose issue is open |
-| **stable** | full matrix green + a soak period with no data-safety regressions | everything |
+| **stable** | full matrix green + a soak period with no data-safety regressions ([docs/soak.md](soak.md)) | everything |
 
 Alpha deliberately refuses more than it allows. A blocked user with intact
 Windows is a good outcome; a walked-into-red user with a broken boot is not.

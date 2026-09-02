@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>wootc — Green-Nightly Soak Ledger (1.0 Gate)</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      max-width: 1080px; margin: 2rem auto; padding: 0 1rem;
+      background: #0d1117; color: #e6edf3;
+      font: 15px/1.6 system-ui, -apple-system, sans-serif;
+    }
+    h1 { font-size: 1.75rem; margin-bottom: .25rem; color: #f0f6fc; }
+    .sub { color: #9198a1; margin-top: 0; font-size: 1.05rem; }
+    a { color: #7dd3fc; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 1rem; margin: 1.5rem 0;
+    }
+    .card {
+      background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+      padding: 1rem 1.25rem;
+    }
+    .card .label { font-size: .85rem; color: #8b949e; text-transform: uppercase; letter-spacing: .05em; }
+    .card .val { font-size: 1.6rem; font-weight: 700; margin-top: .25rem; color: #58a6ff; }
+    .progress-bar {
+      width: 100%; height: 12px; background: #21262d; border-radius: 6px;
+      overflow: hidden; margin: .5rem 0;
+    }
+    .progress-fill {
+      height: 100%; background: #238636; width: 0%;
+      transition: width .3s ease;
+    }
+    table {
+      width: 100%; border-collapse: collapse; margin-top: 1.5rem; font-size: .9rem;
+    }
+    th, td {
+      padding: .6rem .75rem; text-align: left; border-bottom: 1px solid #21262d;
+    }
+    th { background: #161b22; color: #8b949e; font-weight: 600; }
+    tr:hover td { background: #161b22; }
+    code { background: #1f242c; padding: .1rem .35rem; border-radius: 4px; font-size: .85em; }
+    .badge {
+      display: inline-block; padding: .15rem .5rem; border-radius: 12px;
+      font-size: .75rem; font-weight: 600; text-transform: uppercase;
+    }
+    .badge.pass { background: #238636; color: #fff; }
+    .badge.fail { background: #da3633; color: #fff; }
+    .badge.cancel { background: #6e7681; color: #fff; }
+    .rules {
+      background: #161b22; border-left: 4px solid #388bfd; padding: 1rem;
+      border-radius: 0 8px 8px 0; margin: 1.5rem 0; font-size: .9rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>wootc — Green-Nightly Soak Ledger</h1>
+  <p class="sub">30 consecutive days of green nightlies: the verifiable gate for v1.0.0 (#213 criterion 3).</p>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">Live Streak</div>
+      <div class="val" style="color: #3fb950;">0 Days</div>
+      <div style="font-size: .85rem; color: #8b949e;">Consecutive green runs</div>
+    </div>
+    <div class="card">
+      <div class="label">1.0 Soak Progress</div>
+      <div class="val">0 / 30</div>
+      <div class="progress-bar"><div class="progress-fill"></div></div>
+      <div style="font-size: .8rem; color: #8b949e;">Target: 30 days</div>
+    </div>
+    <div class="card">
+      <div class="label">Soak Clock</div>
+      <div class="val" style="font-size: 1.15rem; margin-top: .5rem; color: #c9d1d9;">Pending M4 closure</div>
+      <div style="font-size: .8rem; color: #8b949e;">Starts on M4 closure</div>
+    </div>
+    <div class="card">
+      <div class="label">Ledger Integrity</div>
+      <div class="val" style="font-size: 1.15rem; margin-top: .5rem; color: #3fb950;">
+        Valid
+      </div>
+      <div style="font-size: .8rem; color: #8b949e;">All failures diagnosed</div>
+    </div>
+  </div>
+
+  <div class="rules">
+    <strong>Soak Gate Rules:</strong>
+    A green nightly (Windows 11 → GUI drive → Linux Phase 2 → return) cuts an <code>auto-v*</code> pre-release and increments the streak.
+    A red nightly resets the streak to 0 and must link a diagnosis issue — unexplained reds invalidate the entire soak's credibility.
+  </div>
+
+  <h2>Nightly Runs History</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Date (UTC)</th>
+        <th>SHA</th>
+        <th>Workflow Run</th>
+        <th>Image</th>
+        <th>Verdict</th>
+        <th>Auto-Release</th>
+        <th>Diagnosis / Issue</th>
+      </tr>
+    </thead>
+    <tbody>
+      
+        <tr>
+          <td>2026-09-01</td>
+          <td><code>37152bc</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/33506006937">#33506006937</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#320](https://github.com/tuna-os/wootc/pull/320) (fixes [#220](https://github.com/tuna-os/wootc/issues/220))</td>
+        </tr>
+        <tr>
+          <td>2026-08-31</td>
+          <td><code>37152bc</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/33402962420">#33402962420</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><a href="https://github.com/tuna-os/wootc/releases/tag/auto-v20260831-37152bc">auto-v20260831-37152bc</a></td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-30</td>
+          <td><code>37152bc</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/33311173608">#33311173608</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><a href="https://github.com/tuna-os/wootc/releases/tag/auto-v20260830-37152bc">auto-v20260830-37152bc</a></td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-29</td>
+          <td><code>d140476</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/33253514238">#33253514238</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><a href="https://github.com/tuna-os/wootc/releases/tag/auto-v20260829-d140476">auto-v20260829-d140476</a></td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-28</td>
+          <td><code>d140476</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/33202311739">#33202311739</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><a href="https://github.com/tuna-os/wootc/releases/tag/auto-v20260828-d140476">auto-v20260828-d140476</a></td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-27</td>
+          <td><code>d140476</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/33100870031">#33100870031</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><a href="https://github.com/tuna-os/wootc/releases/tag/auto-v20260827-d140476">auto-v20260827-d140476</a></td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-26</td>
+          <td><code>d140476</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/32943463124">#32943463124</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><a href="https://github.com/tuna-os/wootc/releases/tag/auto-v20260826-d140476">auto-v20260826-d140476</a></td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-25</td>
+          <td><code>05925ae</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/32822159218">#32822159218</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><a href="https://github.com/tuna-os/wootc/releases/tag/auto-v20260825-05925ae">auto-v20260825-05925ae</a></td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-24</td>
+          <td><code>233e45e</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/32703039491">#32703039491</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><a href="https://github.com/tuna-os/wootc/releases/tag/auto-v20260824-233e45e">auto-v20260824-233e45e</a></td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-23</td>
+          <td><code>d44c7f1</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/32625389233">#32625389233</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#248](https://github.com/tuna-os/wootc/issues/248)</td>
+        </tr>
+        <tr>
+          <td>2026-08-22</td>
+          <td><code>d8e1bde</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/32559347752">#32559347752</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td><a href="https://github.com/tuna-os/wootc/releases/tag/auto-v20260822-0f49867">auto-v20260822-0f49867</a></td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-21</td>
+          <td><code>ca2d705</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/32459085068">#32459085068</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#220](https://github.com/tuna-os/wootc/issues/220)</td>
+        </tr>
+        <tr>
+          <td>2026-08-20</td>
+          <td><code>ca2d705</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/32344282759">#32344282759</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#220](https://github.com/tuna-os/wootc/issues/220)</td>
+        </tr>
+        <tr>
+          <td>2026-08-19</td>
+          <td><code>378b22b</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/32227893583">#32227893583</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#87](https://github.com/tuna-os/wootc/issues/87)</td>
+        </tr>
+        <tr>
+          <td>2026-08-18</td>
+          <td><code>3d5810e</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/32111434628">#32111434628</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#87](https://github.com/tuna-os/wootc/issues/87)</td>
+        </tr>
+        <tr>
+          <td>2026-08-17</td>
+          <td><code>8386215</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/32006851861">#32006851861</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#87](https://github.com/tuna-os/wootc/issues/87)</td>
+        </tr>
+        <tr>
+          <td>2026-08-16</td>
+          <td><code>8386215</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31933627989">#31933627989</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#87](https://github.com/tuna-os/wootc/issues/87)</td>
+        </tr>
+        <tr>
+          <td>2026-08-15</td>
+          <td><code>8386215</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31871660755">#31871660755</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#87](https://github.com/tuna-os/wootc/issues/87)</td>
+        </tr>
+        <tr>
+          <td>2026-08-14</td>
+          <td><code>4c0e6c2</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31782458569">#31782458569</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#71](https://github.com/tuna-os/wootc/issues/71)</td>
+        </tr>
+        <tr>
+          <td>2026-08-13</td>
+          <td><code>284d4ee</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31680770404">#31680770404</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#71](https://github.com/tuna-os/wootc/issues/71)</td>
+        </tr>
+        <tr>
+          <td>2026-08-12</td>
+          <td><code>b660d16</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31576887728">#31576887728</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#71](https://github.com/tuna-os/wootc/issues/71)</td>
+        </tr>
+        <tr>
+          <td>2026-08-11</td>
+          <td><code>b8e37f4</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31471261892">#31471261892</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#71](https://github.com/tuna-os/wootc/issues/71)</td>
+        </tr>
+        <tr>
+          <td>2026-08-10</td>
+          <td><code>55f3780</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31369510769">#31369510769</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#71](https://github.com/tuna-os/wootc/issues/71)</td>
+        </tr>
+        <tr>
+          <td>2026-08-09</td>
+          <td><code>99fb74f</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31301758460">#31301758460</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#71](https://github.com/tuna-os/wootc/issues/71)</td>
+        </tr>
+        <tr>
+          <td>2026-08-08</td>
+          <td><code>ab00263</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31246609805">#31246609805</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td>-</td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-07</td>
+          <td><code>5995119</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31160072559">#31160072559</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#59](https://github.com/tuna-os/wootc/issues/59)</td>
+        </tr>
+        <tr>
+          <td>2026-08-06</td>
+          <td><code>c25c93c</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/31089571093">#31089571093</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#59](https://github.com/tuna-os/wootc/issues/59)</td>
+        </tr>
+        <tr>
+          <td>2026-08-05</td>
+          <td><code>1a49955</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30993412009">#30993412009</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td>-</td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-04</td>
+          <td><code>e30a09c</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30896688256">#30896688256</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#28](https://github.com/tuna-os/wootc/issues/28)</td>
+        </tr>
+        <tr>
+          <td>2026-08-03</td>
+          <td><code>e30a09c</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30805816801">#30805816801</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#28](https://github.com/tuna-os/wootc/issues/28)</td>
+        </tr>
+        <tr>
+          <td>2026-08-02</td>
+          <td><code>8d964f4</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30740994905">#30740994905</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td>-</td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-08-01</td>
+          <td><code>04afce9</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30692819051">#30692819051</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td>-</td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-07-31</td>
+          <td><code>dd2634f</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30620490003">#30620490003</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge pass">PASS</span></td>
+          <td>-</td>
+          <td>-</td>
+        </tr>
+        <tr>
+          <td>2026-07-30</td>
+          <td><code>5e84f38</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30530497117">#30530497117</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#35](https://github.com/tuna-os/wootc/issues/35)</td>
+        </tr>
+        <tr>
+          <td>2026-07-29</td>
+          <td><code>bf56522</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30439943199">#30439943199</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#35](https://github.com/tuna-os/wootc/issues/35)</td>
+        </tr>
+        <tr>
+          <td>2026-07-28</td>
+          <td><code>39ae974</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30346771735">#30346771735</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#35](https://github.com/tuna-os/wootc/issues/35)</td>
+        </tr>
+        <tr>
+          <td>2026-07-27</td>
+          <td><code>48f680f</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30258357664">#30258357664</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#35](https://github.com/tuna-os/wootc/issues/35)</td>
+        </tr>
+        <tr>
+          <td>2026-07-26</td>
+          <td><code>1a40c11</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30195835604">#30195835604</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#35](https://github.com/tuna-os/wootc/issues/35)</td>
+        </tr>
+        <tr>
+          <td>2026-07-25</td>
+          <td><code>e6b285c</code></td>
+          <td><a href="https://github.com/tuna-os/wootc/actions/runs/30151895339">#30151895339</a></td>
+          <td><code>bluefin:lts</code></td>
+          <td><span class="badge fail">FAIL</span></td>
+          <td>-</td>
+          <td>[#35](https://github.com/tuna-os/wootc/issues/35)</td>
+        </tr>
+    </tbody>
+  </table>
+
+  <p style="margin-top: 2rem; color: #8b949e; font-size: .85rem;">
+    <a href="../">← Walkthrough Gallery</a> ·
+    <a href="https://github.com/tuna-os/wootc">wootc on GitHub</a> ·
+    <a href="https://github.com/tuna-os/wootc/blob/main/docs/soak.md">docs/soak.md</a> ·
+    <a href="ledger.json">ledger.json</a>
+  </p>
+</body>
+</html>

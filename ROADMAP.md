@@ -16,7 +16,7 @@ wootc is the org's **conversion front door** — the Windows-hosted complement t
 
 1. **The download-to-desktop journey needs no instructions beyond the app.** A non-technical user installs (winget or one exe), reboots once, lands in Linux, finds their files, and can get back to Windows — guided entirely by what's on screen.
 2. **Zero known data-loss classes.** Every destructive path is double-gated, reversible, and exercised by the matrix; uninstall provably restores the machine.
-3. **Evidence, not claims.** Full matrix green (BitLocker and offline included), a 30-day soak of green nightlies, and a body of real-hardware reports with no data-loss incidents.
+3. **Evidence, not claims.** Full matrix green (BitLocker and offline included), a 30-day soak of green nightlies ([docs/soak.md](docs/soak.md)), and a body of real-hardware reports with no data-loss incidents.
 4. **A trustworthy first impression.** Signed binaries (no SmartScreen wall), a stable winget package, and branded installers blessed by their upstream projects.
 
 Everything below is sequenced toward those four sentences.
@@ -70,10 +70,10 @@ Beta means the support policy stops saying "alpha" because the evidence exists.
 - Try-in-VM (#178) productized (QEMU bundle in the release) or explicitly cut from 1.0.
 - Program-migrator plugin architecture (#203): interface decision made; in or out of 1.0 scope, documented either way.
 - Docs complete and truthful end-to-end; walkthrough imagery regenerated from the shipping build.
-- Soak begins: consecutive green nightlies counting toward the 1.0 gate, release-blocking regressions only.
+- Soak begins: consecutive green nightlies counting toward the 1.0 gate ([docs/soak.md](docs/soak.md)), release-blocking regressions only.
 
 ### v1.0.0 — "The North Star, checkable" *(tracking: milestone issue M5)*
-The four criteria at the top of this file, verified: 30 days of green nightlies, the real-hardware report corpus with zero data-loss incidents, signed + winget-stable binaries, blessed brands. Cut from the soak's final green SHA.
+The four criteria at the top of this file, verified: 30 days of green nightlies ([docs/soak.md](docs/soak.md)), the real-hardware report corpus with zero data-loss incidents, signed + winget-stable binaries, blessed brands. Cut from the soak's final green SHA.
 
 ---
 

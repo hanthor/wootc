@@ -32,9 +32,10 @@ Phase-2 boot → seeded file readable from Linux.
   **real `wootc.exe` GUI** (drive mode — the app drives its own live form),
   green end-to-end on `bluefin:lts`. The timelapse on the
   [walkthrough page](https://tuna-os.github.io/wootc/e2e/latest/) is that run.
-- ✅ **E2E-gated releases:** `v0.1.0-alpha.1` was published only after a fresh
+- ✅ **E2E-gated releases & soak ledger:** `v0.1.0-alpha.1` was published only after a fresh
   full GUI-driven run passed on the exact tagged commit; nightly green runs cut
-  automatic pre-releases from the SHA they proved.
+  automatic pre-releases and maintain the [green-nightly soak ledger](soak.md)
+  toward the 1.0 gate.
 
 ## Build/test matrix
 

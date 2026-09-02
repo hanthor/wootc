@@ -1,0 +1,64 @@
+name: Soak ledger
+
+# The green-nightly soak ledger (M4.7 / #235): maintains the 30-day green
+# streak for the v1.0.0 evidence gate (#213 criterion 3).
+#
+# Runs automatically when the nightly GUI-driven E2E completes (both green and
+# red runs), updates docs/soak.md + pages/soak/, computes live streak, and
+# commits refreshed ledger state to main.
+
+on:
+  workflow_run:
+    workflows: ['E2E GUI-driven (publish timelapse)']
+    types: [completed]
+    branches: [main]
+  schedule:
+    # 1 hour after nightly GUI E2E (07:00 UTC)
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: soak-ledger
+  cancel-in-progress: false
+
+jobs:
+  update-ledger:
+    name: update soak ledger
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Update soak ledger and pages dashboard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 tools/soak-ledger/soak_ledger.py update \
+            --repo "${{ github.repository }}" \
+            --token "$GH_TOKEN"
+
+      - name: Validate ledger formatting
+        run: |
+          python3 tools/soak-ledger/soak_ledger.py check
+
+      - name: Print live streak summary
+        run: |
+          python3 tools/soak-ledger/soak_ledger.py summary
+
+      - name: Commit and push updated ledger
+        run: |
+          if [ -z "$(git status --porcelain docs/soak.md pages/soak/)" ]; then
+            echo "Soak ledger unchanged — nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/soak.md pages/soak/
+          git commit -m "docs(soak): update green-nightly soak ledger and live streak [skip ci]"
+          git push origin HEAD:main
