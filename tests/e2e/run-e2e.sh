@@ -1118,7 +1118,7 @@ if ($u) { Write-Output ($u -replace "^.*\\","") }' 2>/dev/null | tr -d '[:space:
 }
 
 seed_user_data() {
-    step "Seeding user data in the Windows profile (Documents)..."
+    step "Seeding user data in the Windows profile (Documents, browsers, Office, apps)..."
     # On BitLocker runs C: is encrypted and the deployer mounts the carved
     # unencrypted volume (e.g. E:) instead.  Seeding on C: guarantees the
     # deployer can never read the marker, so ask the guest where the wootc
@@ -1134,9 +1134,8 @@ seed_user_data() {
     local guser; guser=$(guest_windows_user)
     local seed_dir="${drive}\\Users\\${guser}\\Documents"
     for attempt in 1 2 3; do
-        # Use the drive letter as a PowerShell variable so the same command
-        # works for C: / D: / E: without string-concatenation bugs (§R2).
-        out=$(qga_powershell "\$ErrorActionPreference='Stop'; \$d = '${drive}\\Users\\${guser}\\Documents'; if (-not (Test-Path \$d)) { New-Item -ItemType Directory -Path \$d -Force | Out-Null }; Set-Content -Path \"\$d\\wootc-e2e-userdata.txt\" -Value 'wootc-e2e-userdata $RUN_ID' -Encoding ASCII; Get-Content \"\$d\\wootc-e2e-userdata.txt\"" 2>&1)
+        # Use seed-profile.ps1 if available in C:\OEM, otherwise seed directly via PowerShell
+        out=$(qga_powershell "if (Test-Path 'C:\OEM\seed-profile.ps1') { & 'C:\OEM\seed-profile.ps1' -Username '${guser}' -Drive '${drive}' -RunId '${RUN_ID}' } else { \$ErrorActionPreference='Stop'; \$d = '${drive}\\Users\\${guser}\\Documents'; if (-not (Test-Path \$d)) { New-Item -ItemType Directory -Path \$d -Force | Out-Null }; Set-Content -Path \"\$d\\wootc-e2e-userdata.txt\" -Value 'wootc-e2e-userdata $RUN_ID' -Encoding ASCII }; Get-Content \"\$d\\wootc-e2e-userdata.txt\"" 2>&1)
         if printf '%s' "$out" | grep -q "$RUN_ID"; then
             pass "User data seeded: ${drive}\\Users\\${guser}\\Documents\\wootc-e2e-userdata.txt ($RUN_ID)"
             return 0
@@ -1451,6 +1450,12 @@ sed 's/$/\r/' "$SCRIPT_DIR/setup-wootc.ps1" >> "$OEM_DIR/setup-wootc.ps1"
 # Also convert the wootc-files copy used by subsequent steps
 printf '\xEF\xBB\xBF' > "$SCRIPT_DIR/wootc-files/setup-wootc.ps1"
 sed 's/$/\r/' "$SCRIPT_DIR/setup-wootc.ps1" >> "$SCRIPT_DIR/wootc-files/setup-wootc.ps1"
+if [ -f "$SCRIPT_DIR/seed-profile.ps1" ]; then
+    printf '\xEF\xBB\xBF' > "$OEM_DIR/seed-profile.ps1"
+    sed 's/$/\r/' "$SCRIPT_DIR/seed-profile.ps1" >> "$OEM_DIR/seed-profile.ps1"
+    printf '\xEF\xBB\xBF' > "$SCRIPT_DIR/wootc-files/seed-profile.ps1"
+    sed 's/$/\r/' "$SCRIPT_DIR/seed-profile.ps1" >> "$SCRIPT_DIR/wootc-files/seed-profile.ps1"
+fi
 cp "$SCRIPT_DIR/wootc-files/deployer-vmlinuz" "$OEM_PAYLOAD/deployer-vmlinuz"
 cp "$SCRIPT_DIR/wootc-files/deployer-initramfs.img" "$OEM_PAYLOAD/deployer-initramfs.img"
 cp "$SCRIPT_DIR/wootc-files/shimx64.efi" "$OEM_PAYLOAD/shimx64.efi"

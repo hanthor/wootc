@@ -96,6 +96,13 @@ if ($vaultUser -and -not (Test-Path "C:\Users\$vaultUser")) {
     Write-Host "[WARN] vault user '$vaultUser' has no matching Windows profile — User Data Bridge will not bind for this account (profiles: $($profiles.Name -join ', '))"
 }
 
+# ── programs.json ────────────────────────────────────────────────────────────
+if (Test-Path C:\wootc\install\programs.json) {
+    $progRaw = Get-Content C:\wootc\install\programs.json -Raw -ErrorAction SilentlyContinue
+    Assert-True ($progRaw -match '"apps"') "programs.json contains apps array"
+    Assert-True ($progRaw -match '"defaultBrowser"') "programs.json contains defaultBrowser"
+}
+
 # ── headless status ──────────────────────────────────────────────────────────
 $status = & C:\wootc\wootc.exe status 2>&1 | Out-String
 Assert-True ($status -match '"state":\s*"armed"') "wootc.exe status reports armed"
