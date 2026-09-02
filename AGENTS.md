@@ -12,6 +12,11 @@
 - **`docs/milestones.md`** — the verification ladder the matrix rolls up.
 - **`docs/agent-lessons.md`** — traps that have each cost a 60–90 minute VM run.
   Read before touching the E2E harness, the deployer, or the runners.
+- **`docs/docs-truth-pass.md`** — the dated record of each docs-vs-build pass
+  (#233): what was checked, what was wrong, and what is still owed to an RC
+  walk. Every ✘ it found is pinned by `tests/unit/docs-truth.bats`, so change
+  a path, a default image, or a channel gate and that suite tells you which
+  doc you just falsified.
 - **`docs/phase2-debug-plan.md`** — *historical* (2026-07-18): its Phase-2
   hypotheses were resolved; the debugging story is in
   `docs/phase2-attach-postmortem.md`.

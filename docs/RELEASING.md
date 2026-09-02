@@ -77,15 +77,23 @@ git tag v0.1.0-alpha.1 && git push origin v0.1.0-alpha.1
 # → tests → E2E gate (real Windows VM, bluefin:lts, GUI-driven) → build + publish
 ```
 
-The published artifact is `wootc.exe` (Wails, Go + web UI; no runtime deps).
-`skip_e2e` exists for emergencies and documents itself in the release notes.
+Every release ships the **full artifact set**, not just one exe
+(`release.yml`): one installer per brand directory — `wootc.exe` plus
+`TunaOS-Installer.exe`, `Bluefin-Installer.exe`, `Bazzite-Installer.exe`,
+`Aurora-Installer.exe` (Wails, Go + web UI; no runtime deps) — the shared
+boot artifacts (`deployer-vmlinuz`, `deployer-initramfs.img`, `shimx64.efi`,
+`grubx64.efi`, `mmx64.efi`, plus `wubildr.efi` when its build succeeds), and
+a `SHA256SUMS` covering all of them. `skip_e2e` exists for emergencies and
+documents itself in the release notes.
 
-## User instructions (shipped in the release notes / INSTALL.md)
+## User instructions (shipped in the release notes)
 
 1. Download `wootc.exe`. It is not code-signed yet (alpha) — SmartScreen will
    warn; *More info → Run anyway*.
 2. Requirements the app checks for you: Windows 10/11 64-bit, UEFI + Secure
-   Boot, TPM 2.0, **BitLocker off** (alpha), ~40 GB free.
+   Boot, TPM 2.0, **BitLocker off** (alpha), and at least 35 GB free on `C:`
+   (20 GB for Linux plus the 15 GB headroom the launchpad reserves for
+   Windows).
 3. Run it, pick Bluefin, set a username + password, click Install. Nothing on
    your PC changes until you click **Reboot Now** — and even then Windows and
    all your files stay put; Linux lives in a file beside them.

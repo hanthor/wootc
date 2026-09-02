@@ -61,8 +61,7 @@ recognition issue as above. Choose **Yes**.
 From here, the app itself takes over — and the first screen tells you the
 most important thing before asking you for anything:
 
-> Try Linux alongside Windows — no repartitioning, nothing deleted, and
-> fully undoable.
+> Bring Windows to Linux — keep everything.
 
 Everything wootc does before the first reboot lives in one folder
 (`C:\wootc`) plus a one-time startup entry, and the installer explains each

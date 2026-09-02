@@ -19,8 +19,10 @@ deliberately small. Treat it as alpha software anyway.
    refuses encrypted drives up front, but if your firmware boot order is
    ever touched on a BitLocker machine, Windows may ask for the key once on
    the way back. Have it *before* rebooting, not after.
-3. **Plug in the power adapter.** The app refuses to start on battery; the
-   deploy boot can take 30–60 minutes on a slow connection.
+3. **Plug in the power adapter.** The app opens on battery but will not let
+   you start the install until you plug in ("Plug in the power adapter
+   first"); the deploy boot can take 30–60 minutes on a slow connection. A
+   desktop with no battery at all is never blocked by this.
 4. **Check free disk**: 35 GB+ free on `C:` (20 GB minimum for Linux plus
    the 15 GB headroom the app reserves for Windows). The slider won't offer
    more than fits.
@@ -62,7 +64,7 @@ Collect, in this order, and attach to a GitHub issue:
 
 | What | Where |
 |---|---|
-| Installer log + state | `C:\wootc\logs\`, `C:\wootc\install\state.json` |
+| Installer log + state | `C:\wootc\logs\`, `C:\wootc\state.json` |
 | Deployer log (the deploy boot writes it back) | `C:\wootc\logs\deployer.log` |
 | Deployer journal snapshot | `C:\wootc\logs\deployer-last-journal.log` |
 | What the screen said | a phone photo beats a memory |
