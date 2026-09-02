@@ -1,0 +1,30 @@
+{
+  "osVersion": "10.0.22631",
+  "freeDiskGB": 128.5,
+  "totalDiskGB": 512,
+  "bitLockerOn": false,
+  "bitLockerState": "off",
+  "fastStartupOn": false,
+  "isUefi": true,
+  "secureBootOn": true,
+  "secureBootKnown": true,
+  "defragRecommended": false,
+  "onBattery": false,
+  "batteryKnown": true,
+  "pendingReboot": false,
+  "pendingRebootReason": "",
+  "hibernated": false,
+  "ramGB": 16,
+  "is64Bit": true,
+  "dataPartitions": [
+    {
+      "letter": "D",
+      "label": "DATA",
+      "freeGB": 64,
+      "encrypted": false
+    }
+  ],
+  "bitLockerRecoveryKeyWarning": false,
+  "suggestedHostname": "my-laptop",
+  "suggestedUsername": "winuser"
+}

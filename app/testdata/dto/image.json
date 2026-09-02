@@ -1,0 +1,15 @@
+{
+  "id": "yellowfin",
+  "name": "Yellowfin (GNOME)",
+  "emoji": "🐟",
+  "base": "fedora",
+  "desktop": "gnome",
+  "desktopName": "GNOME 46",
+  "imageRef": "ghcr.io/tuna-os/yellowfin:gnome",
+  "description": "Clean, modern Fedora workstation with bootc atomic updates",
+  "bootloader": "grub2",
+  "composeFs": true,
+  "family": "fedora",
+  "status": "green",
+  "mokEnroll": "tunaos"
+}

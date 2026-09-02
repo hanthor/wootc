@@ -19,7 +19,7 @@ func isHeadlessInvocation(args []string) bool {
 		return false
 	}
 	switch args[1] {
-	case "install", "status", "uninstall":
+	case "install", "status", "uninstall", "serve":
 		return true
 	}
 	return false
@@ -29,6 +29,8 @@ func isHeadlessInvocation(args []string) bool {
 // code. It never launches the webview.
 func runHeadless(args []string) int {
 	switch args[1] {
+	case "serve":
+		return runServe()
 	case "install":
 		return headlessInstall(args[2:])
 	case "status":
