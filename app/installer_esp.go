@@ -609,6 +609,14 @@ func deleteWootcBCDEntries() {
 		runCmd("bcdedit", "/set", "{fwbootmgr}", "displayorder", m[1], "/remove") //nolint:errcheck
 		runCmd("bcdedit", "/delete", m[1])                                        //nolint:errcheck
 	}
+	guidPath := filepath.Join(wootcDir(), "install", "bcd-guid.txt")
+	if b, err := os.ReadFile(guidPath); err == nil {
+		if g := strings.TrimSpace(string(b)); strings.HasPrefix(g, "{") {
+			runCmd("bcdedit", "/set", "{fwbootmgr}", "displayorder", g, "/remove") //nolint:errcheck
+			runCmd("bcdedit", "/delete", g)                                        //nolint:errcheck
+		}
+	}
+	runCmd("bcdedit", "/deletevalue", "{fwbootmgr}", "bootsequence") //nolint:errcheck
 }
 
 

@@ -195,13 +195,32 @@ func TestReadStateCorruptJSON(t *testing.T) {
 	}
 }
 
-// ── mode detection ───────────────────────────────────────────────────────────
-
 func TestDetectModeInstallerWhenHostNotBridged(t *testing.T) {
 	// On a CI/dev box /run/wootc/host is never mounted, so the mode must be
 	// the installer surface. If this flakes, the runner actually has a wootc
 	// host bridge mounted — which would be surprising.
 	if got := detectMode(); got != "installer" {
 		t.Errorf("detectMode() = %q, want installer", got)
+	}
+}
+
+// ── headlessUninstall ───────────────────────────────────────────────────────
+
+func TestHeadlessUninstallRejectsBadFlag(t *testing.T) {
+	if got := headlessUninstall([]string{"--bad-flag"}); got != 2 {
+		t.Errorf("headlessUninstall(bad flag) = %d, want 2", got)
+	}
+}
+
+func TestHeadlessUninstallDefaultOptions(t *testing.T) {
+	// Running with no flags should execute cleanly (stubbed on non-Windows)
+	if got := headlessUninstall(nil); got != 0 {
+		t.Errorf("headlessUninstall(nil) = %d, want 0", got)
+	}
+}
+
+func TestHeadlessUninstallWithOptions(t *testing.T) {
+	if got := headlessUninstall([]string{"-delete-root-disk", "-remove-partition"}); got != 0 {
+		t.Errorf("headlessUninstall(-delete-root-disk -remove-partition) = %d, want 0", got)
 	}
 }
