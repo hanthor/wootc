@@ -163,6 +163,25 @@ WOOTC_ESP_DIR=/tmp/esp WOOTC_BOOT_DIR=/tmp/boot WOOTC_CMDLINE=/tmp/cmdline \
     bash /scripts/wootc-esp-sync >/dev/null 2>&1 || true
 check '[ "$(cat /tmp/esp/EFI/wootc/phase2-vmlinuz)" = classic-kernel ]' "ESP sync: classic /boot layout (Debian/Arch) handled"
 
+# Signed-chain refresh from bootupd:
+mkdir -p /tmp/bootupd/EFI/fedora
+echo old-shim > /tmp/esp/EFI/fedora/shimx64.efi
+echo old-grub > /tmp/esp/EFI/fedora/grubx64.efi
+echo new-shim > /tmp/bootupd/EFI/fedora/shimx64.efi
+echo new-grub > /tmp/bootupd/EFI/fedora/grubx64.efi
+cat > /tmp/esp-manifest <<'MAN'
+efi/fedora/shimx64.efi
+efi/fedora/grubx64.efi
+efi/wootc/phase2-vmlinuz
+efi/wootc/phase2-initramfs.img
+MAN
+ORIG_SHIM_SHA=$(sha256sum /tmp/esp/EFI/fedora/shimx64.efi | awk '{print $1}')
+WOOTC_ESP_DIR=/tmp/esp WOOTC_BOOT_DIR=/tmp/boot WOOTC_CMDLINE=/tmp/cmdline \
+WOOTC_BOOTUPD_DIR=/tmp/bootupd WOOTC_ESP_MANIFEST=/tmp/esp-manifest \
+    bash /scripts/wootc-esp-sync >/dev/null 2>&1 || true
+check '[ "$(cat /tmp/esp/EFI/fedora/shimx64.efi)" = new-shim ]' "ESP sync: candidate shim refreshed from bootupd"
+check '[ -d /tmp/esp/EFI/wootc/archive/$ORIG_SHIM_SHA ]' "ESP sync: replaced chain archived before replacement"
+
 # ── 7. WSL bridge (dotfiles + dpkg→Brewfile, secrets stay behind) ───────────
 WSLR=/tmp/wslrootfs
 mkdir -p "$WSLR/home/dev" "$WSLR/var/lib/dpkg"

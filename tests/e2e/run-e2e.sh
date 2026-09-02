@@ -4087,6 +4087,64 @@ fi
 # Phase 2 is still up (video-only, best-effort).
 demo_linux_userdata
 
+# ── Step 9b: ESP signed-chain refresh (#333) ────────────────────────────────
+# Prove wootc-esp-sync picks up a newer signed shim/grub staged in the bootupd
+# path, gates on SBAT/CA, archives the previous chain to EFI/wootc/archive/<sha>/,
+# and atomically updates the ESP.
+if [ "${RUN_ESP_CHAIN_TEST:-true}" = true ] && printf '%s' "$USERDATA_PROBE" | grep -q WOOTC_AGENT_OK; then
+    step "ESP signed-chain refresh: testing bootupd update discovery & archive..."
+    ESP_CHAIN_TEST_SCRIPT=$(cat <<'EOF'
+set -Eeuo pipefail
+CONF=/etc/wootc/host-esp.conf
+[ -f "$CONF" ] || { echo "NO_CONF"; exit 0; }
+. "$CONF"
+[ -n "${HOST_ESP_UUID:-}" ] || { echo "NO_UUID"; exit 0; }
+ESP_DEV="/dev/disk/by-uuid/$HOST_ESP_UUID"
+[ -b "$ESP_DEV" ] || { echo "NO_DEV"; exit 0; }
+mkdir -p /run/wootc-esp
+mountpoint -q /run/wootc-esp || mount -t vfat "$ESP_DEV" /run/wootc-esp
+
+DEST_SHIM="/run/wootc-esp/EFI/fedora/shimx64.efi"
+[ -f "$DEST_SHIM" ] || { echo "NO_DEST_SHIM"; exit 0; }
+ORIG_SHA=$(sha256sum "$DEST_SHIM" | awk '{print $1}')
+
+# Create mock bootupd update candidate with bumped content
+mkdir -p /usr/lib/bootupd/updates/EFI/fedora
+echo '{"version":"test-333"}' > /usr/lib/bootupd/updates/EFI.json
+cp "$DEST_SHIM" /usr/lib/bootupd/updates/EFI/fedora/shimx64.efi
+echo -n "WOOTC_SHIM_REFRESH_TEST" >> /usr/lib/bootupd/updates/EFI/fedora/shimx64.efi
+cp /run/wootc-esp/EFI/fedora/grubx64.efi /usr/lib/bootupd/updates/EFI/fedora/grubx64.efi
+echo -n "WOOTC_GRUB_REFRESH_TEST" >> /usr/lib/bootupd/updates/EFI/fedora/grubx64.efi
+
+# Run wootc-esp-sync
+/var/usrlocal/bin/wootc-esp-sync
+
+# Verify archive exists with original shim SHA
+if [ -d "/run/wootc-esp/EFI/wootc/archive/$ORIG_SHA" ] && [ -f "/run/wootc-esp/EFI/wootc/archive/$ORIG_SHA/shimx64.efi" ]; then
+    echo "ARCHIVE_OK"
+else
+    echo "ARCHIVE_MISSING"
+fi
+
+# Verify ESP destination was updated
+NEW_SHA=$(sha256sum "$DEST_SHIM" | awk '{print $1}')
+if [ "$NEW_SHA" != "$ORIG_SHA" ]; then
+    echo "DEST_UPDATED_OK"
+else
+    echo "DEST_UNCHANGED"
+fi
+EOF
+)
+    ESP_CHAIN_OUT=$(qga_call exec /bin/sh -c "$ESP_CHAIN_TEST_SCRIPT" 2>/dev/null || true)
+    if echo "$ESP_CHAIN_OUT" | grep -q "ARCHIVE_OK" && echo "$ESP_CHAIN_OUT" | grep -q "DEST_UPDATED_OK"; then
+        pass "ESP signed-chain refresh: candidate from bootupd updated ESP and archived previous chain"
+    elif echo "$ESP_CHAIN_OUT" | grep -qE "NO_CONF|NO_UUID|NO_DEV|NO_DEST_SHIM"; then
+        info "ESP signed-chain refresh skipped (not configured in this run: $(echo "$ESP_CHAIN_OUT" | head -1))"
+    else
+        fail "ESP signed-chain refresh failed ($ESP_CHAIN_OUT)"
+    fi
+fi
+
 # ── Step 10: boot the result, not merely its installer ─────────────────────
 if [ "${RUN_PHASE3:-false}" = true ]; then
     step "Rebooting Phase 2 into the one-shot Phase 3 native install..."

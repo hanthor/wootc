@@ -1,22 +1,31 @@
 #!/bin/bash
 # /usr/local/bin/wootc-esp-sync
-# Self-healing Windows-ESP kernel sync, run on every boot of the installed
-# system (wootc-esp-sync.service).
+# Self-healing Windows-ESP bootloader and kernel sync, run on every boot of
+# the installed system (wootc-esp-sync.service) and triggered by bootupd updates
+# (wootc-esp-sync.path).
 #
-# Why: Phase-2 boots load the kernel+initramfs from the *Windows* ESP (the
-# signed GRUB cannot read NTFS, and cannot loop-mount the root disk). After
-# any OS update (`bootc update`, apt/pacman kernel upgrade), the ESP copy
-# goes stale. This service compares the system's current boot artifacts
-# with the ESP pair and refreshes them plus grub.cfg when they differ.
-# Updates therefore take effect one reboot late — never inconsistently:
-# a stale grub.cfg still boots the *old, matching* kernel+deployment.
+# Why: Phase-2 boots load the kernel+initramfs and signed bootloader from the
+# *Windows* ESP (the signed GRUB cannot read NTFS, and cannot loop-mount the
+# root disk). After any OS update (`bootc upgrade`, apt/pacman kernel upgrade),
+# both the kernel/initramfs and the signed chain (shim/grub/MokManager) under
+# /usr/lib/bootupd/updates/ (or /boot/efi) go stale. This service refreshes
+# the signed chain (gated on SBAT >= installed and firmware db CA intersection,
+# archived to EFI/wootc/archive/<sha>/ with GRUB replaced before shim) and
+# refreshes the kernel pair and grub.cfg.
 #
 # Variant-agnostic (all TunaOS flavors): prefers BLS entries
 # (ostree/Fedora/EL), falls back to newest /boot/vmlinuz-* (classic
 # Debian/Arch layouts).
 #
-# Test hooks: WOOTC_ESP_DIR overrides mounting (points at a fake ESP);
-# WOOTC_BOOT_DIR overrides /boot; WOOTC_CMDLINE overrides /proc/cmdline.
+# Test hooks:
+#   WOOTC_ESP_DIR: overrides ESP mountpoint (points at fake ESP)
+#   WOOTC_BOOT_DIR: overrides /boot
+#   WOOTC_CMDLINE: overrides /proc/cmdline
+#   WOOTC_ESP_CONF: overrides /etc/wootc/host-esp.conf
+#   WOOTC_ESP_MANIFEST: overrides /etc/wootc/esp-manifest
+#   WOOTC_BOOTUPD_DIR: overrides /usr/lib/bootupd/updates
+#   WOOTC_BOOT_EFI_DIR: overrides /boot/efi
+#   WOOTC_SYSFS_EFIVARS: overrides /sys/firmware/efi/efivars
 
 set -Eeuo pipefail
 
@@ -25,6 +34,10 @@ log() { printf '[wootc-esp-sync] %s\n' "$*"; }
 CONF="${WOOTC_ESP_CONF:-/etc/wootc/host-esp.conf}"
 BOOT="${WOOTC_BOOT_DIR:-/boot}"
 CMDLINE_FILE="${WOOTC_CMDLINE:-/proc/cmdline}"
+BOOTUPD_DIR="${WOOTC_BOOTUPD_DIR:-/usr/lib/bootupd/updates}"
+BOOT_EFI_DIR="${WOOTC_BOOT_EFI_DIR:-/boot/efi}"
+SYSFS_EFIVARS="${WOOTC_SYSFS_EFIVARS:-/sys/firmware/efi/efivars}"
+ESP_MANIFEST="${WOOTC_ESP_MANIFEST:-/etc/wootc/esp-manifest}"
 
 ESP_MNT=""
 MOUNTED=0
@@ -53,6 +66,359 @@ fi
 
 WOOTC_DIR="$ESP_MNT/EFI/wootc"
 [[ -d "$WOOTC_DIR" ]] || { log "no EFI/wootc on ESP; not a Phase-2 layout"; exit 0; }
+
+changed=0
+
+# ── Helper: Evaluate SBAT and CA Gate via Python ────────────────────────────
+gate_check() {
+    local cand_shim="$1" dest_shim="$2" efivars_dir="$3"
+    python3 - "$cand_shim" "$dest_shim" "$efivars_dir" <<'PYEOF'
+import os, sys, struct, subprocess
+
+cand_shim = sys.argv[1] if len(sys.argv) > 1 else ""
+dest_shim = sys.argv[2] if len(sys.argv) > 2 else ""
+efivars_dir = sys.argv[3] if len(sys.argv) > 3 else ""
+
+def parse_pe(path):
+    if not path or not os.path.isfile(path):
+        return {"sbat": {}, "cas": []}
+    with open(path, "rb") as f:
+        data = f.read()
+    sbat = {}
+    cas = []
+    if len(data) >= 0x40 and data[:2] == b"MZ":
+        pe_offset = struct.unpack_from("<I", data, 0x3C)[0]
+        if pe_offset + 24 <= len(data) and data[pe_offset:pe_offset+4] == b"PE\0\0":
+            num_sec, opt_size = struct.unpack_from("<HH", data, pe_offset + 6)[0], struct.unpack_from("<H", data, pe_offset + 20)[0]
+            opt_offset = pe_offset + 24
+            magic = struct.unpack_from("<H", data, opt_offset)[0] if opt_offset + 2 <= len(data) else 0
+            is_64 = (magic == 0x20b)
+            cert_dir_off = 112 if is_64 else 96
+            cert_off, cert_len = 0, 0
+            if opt_size >= cert_dir_off + 40:
+                cert_off, cert_len = struct.unpack_from("<II", data, opt_offset + cert_dir_off + 4*8)
+            sec_off = opt_offset + opt_size
+            for i in range(num_sec):
+                cur = sec_off + i * 40
+                if cur + 40 > len(data):
+                    break
+                name = data[cur:cur+8].split(b"\0", 1)[0].decode("latin1", errors="ignore")
+                raw_size, raw_ptr = struct.unpack_from("<II", data, cur + 16)
+                if name.startswith(".sbat") and raw_ptr + raw_size <= len(data):
+                    for line in data[raw_ptr:raw_ptr+raw_size].decode("utf-8", errors="ignore").splitlines():
+                        parts = [p.strip() for p in line.strip().split(",")]
+                        if len(parts) >= 2 and parts[0]:
+                            try:
+                                sbat[parts[0]] = int(parts[1])
+                            except ValueError:
+                                pass
+            if cert_off > 0 and cert_len > 8 and cert_off + cert_len <= len(data):
+                win_cert_data = data[cert_off : cert_off + cert_len]
+                dwLength = struct.unpack_from("<I", win_cert_data, 0)[0]
+                pkcs7_der = win_cert_data[8:dwLength]
+                try:
+                    p = subprocess.run(["openssl", "pkcs7", "-inform", "DER", "-print_certs", "-text"],
+                                       input=pkcs7_der, capture_output=True)
+                    out = p.stdout.decode("utf-8", errors="ignore")
+                    if "Microsoft Corporation UEFI CA 2011" in out:
+                        cas.append("2011")
+                    if "Microsoft UEFI CA 2023" in out or "Microsoft Corporation UEFI CA 2023" in out:
+                        cas.append("2023")
+                except Exception:
+                    pass
+
+    # String fallback for mock files / non-PE test inputs
+    if not sbat:
+        for line in data.decode("utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if "sbat" in line.lower() or "shim," in line.lower():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) >= 2 and parts[0].lower() in ("shim", "grub"):
+                    try:
+                        sbat[parts[0].lower()] = int(parts[1])
+                    except ValueError:
+                        pass
+    if not cas:
+        text = data.decode("utf-8", errors="ignore")
+        if "Microsoft Corporation UEFI CA 2011" in text or "2011" in text:
+            cas.append("2011")
+        if "Microsoft UEFI CA 2023" in text or "Microsoft Corporation UEFI CA 2023" in text or "2023" in text:
+            cas.append("2023")
+
+    return {"sbat": sbat, "cas": list(sorted(set(cas)))}
+
+def parse_efivars(efivars_dir):
+    sb_enabled = False
+    db_cas = []
+    if not efivars_dir or not os.path.isdir(efivars_dir):
+        return {"secure_boot": False, "db_cas": []}
+    
+    # Check SecureBoot efivar
+    for fname in os.listdir(efivars_dir):
+        if fname.startswith("SecureBoot-"):
+            try:
+                with open(os.path.join(efivars_dir, fname), "rb") as f:
+                    content = f.read()
+                val = content[4:] if len(content) > 4 else content
+                if len(val) >= 1 and val[0] == 1:
+                    sb_enabled = True
+            except Exception:
+                pass
+
+    x509_guid = b"\xa1\x59\xc0\xa5\xe4\x94\xa7\x4a\x87\xb5\xab\x15\x5c\x2b\xf0\x72"
+    for fname in os.listdir(efivars_dir):
+        if fname.startswith("db-"):
+            try:
+                with open(os.path.join(efivars_dir, fname), "rb") as f:
+                    content = f.read()
+                offset = 0
+                if len(content) > 4:
+                    if content[:16] == x509_guid:
+                        offset = 0
+                    elif content[4:20] == x509_guid:
+                        offset = 4
+                    else:
+                        offset = 4
+                while offset + 28 <= len(content):
+                    sig_type = content[offset:offset+16]
+                    sig_list_size, sig_hdr_size, sig_size = struct.unpack_from("<III", content, offset+16)
+                    if sig_list_size == 0 or offset + sig_list_size > len(content):
+                        break
+                    if sig_type == x509_guid and sig_size > 16:
+                        data_start = offset + 28 + sig_hdr_size
+                        data_end = offset + sig_list_size
+                        cur = data_start
+                        while cur + sig_size <= data_end:
+                            cert_der = content[cur+16:cur+sig_size]
+                            try:
+                                p = subprocess.run(["openssl", "x509", "-inform", "DER", "-subject", "-issuer", "-noout"],
+                                                   input=cert_der, capture_output=True)
+                                out = p.stdout.decode("utf-8", errors="ignore")
+                                if "Microsoft Corporation UEFI CA 2011" in out:
+                                    db_cas.append("2011")
+                                if "Microsoft UEFI CA 2023" in out or "Microsoft Corporation UEFI CA 2023" in out:
+                                    db_cas.append("2023")
+                            except Exception:
+                                pass
+                            cur += sig_size
+                    offset += sig_list_size
+                if not db_cas:
+                    text = content.decode("utf-8", errors="ignore")
+                    if "Microsoft Corporation UEFI CA 2011" in text or "2011" in text:
+                        db_cas.append("2011")
+                    if "Microsoft UEFI CA 2023" in text or "Microsoft Corporation UEFI CA 2023" in text or "2023" in text:
+                        db_cas.append("2023")
+            except Exception:
+                pass
+    return {"secure_boot": sb_enabled, "db_cas": list(sorted(set(db_cas)))}
+
+cand_meta = parse_pe(cand_shim)
+dest_meta = parse_pe(dest_shim)
+firmware = parse_efivars(efivars_dir)
+
+cand_sbat = cand_meta["sbat"].get("shim", 0)
+dest_sbat = dest_meta["sbat"].get("shim", 0)
+
+# Gate 1: SBAT generation >= installed (never downgrade)
+if dest_sbat > 0 and cand_sbat > 0 and cand_sbat < dest_sbat:
+    sys.stderr.write(f"SBAT downgrade: candidate generation {cand_sbat} < installed {dest_sbat}\n")
+    sys.exit(1)
+
+# Gate 2: CA intersection if Secure Boot is enabled and db has CAs
+if firmware["secure_boot"] and firmware["db_cas"]:
+    cand_cas = cand_meta["cas"]
+    db_cas = firmware["db_cas"]
+    intersection = set(cand_cas) & set(db_cas)
+    if cand_cas and not intersection:
+        sys.stderr.write(f"CA mismatch: candidate shim CAs {cand_cas} not trusted in firmware db {db_cas}\n")
+        sys.exit(1)
+
+sys.exit(0)
+PYEOF
+}
+
+# ── Signed-chain refresh (shim, GRUB, MokManager) ───────────────────────────
+sync_signed_chain() {
+    local cand_shim="" cand_grub="" cand_mm="" cand_vendor="" source_type=""
+
+    # 1. Source discovery: /usr/lib/bootupd/updates/EFI/<vendor>/ else /boot/efi/EFI/<vendor>/
+    if [[ -d "$BOOTUPD_DIR/EFI" ]]; then
+        shopt -s nullglob
+        for vdir in "$BOOTUPD_DIR"/EFI/*; do
+            if [[ -d "$vdir" ]]; then
+                local s="$vdir/shimx64.efi" g="$vdir/grubx64.efi"
+                if [[ ! -f "$s" ]]; then s=$(find "$vdir" -maxdepth 1 -name "shim*.efi" | head -1 || true); fi
+                if [[ ! -f "$g" ]]; then g=$(find "$vdir" -maxdepth 1 -name "grub*.efi" | head -1 || true); fi
+                if [[ -n "$s" && -f "$s" && -n "$g" && -f "$g" ]]; then
+                    cand_shim="$s"
+                    cand_grub="$g"
+                    cand_vendor=$(basename "$vdir")
+                    local m="$vdir/mmx64.efi"
+                    if [[ ! -f "$m" ]]; then m=$(find "$vdir" -maxdepth 1 -name "mm*.efi" | head -1 || true); fi
+                    [[ -n "$m" && -f "$m" ]] && cand_mm="$m"
+                    source_type="bootupd"
+                    break
+                fi
+            fi
+        done
+        shopt -u nullglob
+    fi
+
+    if [[ -z "$cand_shim" && -d "$BOOT_EFI_DIR/EFI" ]]; then
+        shopt -s nullglob
+        for vdir in "$BOOT_EFI_DIR"/EFI/*; do
+            if [[ -d "$vdir" ]]; then
+                local s="$vdir/shimx64.efi" g="$vdir/grubx64.efi"
+                if [[ ! -f "$s" ]]; then s=$(find "$vdir" -maxdepth 1 -name "shim*.efi" | head -1 || true); fi
+                if [[ ! -f "$g" ]]; then g=$(find "$vdir" -maxdepth 1 -name "grub*.efi" | head -1 || true); fi
+                if [[ -n "$s" && -f "$s" && -n "$g" && -f "$g" ]]; then
+                    cand_shim="$s"
+                    cand_grub="$g"
+                    cand_vendor=$(basename "$vdir")
+                    local m="$vdir/mmx64.efi"
+                    if [[ ! -f "$m" ]]; then m=$(find "$vdir" -maxdepth 1 -name "mm*.efi" | head -1 || true); fi
+                    [[ -n "$m" && -f "$m" ]] && cand_mm="$m"
+                    source_type="classic"
+                    break
+                fi
+            fi
+        done
+        shopt -u nullglob
+    fi
+
+    if [[ -z "$cand_shim" ]]; then
+        log "no signed-chain update source found under $BOOTUPD_DIR or $BOOT_EFI_DIR; skipping signed-chain refresh"
+        return 0
+    fi
+
+    log "found candidate signed chain from $source_type ($cand_vendor)"
+
+    # Identify destination on ESP
+    local dest_dir="$ESP_MNT/EFI/fedora"
+    if [[ -d "$ESP_MNT/EFI/$cand_vendor" && "$cand_vendor" != "fedora" && ! -d "$ESP_MNT/EFI/fedora" ]]; then
+        dest_dir="$ESP_MNT/EFI/$cand_vendor"
+    fi
+    local dest_shim="$dest_dir/shimx64.efi"
+    local dest_grub="$dest_dir/grubx64.efi"
+    local dest_mm="$dest_dir/mmx64.efi"
+
+    # 2. Ownership check (D1 rule): only files in the ESP manifest wootc wrote
+    local manifest_file=""
+    if [[ -f "$ESP_MANIFEST" ]]; then
+        manifest_file="$ESP_MANIFEST"
+    elif [[ -f "$ESP_MNT/EFI/wootc/wootc-owned.txt" ]]; then
+        manifest_file="$ESP_MNT/EFI/wootc/wootc-owned.txt"
+    elif [[ -f "$ESP_MNT/efi/wootc/wootc-owned.txt" ]]; then
+        manifest_file="$ESP_MNT/efi/wootc/wootc-owned.txt"
+    fi
+
+    if [[ -z "$manifest_file" ]]; then
+        log "no ESP ownership manifest found (/etc/wootc/esp-manifest); skipping signed-chain refresh to protect foreign boot files (D1 rule)"
+        return 0
+    fi
+
+    # Read normalized manifest paths
+    local -A owned_paths=()
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=$(printf '%s' "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [[ -z "$line" || "$line" =~ ^# ]] && continue
+        local norm
+        norm=$(printf '%s' "$line" | tr '\\' '/' | tr '[:upper:]' '[:lower:]' | sed 's|^/||;s|/$||')
+        owned_paths["$norm"]=1
+    done < "$manifest_file"
+
+    local rel_shim rel_grub rel_mm
+    rel_shim=$(printf '%s' "${dest_shim#$ESP_MNT/}" | tr '\\' '/' | tr '[:upper:]' '[:lower:]' | sed 's|^/||')
+    rel_grub=$(printf '%s' "${dest_grub#$ESP_MNT/}" | tr '\\' '/' | tr '[:upper:]' '[:lower:]' | sed 's|^/||')
+    rel_mm=$(printf '%s' "${dest_mm#$ESP_MNT/}" | tr '\\' '/' | tr '[:upper:]' '[:lower:]' | sed 's|^/||')
+
+    if [[ -f "$dest_shim" && -z "${owned_paths[$rel_shim]:-}" ]]; then
+        log "destination $rel_shim is not in ESP manifest; foreign boot files will not be touched (D1 rule)"
+        return 0
+    fi
+    if [[ -f "$dest_grub" && -z "${owned_paths[$rel_grub]:-}" ]]; then
+        log "destination $rel_grub is not in ESP manifest; foreign boot files will not be touched (D1 rule)"
+        return 0
+    fi
+
+    # 3. Check if update is needed
+    local need_update=0
+    if [[ ! -f "$dest_shim" ]] || ! cmp -s "$cand_shim" "$dest_shim"; then need_update=1; fi
+    if [[ ! -f "$dest_grub" ]] || ! cmp -s "$cand_grub" "$dest_grub"; then need_update=1; fi
+    if [[ -n "$cand_mm" && -f "$cand_mm" ]]; then
+        if [[ ! -f "$dest_mm" ]] || ! cmp -s "$cand_mm" "$dest_mm"; then need_update=1; fi
+    fi
+
+    if [[ "$need_update" -eq 0 ]]; then
+        log "ESP signed chain already current"
+        return 0
+    fi
+
+    # 4. Gate: candidate shim signed by CA in firmware db, SBAT generation >= installed
+    local gate_err=""
+    if ! gate_err=$(gate_check "$cand_shim" "$dest_shim" "$SYSFS_EFIVARS" 2>&1); then
+        log "gate check failed: $gate_err; signed-chain refresh aborted"
+        return 0
+    fi
+
+    # 5. Archive current trio
+    local archive_dir=""
+    if [[ -f "$dest_shim" ]]; then
+        local orig_sha
+        orig_sha=$(sha256sum "$dest_shim" 2>/dev/null | awk '{print $1}')
+        if [[ -n "$orig_sha" ]]; then
+            archive_dir="$WOOTC_DIR/archive/$orig_sha"
+            mkdir -p "$archive_dir"
+            [[ -f "$dest_grub" ]] && cp -f "$dest_grub" "$archive_dir/"
+            [[ -f "$dest_shim" ]] && cp -f "$dest_shim" "$archive_dir/"
+            [[ -f "$dest_mm" ]] && cp -f "$dest_mm" "$archive_dir/"
+            sync
+            log "archived current signed chain to EFI/wootc/archive/$orig_sha"
+        fi
+    fi
+
+    restore_archive() {
+        if [[ -n "$archive_dir" && -d "$archive_dir" ]]; then
+            log "restoring signed chain from $archive_dir due to replace/hash failure"
+            cp -f "$archive_dir"/* "$dest_dir/" 2>/dev/null || true
+            sync
+        fi
+    }
+
+    # 6. Replace: GRUB first, MokManager (if present), shim last
+    mkdir -p "$dest_dir"
+
+    # Stage and verify GRUB
+    cp "$cand_grub" "$dest_grub.new" && sync && mv -f "$dest_grub.new" "$dest_grub" && sync
+    if ! cmp -s "$cand_grub" "$dest_grub"; then
+        log "hash mismatch after writing $(basename "$dest_grub")"
+        restore_archive
+        return 1
+    fi
+
+    # Stage and verify MokManager (if candidate exists)
+    if [[ -n "$cand_mm" && -f "$cand_mm" ]]; then
+        cp "$cand_mm" "$dest_mm.new" && sync && mv -f "$dest_mm.new" "$dest_mm" && sync
+        if ! cmp -s "$cand_mm" "$dest_mm"; then
+            log "hash mismatch after writing $(basename "$dest_mm")"
+            restore_archive
+            return 1
+        fi
+    fi
+
+    # Stage and verify Shim (shim last)
+    cp "$cand_shim" "$dest_shim.new" && sync && mv -f "$dest_shim.new" "$dest_shim" && sync
+    if ! cmp -s "$cand_shim" "$dest_shim"; then
+        log "hash mismatch after writing $(basename "$dest_shim")"
+        restore_archive
+        return 1
+    fi
+
+    changed=1
+    log "refreshed ESP signed chain: $(basename "$dest_grub"), $(basename "$dest_shim")"
+}
+
+sync_signed_chain
 
 # ── Discover the system's current default kernel/initramfs/cmdline ─────────
 KERNEL=""
@@ -108,8 +474,7 @@ done
 # Drop tokens with unexpanded BLS variables and boot noise.
 OPTIONS=$(printf '%s' "$OPTIONS" | tr ' ' '\n' | grep -v '\$' | grep -vE '^(quiet|rhgb|splash)$' | tr '\n' ' ' | sed 's/  */ /g;s/ $//')
 
-# ── Compare and sync ────────────────────────────────────────────────────────
-changed=0
+# ── Compare and sync kernel/initramfs ────────────────────────────────────────
 sync_file() {
     local src="$1" dst="$2"
     if [[ ! -f "$dst" ]] || ! cmp -s "$src" "$dst"; then

@@ -2741,15 +2741,19 @@ QGAEOF
         chmod 600 "$DEPLOY_ROOT"/var/lib/wootc/wifi-import/*.xml 2>/dev/null || true
         log "  Staged Wi-Fi profiles for first-boot import"
     fi
-    # ESP self-healing sync: keeps the Windows-ESP kernel pair current
+    # ESP self-healing sync: keeps the Windows-ESP bootloader and kernel pair current
     # after OS updates (variant-agnostic — BLS and classic layouts).
     install -m755 /usr/lib/wootc/migration/wootc-esp-sync \
         "$DEPLOY_ROOT/var/usrlocal/bin/wootc-esp-sync"
     install -m644 /usr/lib/wootc/migration/wootc-esp-sync.service \
         "$DEPLOY_ROOT/etc/systemd/system/wootc-esp-sync.service"
+    install -m644 /usr/lib/wootc/migration/wootc-esp-sync.path \
+        "$DEPLOY_ROOT/etc/systemd/system/wootc-esp-sync.path"
     mkdir -p "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants"
     ln -sf ../wootc-esp-sync.service \
         "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/wootc-esp-sync.service"
+    ln -sf ../wootc-esp-sync.path \
+        "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/wootc-esp-sync.path"
     install -m755 /usr/lib/wootc/migration/wootc-detect-apps \
         "$DEPLOY_ROOT/var/usrlocal/bin/wootc-detect-apps"
     install -m755 /usr/lib/wootc/migration/wootc-office-bridge \
@@ -3232,6 +3236,16 @@ GRUBEOF
                         > "$DEPLOY_ROOT/etc/wootc/host-esp.conf" 2>/dev/null || true
                     log "  [PASS] host-esp.conf written (UUID $ESP_UUID)"
                 fi
+
+                # Mirror ESP ownership manifest so wootc-esp-sync knows which files it owns
+                for man_cand in "/mnt/esp/EFI/wootc/wootc-owned.txt" "/mnt/esp/efi/wootc/wootc-owned.txt"; do
+                    if [[ -f "$man_cand" ]]; then
+                        mkdir -p "$DEPLOY_ROOT/etc/wootc" 2>/dev/null || true
+                        cp "$man_cand" "$DEPLOY_ROOT/etc/wootc/esp-manifest" 2>/dev/null || true
+                        log "  [PASS] esp-manifest mirrored to /etc/wootc/esp-manifest"
+                        break
+                    fi
+                done
             else
                 # Never leave the ESP kernel-less: the deployer pair was
                 # removed above to make room, so restore it from the
