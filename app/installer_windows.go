@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -159,10 +160,11 @@ func uninstall(ctx context.Context) error {
 	return uninstallWith(ctx, UninstallOptions{})
 }
 
-// getUninstallInfo locates root.disk across C: and any data volumes and
-// reports whether it sits on a wootc-created dedicated partition (SPEC §5).
+// getUninstallInfo locates root.disk across C: and any data volumes, detects
+// partial/staged/armed/failed/orphaned states, and reports whether storage sits
+// on a wootc-created dedicated partition (SPEC §5).
 func getUninstallInfo() UninstallInfo {
-	// Search C: first, then any fixed volume, for wootc\disks\root.{vhdx,disk}.
+	// 1. Search C: first, then any fixed volume, for wootc\disks\root.{vhdx,disk}.
 	drives := []string{"C"}
 	for _, dp := range listDataPartitions() {
 		drives = append(drives, dp.Letter)
@@ -175,9 +177,11 @@ func getUninstallInfo() UninstallInfo {
 				continue
 			}
 			info := UninstallInfo{
-				Found: true, StorageDrive: d, DiskPath: p,
-				DiskSizeGB: float64(st.Size()) / (1 << 30),
-				Deployed:   deployHasCompleted(d),
+				Found:        true,
+				StorageDrive: d,
+				DiskPath:     p,
+				DiskSizeGB:   float64(st.Size()) / (1 << 30),
+				Deployed:     deployHasCompleted(d),
 			}
 			if d != "C" {
 				info.OnDedicatedVol, info.ReclaimGB = dedicatedVolumeInfo(d)
@@ -185,19 +189,124 @@ func getUninstallInfo() UninstallInfo {
 			return info
 		}
 	}
-	// No disk anywhere — but leftover arming means there is still something
-	// to clean up, and previously NO GUI path could reach it: a hand-deleted
-	// C:\wootc dropped the user on the launchpad with a stale boot entry
-	// forever. Surface it so the control panel can offer the uninstall.
-	for _, marker := range []string{
-		`C:\wootc\install\bcd-guid.txt`,
-		`C:\wootc\state.json`,
-	} {
-		if _, err := os.Stat(marker); err == nil {
-			return UninstallInfo{Found: true, StorageDrive: "C", Orphaned: true}
+
+	// 2. No root.disk found on any volume, but check for partial-install or
+	// leftover wootc directory across drives (staged, armed, failed, or partial).
+	for _, d := range drives {
+		wootcPath := d + `:\wootc`
+		if st, err := os.Stat(wootcPath); err == nil && st.IsDir() {
+			info := UninstallInfo{
+				Found:        true,
+				StorageDrive: d,
+				Orphaned:     true,
+				Deployed:     deployHasCompleted(d),
+			}
+			if d != "C" {
+				info.OnDedicatedVol, info.ReclaimGB = dedicatedVolumeInfo(d)
+			}
+			return info
 		}
 	}
+
+	// 3. Check for a dedicated wootc-data volume even if \wootc was hand-deleted.
+	for _, dp := range listDataPartitions() {
+		if isDed, reclaim := dedicatedVolumeInfo(dp.Letter); isDed {
+			return UninstallInfo{
+				Found:          true,
+				StorageDrive:   dp.Letter,
+				Orphaned:       true,
+				OnDedicatedVol: true,
+				ReclaimGB:      reclaim,
+			}
+		}
+	}
+
+	// 4. Check for system-wide wootc artifacts (BCD entries, ESP files, or registry).
+	if hasWootcBCDEntry() || hasWootcESPArtifacts() || hasUninstallRegistryEntry() {
+		return UninstallInfo{Found: true, StorageDrive: "C", Orphaned: true}
+	}
+
 	return UninstallInfo{Found: false}
+}
+
+// hasWootcBCDEntry reports whether BCD contains any wootc firmware entry or
+// active one-shot bootsequence pointing to wootc.
+func hasWootcBCDEntry() bool {
+	out, err := runCmd("bcdedit", "/enum", "firmware")
+	if err == nil {
+		re := regexp.MustCompile(`(?ms)identifier\s+(\{[^}]+\})[^{]*?description\s+wootc\s*$`)
+		if re.MatchString(out) {
+			return true
+		}
+	}
+	mgrOut, err := runCmd("bcdedit", "/enum", "{fwbootmgr}")
+	if err == nil && strings.Contains(strings.ToLower(mgrOut), "wootc") {
+		return true
+	}
+	return false
+}
+
+// hasWootcESPArtifacts reports whether the ESP contains any wootc-owned files
+// or directories.
+func hasWootcESPArtifacts() bool {
+	espPath, err := findESP()
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(espPath, "EFI", "wootc")); err == nil {
+		return true
+	}
+	if ownsFedoraNamespace(espPath) {
+		return true
+	}
+	redhatGrub := filepath.Join(espPath, "EFI", "redhat", "grub.cfg")
+	if data, err := os.ReadFile(redhatGrub); err == nil && strings.Contains(string(data), wootcGrubOwnership) {
+		return true
+	}
+	loaderConf := filepath.Join(espPath, "loader", "loader.conf")
+	if data, err := os.ReadFile(loaderConf); err == nil && strings.Contains(string(data), wootcGrubOwnership) {
+		return true
+	}
+	return false
+}
+
+// hasUninstallRegistryEntry reports whether the Add/Remove Programs key exists.
+func hasUninstallRegistryEntry() bool {
+	out, err := runPowerShellOutput(fmt.Sprintf(
+		`if (Test-Path %q) { Write-Output 'EXISTS' }`, uninstallRegKey))
+	return err == nil && strings.TrimSpace(out) == "EXISTS"
+}
+
+// cleanupESP removes all wootc-staged files and directories from the ESP.
+func cleanupESP() error {
+	espPath, err := findESP()
+	if err != nil {
+		return nil
+	}
+
+	// 1. Remove EFI\wootc (our own namespace)
+	_ = os.RemoveAll(filepath.Join(espPath, "EFI", "wootc"))
+
+	// 2. Remove EFI\fedora if staged by wootc (verified via "# wootc" ownership marker)
+	if ownsFedoraNamespace(espPath) {
+		_ = os.RemoveAll(filepath.Join(espPath, "EFI", "fedora"))
+	}
+
+	// 3. Remove EFI\redhat if staged by wootc
+	redhatGrub := filepath.Join(espPath, "EFI", "redhat", "grub.cfg")
+	if data, err := os.ReadFile(redhatGrub); err == nil && strings.Contains(string(data), wootcGrubOwnership) {
+		_ = os.RemoveAll(filepath.Join(espPath, "EFI", "redhat"))
+	}
+
+	// 4. Remove systemd-boot loader configuration if staged by wootc
+	loaderConf := filepath.Join(espPath, "loader", "loader.conf")
+	if data, err := os.ReadFile(loaderConf); err == nil && strings.Contains(string(data), wootcGrubOwnership) {
+		_ = os.Remove(filepath.Join(espPath, "loader", "entries", "wootc-deployer.conf"))
+		_ = os.Remove(loaderConf)
+		_ = os.RemoveAll(filepath.Join(espPath, "EFI", "systemd"))
+	}
+
+	return nil
 }
 
 // deployHasCompleted reports whether the deployer has finished at least once
@@ -246,47 +355,124 @@ func uninstallWith(ctx context.Context, opts UninstallOptions) error {
 	_ = ctx
 	info := getUninstallInfo()
 
-	// 0. Put back what install changed outside its folder: hibernation /
-	// Fast Startup (read the marker BEFORE the install dir is removed), and
-	// the Add/Remove Programs entry. "Windows is unchanged" must be true.
-	restorePriorPowerState()
-	unregisterUninstallEntry()
-
-	// 1. Remove all wootc BCD entries.
-	deleteWootcBCDEntries()
-
-	// 2. Remove ESP files. EFI\fedora only when its grub.cfg is ours — the
-	// shared "# wootc" family, so a post-deploy Phase-2 menu is cleaned up
-	// too instead of stranding wootc's chain on the ESP forever.
-	if espPath, err := findESP(); err == nil {
-		os.RemoveAll(filepath.Join(espPath, "EFI", "wootc")) //nolint:errcheck
-		grubCfg := filepath.Join(espPath, "EFI", "fedora", "grub.cfg")
-		if data, err := os.ReadFile(grubCfg); err == nil && strings.Contains(string(data), wootcGrubOwnership) {
-			os.RemoveAll(filepath.Join(espPath, "EFI", "fedora")) //nolint:errcheck
-		}
-	}
-
 	// Determine where wootc lives (default C: when nothing found).
 	drive := "C"
-	if info.Found {
+	if info.Found && info.StorageDrive != "" {
 		drive = info.StorageDrive
 	}
 	setStorageDrive(drive)
 
-	// 3. Remove the install dir (kernel/vault). root.disk only on request.
-	os.RemoveAll(filepath.Join(wootcDir(), "install")) //nolint:errcheck
-	if opts.DeleteRootDisk || opts.RemovePartition {
-		os.RemoveAll(filepath.Join(wootcDir(), "disks")) //nolint:errcheck
-		os.RemoveAll(wootcDir())                         //nolint:errcheck
+	var errs []string
+
+	// 0. Put back what install changed outside its folder: hibernation /
+	// Fast Startup (read the marker / registry BEFORE the install dir and
+	// Add/Remove key are removed). "Windows is unchanged" must be true.
+	restorePriorPowerState()
+	unregisterUninstallEntry()
+
+	// 1. Remove all wootc BCD entries and disarm one-shot bootsequence.
+	deleteWootcBCDEntries()
+	disarmOneShot()
+
+	// 2. Remove ESP files (ownership-aware).
+	if err := cleanupESP(); err != nil {
+		errs = append(errs, fmt.Sprintf("cleaning ESP files: %v", err))
+	}
+
+	// 3. Remove the install dir, staged files, cache, and logs.
+	// Clean both the active storage drive and C: if distinct.
+	targetDrives := []string{drive}
+	if drive != "C" {
+		targetDrives = append(targetDrives, "C")
+	}
+	for _, d := range targetDrives {
+		wDir := d + `:\wootc`
+		if _, err := os.Stat(wDir); err != nil {
+			continue
+		}
+		// Always remove install, bundle, cache, logs, state.json, and metadata
+		for _, sub := range []string{"install", "bundle", "cache", "logs"} {
+			_ = os.RemoveAll(filepath.Join(wDir, sub))
+		}
+		for _, loose := range []string{"state.json", "channel.txt", "brand.css", "brand.json", "e2e-drive.json", "e2e-drive-state.json"} {
+			_ = os.Remove(filepath.Join(wDir, loose))
+		}
+
+		rootDiskExists := false
+		for _, name := range []string{"root.disk", "root.vhdx"} {
+			if _, err := os.Stat(filepath.Join(wDir, "disks", name)); err == nil {
+				rootDiskExists = true
+				break
+			}
+		}
+
+		// root.disk only on request. If no root.disk exists (partial/orphaned),
+		// clean up the entire folder.
+		if opts.DeleteRootDisk || opts.RemovePartition || !rootDiskExists {
+			_ = os.RemoveAll(filepath.Join(wDir, "disks"))
+			_ = os.RemoveAll(wDir)
+		}
 	}
 
 	// 4. Optionally remove a wootc-created data partition and extend C:.
 	if opts.RemovePartition && info.Found && info.OnDedicatedVol && drive != "C" {
 		if err := removePartitionAndExtendC(drive); err != nil {
-			return fmt.Errorf("removing data partition %s: %w", drive, err)
+			errs = append(errs, fmt.Sprintf("removing data partition %s: %v", drive, err))
 		}
 	}
+
+	// 5. Verification pass: ensure all wootc-owned boot artifacts and installer
+	// state are gone and report failures if anything remained.
+	if vErrs := verifyUninstallClean(opts, drive); len(vErrs) > 0 {
+		errs = append(errs, vErrs...)
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("uninstall cleanup incomplete:\n- %s", strings.Join(errs, "\n- "))
+	}
 	return nil
+}
+
+// verifyUninstallClean inspects the system to ensure that all wootc-owned
+// boot entries, ESP files, registry keys, and directories were removed.
+func verifyUninstallClean(opts UninstallOptions, storageDrive string) []string {
+	var errs []string
+
+	if hasWootcBCDEntry() {
+		errs = append(errs, "a wootc BCD firmware entry is still present")
+	}
+
+	if hasWootcESPArtifacts() {
+		errs = append(errs, "wootc boot files are still present on the ESP")
+	}
+
+	if hasUninstallRegistryEntry() {
+		errs = append(errs, "Add/Remove Programs registry entry is still present")
+	}
+
+	for _, d := range []string{storageDrive, "C"} {
+		installPath := d + `:\wootc\install`
+		if _, err := os.Stat(installPath); err == nil {
+			errs = append(errs, fmt.Sprintf("%s was not removed", installPath))
+		}
+	}
+
+	if opts.DeleteRootDisk || opts.RemovePartition {
+		for _, d := range []string{storageDrive, "C"} {
+			wDir := d + `:\wootc`
+			if _, err := os.Stat(wDir); err == nil {
+				errs = append(errs, fmt.Sprintf("%s was not fully removed", wDir))
+			}
+		}
+	}
+
+	if opts.RemovePartition && storageDrive != "C" {
+		if isDed, _ := dedicatedVolumeInfo(storageDrive); isDed {
+			errs = append(errs, fmt.Sprintf("dedicated volume %s: was not removed", storageDrive))
+		}
+	}
+
+	return errs
 }
 
 // ── Add/Remove Programs ───────────────────────────────────────────────────────
