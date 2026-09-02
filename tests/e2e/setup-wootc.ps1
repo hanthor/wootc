@@ -627,7 +627,7 @@ $armedObj = @{
     exeHash          = $exeHash
 }
 $armedJson = $armedObj | ConvertTo-Json -Depth 4
-Set-Content -Path "$installDir\armed.json" -Value $armedJson -Encoding UTF8
+Set-Content -Force -Path "$installDir\armed.json" -Value $armedJson -Encoding UTF8
 
 if (Test-Path $exeCopy) {
     try {
