@@ -3545,6 +3545,15 @@ if ! qga_windows_probe; then
     qga_wait_reboot "Windows after deployer"
 fi
 
+step "Asserting deployer lifecycle state on Windows..."
+# shellcheck disable=SC2016
+_state_raw=$(qga_powershell '& C:\wootc\wootc.exe status 2>&1' 2>/dev/null | tr -d '\r' || true)
+if echo "$_state_raw" | grep -q '"state"[[:space:]]*:[[:space:]]*"deployed"'; then
+    pass "wootc.exe status reports deployed after deployer finished"
+else
+    fail "wootc.exe status did not report deployed after deploy (got: '$_state_raw')"
+fi
+
 step "Scheduling one-shot Phase 2 Linux boot..."
 # Re-extend NTFS ValidDataLength (VDL) on root.disk before Phase 2 boots.
 # fuse-ntfs-3g resets VDL to the highest byte it actually wrote during the
@@ -4199,6 +4208,14 @@ else
     # went down would satisfy a bare QGA wait instantly and fake the return.
     qga_wait_windows 600
     pass "One-shot Phase 2 boot consumed; Windows returned successfully"
+    step "Asserting Phase-2 first boot lifecycle state on Windows..."
+    # shellcheck disable=SC2016
+    _state_raw=$(qga_powershell '& C:\wootc\wootc.exe status 2>&1' 2>/dev/null | tr -d '\r' || true)
+    if echo "$_state_raw" | grep -q '"state"[[:space:]]*:[[:space:]]*"healthy"'; then
+        pass "wootc.exe status reports healthy after Phase-2 first boot"
+    else
+        fail "wootc.exe status did not report healthy after Phase-2 first boot (got: '$_state_raw')"
+    fi
     # Windows is verifiably back — put the untouched machine on camera
     # (video-only, best-effort).
     demo_windows_untouched

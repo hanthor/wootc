@@ -51,7 +51,12 @@ func writeState(state, phase, errMsg string) {
 // readState loads state.json; ok is false when it does not exist or is
 // unreadable.
 func readState() (LifecycleState, bool) {
-	data, err := os.ReadFile(statePath())
+	return readStateFrom(statePath())
+}
+
+// readStateFrom loads state.json from a specific path.
+func readStateFrom(path string) (LifecycleState, bool) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return LifecycleState{}, false
 	}
