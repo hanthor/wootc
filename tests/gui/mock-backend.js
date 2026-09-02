@@ -20,6 +20,25 @@ function makeApp(mock) {
     BootIntoLinux: () => P(undefined),
     ExistingInstallFound: () => P(!!mock.existing),
     GetStatus: () => P(mock.status || { running: false, done: false, existing: false }),
+    GetInstallSteps: () => P(mock.installStepLabels || [
+      'Checking your PC',
+      'Preparing Windows',
+      'Setting things up',
+      'Finding your files',
+      'Making room for Linux',
+      'Downloading Linux',
+      'Downloading your Linux system',
+      'Preparing the startup menu',
+      'Getting Linux prepared',
+      'Making Linux bootable on your machine',
+      'Saving your settings',
+      'Saving your BitLocker recovery key',
+      'Looking at your installed apps',
+      'Checking your signed-in apps',
+      'Looking for your cloud drives',
+      'Collecting your look and Wi-Fi',
+      'Finishing up',
+    ]),
     StartInstall: (cfg) => {
       // Drive the progress screen through a scripted sequence, fast.
       const steps = mock.installSteps || [];

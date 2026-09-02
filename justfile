@@ -40,6 +40,10 @@ test-all:
 publish-visual src="--from-host himachal":
     bash tests/e2e/publish-visual.sh {{ src }}
 
+# Regenerate step catalogue code and tables from payload/steps.tsv
+steps:
+    python3 payload/gen-steps.py
+
 # ── Local E2E ─────────────────────────────────────────────────────────────────
 
 # Full E2E: build deployer, install Windows, run wootc, verify boot

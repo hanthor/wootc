@@ -46,6 +46,9 @@ jobs:
           print('Root element is unattend')
           "
 
+      - name: Check step catalogue freshness
+        run: python3 payload/gen-steps.py --check
+
   build-deployer:
     runs-on: ubuntu-latest
     steps:

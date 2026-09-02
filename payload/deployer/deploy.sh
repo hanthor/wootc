@@ -80,17 +80,19 @@ phase() {
     # see console/kernel output and must feel that good things are happening).
     # Fields: <start%> <ceiling%> <friendly message>. The animator eases the
     # bar from start toward ceiling so it is always visibly moving.
+    # BEGIN GENERATED SPLASH TABLE
     case "$1" in
-        ntfs-mounted)       splash_set  6 12 "Preparing your disk..." ;;
-        scratch-setup)      splash_set 12 18 "Preparing your disk..." ;;
-        network-wait)       splash_set 16 18 "Waiting for a network connection - plug in a network cable if this takes a while..." ;;
-        bundle-ingest)      splash_set 18 24 "Loading your downloaded system - no internet needed..." ;;
-        registry-preflight) splash_set 18 24 "Connecting to the software library..." ;;
-        fisherman)          splash_set 26 86 "Downloading and installing your Linux system..." ;;
-        verification)       splash_set 88 95 "Almost there - making sure everything is perfect..." ;;
-        reboot)             splash_set 100 100 "All set! Starting your new Linux system..." ;;
+        ntfs-mounted)        splash_set  6 12 "Preparing your disk..." ;;
+        scratch-setup)       splash_set 12 18 "Preparing your disk..." ;;
+        network-wait)        splash_set 16 18 "Waiting for a network connection - plug in a network cable if this takes a while..." ;;
+        bundle-ingest)       splash_set 18 24 "Loading your downloaded system - no internet needed..." ;;
+        registry-preflight)  splash_set 18 24 "Connecting to the software library..." ;;
+        fisherman)           splash_set 26 86 "Downloading and installing your Linux system..." ;;
+        verification)        splash_set 88 95 "Almost there - making sure everything is perfect..." ;;
+        reboot)              splash_set 100 100 "All set! Starting your new Linux system..." ;;
         *) : ;;
     esac
+    # END GENERATED SPLASH TABLE
 }
 
 # ── Reassuring full-screen install UI ───────────────────────────────────────

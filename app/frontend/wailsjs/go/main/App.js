@@ -142,3 +142,7 @@ export function GetLastRun() {
 export function BootIntoLinux() {
   return window['go']['main']['App']['BootIntoLinux']();
 }
+
+export function GetInstallSteps() {
+  return window['go']['main']['App']['GetInstallSteps']();
+}

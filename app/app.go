@@ -706,6 +706,11 @@ func (a *App) runInstall(ctx context.Context, cfg InstallConfig) error {
 	return runPipeline(ctx, cfg, a.emit)
 }
 
+// GetInstallSteps returns the ordered list of Phase-1 installer step labels from the catalogue.
+func (a *App) GetInstallSteps() []string {
+	return InstallerStepLabels
+}
+
 // runPipeline executes the install steps, reporting progress through emit.
 // It is shared between the GUI (Wails events) and headless mode (stdout),
 // so E2E can exercise the exact production pipeline without a display.
@@ -713,29 +718,30 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 	// Direct root.disk + vault to the chosen (possibly unencrypted) volume.
 	setStorageDrive(cfg.StorageDrive)
 	steps := []struct {
+		id      string
 		name    string
 		percent float64
 		fn      func() error
 	}{
-		{"Checking your PC", 2, func() error { return checkSystem() }},
-		{"Preparing Windows", 5, func() error { return disableFastStartup() }},
-		{"Setting things up", 8, func() error { return createDirectories() }},
+		{StepCheckPC, StepLabelCheckPC, 2, func() error { return checkSystem() }},
+		{StepPrepareWindows, StepLabelPrepareWindows, 5, func() error { return disableFastStartup() }},
+		{StepSettingUp, StepLabelSettingUp, 8, func() error { return createDirectories() }},
 		// Resolve where the user's files ACTUALLY live while Windows is still
 		// running and can read its own registry (#64). Best-effort: on a machine
 		// with no redirection nothing is lost if this fails, and the Phase-2
 		// bridge falls back to the literal profile layout.
-		{"Finding your files", 9, func() error { recordKnownFolders(); return nil }},
-		{"Making room for Linux", 15, func() error { return createRootDisk(cfg.DiskSizeGB) }},
-		{"Downloading Linux", 50, func() error {
+		{StepFindingFiles, StepLabelFindingFiles, 9, func() error { recordKnownFolders(); return nil }},
+		{StepMakeRoom, StepLabelMakeRoom, 15, func() error { return createRootDisk(cfg.DiskSizeGB) }},
+		{StepDownloadLinux, StepLabelDownloadLinux, 50, func() error {
 			return downloadDeployer(ctx, func(p float64) {
 				emit(ProgressEvent{
-					Step:    "Downloading Linux",
-					Message: fmt.Sprintf("Downloading Linux… %.0f%%", p*35),
+					Step:    StepLabelDownloadLinux,
+					Message: fmt.Sprintf("%s… %.0f%%", StepLabelDownloadLinux, p*35),
 					Percent: 15 + p*35,
 				})
 			})
 		}},
-		{"Downloading your Linux system", 54, func() error {
+		{StepDownloadSystem, StepLabelDownloadSystem, 54, func() error {
 			// Offline-first (docs/branding-and-distribution.md §3): pull the
 			// selected image to C:\wootc\bundle\oci while the user's working
 			// Windows network still exists — the deployer initramfs has no
@@ -760,20 +766,20 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			}
 			return stageImageBundle(ctx, cfg.ImageRef, func(done, total int64) {
 				pct := 50.0
-				msg := "Downloading your Linux system…"
+				msg := StepLabelDownloadSystem + "…"
 				if total > 0 {
 					pct = 50 + 4*float64(done)/float64(total)
-					msg = fmt.Sprintf("Downloading your Linux system… %.1f of %.1f GB",
-						float64(done)/1e9, float64(total)/1e9)
+					msg = fmt.Sprintf("%s… %.1f of %.1f GB",
+						StepLabelDownloadSystem, float64(done)/1e9, float64(total)/1e9)
 				}
-				emit(ProgressEvent{Step: "Downloading your Linux system", Message: msg, Percent: pct})
+				emit(ProgressEvent{Step: StepLabelDownloadSystem, Message: msg, Percent: pct})
 			})
 		}},
-		{"Preparing the startup menu", 55, func() error { return writeGrubConfig(cfg) }},
-		{"Getting Linux prepared", 65, func() error { return setupESP(cfg) }},
-		{"Making Linux bootable on your machine", 80, func() error { return configureBCD(cfg.Bootloader) }},
-		{"Saving your settings", 85, func() error { return writeVault(cfg) }},
-		{"Saving your BitLocker recovery key", 87, func() error {
+		{StepPrepareStartupMenu, StepLabelPrepareStartupMenu, 55, func() error { return writeGrubConfig(cfg) }},
+		{StepPrepareLinux, StepLabelPrepareLinux, 65, func() error { return setupESP(cfg) }},
+		{StepMakeBootable, StepLabelMakeBootable, 80, func() error { return configureBCD(cfg.Bootloader) }},
+		{StepSaveSettings, StepLabelSaveSettings, 85, func() error { return writeVault(cfg) }},
+		{StepSaveBitLockerKey, StepLabelSaveBitLockerKey, 87, func() error {
 			// When C: is BitLocker-protected, capture the numerical recovery
 			// password so Phase 2 (Linux) can unlock C: and the User Data
 			// Bridge can find the user profiles that live there (#61).
@@ -788,7 +794,7 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			}
 			return nil
 		}},
-		{"Looking at your installed apps", 82, func() error {
+		{StepInspectApps, StepLabelInspectApps, 82, func() error {
 			// Registry-based program inventory (§4.3): enumerate HKLM/HKCU
 			// uninstall keys before Windows goes away, so the migration
 			// dashboard can show the complete picture — not just apps with
@@ -798,7 +804,7 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			}
 			return nil
 		}},
-		{"Checking your signed-in apps", 90, func() error {
+		{StepCheckSignedInApps, StepLabelCheckSignedInApps, 90, func() error {
 			candidates, err := collectSessions()
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "[wootc] session collection skipped: %v\n", err)
@@ -823,7 +829,7 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			}
 			return nil
 		}},
-		{"Looking for your cloud drives", 88, func() error {
+		{StepCloudDrives, StepLabelCloudDrives, 88, func() error {
 			// Cloud-storage detection (#66): OneDrive, Google Drive and
 			// Dropbox. Google Drive lives at a virtual drive letter (G:)
 			// produced by DriveFS at runtime — from Linux, reading the
@@ -833,7 +839,7 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			recordCloudDrives()
 			return nil
 		}},
-		{"Collecting your look and Wi-Fi", 92, func() error {
+		{StepCollectLookWifi, StepLabelCollectLookWifi, 92, func() error {
 			// Wi-Fi profiles (§4.6) migrate UNCONDITIONALLY: recreated as
 			// NetworkManager connections on first boot, so the user is online
 			// without re-typing a single password — the friendliest thing a
@@ -856,7 +862,7 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			}
 			return nil
 		}},
-		{"Finishing up", 96, func() error {
+		{StepFinishingUp, StepLabelFinishingUp, 96, func() error {
 			// Discoverability: an Add/Remove Programs entry so "how do I
 			// remove this?" has the answer Windows users actually look for
 			// (best-effort, removed again by uninstall).
@@ -892,7 +898,7 @@ func runPipeline(ctx context.Context, cfg InstallConfig, emit func(ProgressEvent
 			writeState(StateFailed, s.name, err.Error())
 			return fmt.Errorf("%s: %w", s.name, err)
 		}
-		if s.name == "Making Linux bootable on your machine" {
+		if s.name == StepLabelMakeBootable {
 			armed = true
 		}
 	}
@@ -922,10 +928,10 @@ func (a *App) runPreviewInstall(ctx context.Context) {
 		name    string
 		percent float64
 	}{
-		{"Checking your PC", 5}, {"Making room for Linux", 15},
-		{"Downloading Linux", 50}, {"Getting Linux prepared", 65},
-		{"Making Linux bootable on your machine", 80}, {"Looking at your installed apps", 85},
-		{"Collecting your look and Wi-Fi", 90},
+		{StepLabelCheckPC, 5}, {StepLabelMakeRoom, 15},
+		{StepLabelDownloadLinux, 50}, {StepLabelPrepareLinux, 65},
+		{StepLabelMakeBootable, 80}, {StepLabelInspectApps, 85},
+		{StepLabelCollectLookWifi, 90},
 	}
 	for _, s := range steps {
 		select {

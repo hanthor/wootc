@@ -1,0 +1,29 @@
+# Step catalogue for wootc — single source of truth for phase words and step labels.
+# Columns (tab-separated): id	owner	label
+# Owner must be one of: installer, deployer, firstboot.
+check-pc	installer	Checking your PC
+prepare-windows	installer	Preparing Windows
+setting-up	installer	Setting things up
+finding-files	installer	Finding your files
+make-room	installer	Making room for Linux
+download-linux	installer	Downloading Linux
+download-system	installer	Downloading your Linux system
+prepare-startup-menu	installer	Preparing the startup menu
+prepare-linux	installer	Getting Linux prepared
+make-bootable	installer	Making Linux bootable on your machine
+save-settings	installer	Saving your settings
+save-bitlocker-key	installer	Saving your BitLocker recovery key
+inspect-apps	installer	Looking at your installed apps
+check-signed-in-apps	installer	Checking your signed-in apps
+cloud-drives	installer	Looking for your cloud drives
+collect-look-wifi	installer	Collecting your look and Wi-Fi
+finishing-up	installer	Finishing up
+ntfs-mounted	deployer	Preparing your disk...
+scratch-setup	deployer	Preparing your disk...
+network-wait	deployer	Waiting for a network connection - plug in a network cable if this takes a while...
+bundle-ingest	deployer	Loading your downloaded system - no internet needed...
+registry-preflight	deployer	Connecting to the software library...
+fisherman	deployer	Downloading and installing your Linux system...
+verification	deployer	Almost there - making sure everything is perfect...
+reboot	deployer	All set! Starting your new Linux system...
+firstboot-evidence	firstboot	Recording first-boot evidence

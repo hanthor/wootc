@@ -8,6 +8,7 @@
 export const state = {
   screen: 'loading',   // loading | launchpad | progress | done | control | migrate
   mode: 'installer',   // installer (Windows) | migration (installed Linux)
+  installSteps: [],    // Step catalogue labels received from backend
   images: [],
   sysinfo: null,
   brand: null,         // partner/enterprise branding (themeable)

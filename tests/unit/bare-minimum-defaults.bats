@@ -22,7 +22,7 @@ REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
     # Wi-Fi migrates unconditionally — being online on first boot without
     # re-typing passwords must not hinge on a desktop-look preference.
     # Extract the collect step and require collectWifi BEFORE the look gate.
-    body="$(awk '/Collecting your look and Wi-Fi/,/^\t\t\}\},$/' "$REPO_ROOT/app/app.go")"
+    body="$(awk '/(Collecting your look and Wi-Fi|StepCollectLookWifi)/,/^\t\t\}\},$/' "$REPO_ROOT/app/app.go")"
     wifi_line="$(printf '%s\n' "$body" | grep -n 'collectWifi()' | head -1 | cut -d: -f1)"
     gate_line="$(printf '%s\n' "$body" | grep -n 'if cfg.WindowsLook' | head -1 | cut -d: -f1)"
     [ -n "$wifi_line" ] && [ -n "$gate_line" ]

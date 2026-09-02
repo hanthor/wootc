@@ -1,5 +1,5 @@
 import '../src/style.css';
-import { GetImages, GetSystemInfo, ExistingInstallFound, GetMode, GetSessionCandidates, GetBranding, GetUninstallInfo, GetVMCapability, GetFreshVMCapability, GetSupportPolicy, GetLastRun } from '../wailsjs/go/main/App';
+import { GetImages, GetSystemInfo, ExistingInstallFound, GetMode, GetSessionCandidates, GetBranding, GetUninstallInfo, GetVMCapability, GetFreshVMCapability, GetSupportPolicy, GetLastRun, GetInstallSteps } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime/runtime';
 import { startE2EDrive } from './lib/e2e.js';
 import { state } from './lib/state.js';
@@ -7,7 +7,7 @@ import { setRenderer } from './lib/render.js';
 import { applyBranding } from './lib/branding.js';
 import { renderTitleBar } from './lib/titlebar.js';
 import { renderLaunchpad, applyImageDefaults } from './screens/launchpad.js';
-import { INSTALL_STEPS, renderProgressScreen, renderProgress } from './screens/progress.js';
+import { renderProgressScreen, renderProgress } from './screens/progress.js';
 import { renderVMPreviewScreen } from './screens/vmpreview.js';
 import { renderDoneScreen } from './screens/done.js';
 import { renderControlPanel } from './screens/control.js';
@@ -26,11 +26,12 @@ async function init() {
     if (e.done) { state.screen = 'done'; render(); return; }
     if (e.step && !state.progress.completedSteps.includes(e.step)) {
       // Mark previous step as done when a new one starts
-      const idx = INSTALL_STEPS.indexOf(e.step);
+      const steps = state.installSteps || [];
+      const idx = steps.indexOf(e.step);
       if (idx > 0) {
         for (let i = 0; i < idx; i++) {
-          if (!state.progress.completedSteps.includes(INSTALL_STEPS[i]))
-            state.progress.completedSteps.push(INSTALL_STEPS[i]);
+          if (!state.progress.completedSteps.includes(steps[i]))
+            state.progress.completedSteps.push(steps[i]);
         }
       }
     }
@@ -72,7 +73,7 @@ async function init() {
     return;
   }
 
-  const [images, sysinfo, existing, policy, sessionCandidates, lastRun] = await Promise.all([
+  const [images, sysinfo, existing, policy, sessionCandidates, lastRun, installSteps] = await Promise.all([
     GetImages(),
     GetSystemInfo(),
     ExistingInstallFound(),
@@ -84,8 +85,10 @@ async function init() {
     // Honesty on relaunch: a failed attempt must greet the user as a failed
     // attempt, not as "an existing installation was found".
     Promise.resolve().then(GetLastRun).catch(() => null),
+    GetInstallSteps().catch(() => []),
   ]);
   state.lastRun = lastRun && lastRun.state ? lastRun : null;
+  state.installSteps = installSteps || [];
 
   state.policy = policy;
   state.images = images || [];

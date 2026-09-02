@@ -60,8 +60,9 @@ HOOK="payload/deployer/deploy-hook.sh"
     # verification.
     grep -q 'refusing corrupted or tampered content' app/ocipull.go
     grep -q 'refusing tampered content' app/ocipull.go
-    grep -q '"Downloading your Linux system"' app/app.go
-    grep -q "'Downloading your Linux system'" app/frontend/src/screens/progress.js
+    grep -q 'download-system.*Downloading your Linux system' payload/steps.tsv
+    grep -q 'StepLabelDownloadSystem' app/app.go
+    grep -q '"Downloading your Linux system"' app/steps_gen.go
     # A pre-downloaded bundle records its provenance so it never pins the
     # catalog the way a shipped bundle does (#177).
     grep -q '"predownload"' app/ocipull.go

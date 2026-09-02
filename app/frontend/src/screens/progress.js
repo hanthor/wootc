@@ -6,24 +6,8 @@ import { el, btn } from '../lib/ui.js';
 
 // ── Screen 2: Progress ────────────────────────────────────────────────────────
 
-// The canonical ordered step list. The Go backend emits these exact strings on
-// install:progress, so main.js's event wiring imports it to mark earlier steps
-// complete, and the step list below renders it.
-export const INSTALL_STEPS = [
-  'Checking your PC',
-  'Preparing Windows',
-  'Setting things up',
-  'Finding your files',
-  'Making room for Linux',
-  'Downloading Linux',
-  'Downloading your Linux system',
-  'Preparing the startup menu',
-  'Getting Linux prepared',
-  'Making Linux bootable on your machine',
-  'Saving your settings',
-  'Collecting your look',
-  'Finishing up',
-];
+// The step list is received dynamically from the Go backend (GetInstallSteps)
+// generated from payload/steps.tsv.
 
 export function renderProgressScreen() {
   const wrap = el('div');
@@ -71,8 +55,9 @@ function renderProgressInner() {
   track.appendChild(fill);
 
   // Step list
+  const steps = state.installSteps || [];
   const stepList = el('div', 'progress-steps-list');
-  INSTALL_STEPS.forEach(s => {
+  steps.forEach(s => {
     const item = el('div', 'step-item');
     const done = state.progress.completedSteps.includes(s);
     const active = state.progress.step === s;

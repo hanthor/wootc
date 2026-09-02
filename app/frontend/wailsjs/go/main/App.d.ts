@@ -132,3 +132,4 @@ export function E2EDriveReport(arg1:string):Promise<void>;
 export function GetSupportPolicy():Promise<Record<string, any>>;
 export function GetLastRun():Promise<Record<string, any>>;
 export function BootIntoLinux():Promise<void>;
+export function GetInstallSteps():Promise<string[]>;
