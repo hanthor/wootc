@@ -20,6 +20,17 @@ setup() {
     cd "$REPO_ROOT" || return 1
 }
 
+@test "E2E stages the GRUB configuration embedded by the application" {
+    run grep -F 'cp "$REPO_ROOT/app/grub/"*.cfg' "$REPO_ROOT/tests/e2e/run-e2e.sh"
+    [ "$status" -eq 0 ]
+
+    run grep -F 'cp app/grub/*.cfg' "$REPO_ROOT/tests/e2e/setup-kvm-runner.sh"
+    [ "$status" -eq 0 ]
+
+    [ ! -e "$REPO_ROOT/platform/grub/wubildr.cfg" ]
+    [ ! -e "$REPO_ROOT/platform/grub/wubildr-bootstrap.cfg" ]
+}
+
 # ── paths ────────────────────────────────────────────────────────────────────
 
 @test "docs point at the state file that actually exists" {

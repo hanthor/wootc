@@ -1349,7 +1349,10 @@ if [ "$SKIP_BUILD" = false ]; then
     done
 
     mkdir -p "$SCRIPT_DIR/wootc-files/grub"
-    cp "$REPO_ROOT/platform/grub/"*.cfg "$SCRIPT_DIR/wootc-files/grub/" 2>/dev/null || true
+    # Stage the same GRUB configs embedded in the production installer. Keeping
+    # E2E on this path prevents the boot contract from acquiring a test-only
+    # copy that can drift from the application binary.
+    cp "$REPO_ROOT/app/grub/"*.cfg "$SCRIPT_DIR/wootc-files/grub/" 2>/dev/null || true
 
     # Extract signed shim + GRUB from a Fedora container. These are
     # Microsoft/Fedora-signed and form the Secure Boot chain:
