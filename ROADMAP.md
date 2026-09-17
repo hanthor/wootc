@@ -70,7 +70,7 @@ Beta means the support policy stops saying "alpha" because the evidence exists.
 ### v0.9.0-rc — "Ship-shaped" *(tracking: milestone issue M4)*
 - **Code signing** (EV cert / Azure Trusted Signing): kills the SmartScreen wall — the single biggest first-impression fix, and a spend decision that needs the maintainer.
 - **Try-in-VM (#178, #231)**: Explicitly cut from 1.0; Phase 1 Boot-in-VM on `root.disk` ([ADR 0001](docs/adr/0001-phase1-first-architecture.md)) provides the primary zero-risk VM test path without bundling ~100MB+ of QEMU/builder binaries.
-- Program-migrator plugin architecture (#203): interface decision made; in or out of 1.0 scope, documented either way.
+- **Program-migrator plugin architecture (#203)**: Delivered in commit `341fbd8`; plugin discovery interface and manifest JSON schemas established for 1.0.
 - Docs complete and truthful end-to-end; walkthrough imagery regenerated from the shipping build.
 - Soak begins: consecutive green nightlies counting toward the 1.0 gate, release-blocking regressions only.
 
@@ -94,8 +94,8 @@ The four criteria at the top of this file, verified: 30 days of green nightlies,
 
 | Item | Issue | Priority |
 |------|-------|----------|
-| Session token rewrap, target side | #1 | P1 (beta gate) |
-| Program migrator plugin architecture | #203 | P2 (rc decision) |
+| Session token rewrap, target side | #1 | P1 (beta gate — resolved via staged re-link #347) |
+| Program migrator plugin architecture | #203 | P2 (rc decision — delivered in #354) |
 | E2E runs as systemd user units instead of nohup jobs | #57 | P2 |
 | Try-in-VM pre-install builder VM | #178 | P3 (post-1.0; cut for 1.0 per #231 / ADR 0001) |
 
@@ -104,4 +104,4 @@ The four criteria at the top of this file, verified: 30 days of green nightlies,
 See [CONTRIBUTING.md](./CONTRIBUTING.md). Prefer tasks tied to a red/unverified matrix cell or an open milestone checklist item — evidence that turns a claim green beats untested feature breadth. The milestone tracking issues are the live task boards.
 
 ---
-*Refreshed 2026-08-22 against current `main` (resolves #201). Refine with maintainer input.*
+*Refreshed September 2026 against current `main`. Refine with maintainer input.*
