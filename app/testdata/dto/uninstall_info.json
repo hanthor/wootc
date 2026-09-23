@@ -1,0 +1,10 @@
+{
+  "found": true,
+  "storageDrive": "C",
+  "diskPath": "C:\\wootc\\root.disk",
+  "diskSizeGB": 40,
+  "onDedicatedVol": false,
+  "reclaimGB": 40,
+  "orphaned": false,
+  "deployed": true
+}

@@ -24,6 +24,10 @@ dnf install -y -q rsync python3 util-linux >/dev/null 2>&1 || true
 # calls resolve (mount-user-dirs invokes steam-bridge and detect-apps).
 install -m755 /scripts/wootc-* /usr/local/bin/ 2>/dev/null || \
     { cp /scripts/wootc-* /usr/local/bin/ && chmod +x /usr/local/bin/wootc-*; }
+if [ -d /scripts/plugins.d ]; then
+    mkdir -p /usr/lib/wootc/plugins.d
+    cp -a /scripts/plugins.d/* /usr/lib/wootc/plugins.d/ 2>/dev/null || true
+fi
 
 # ── Fixtures: fake Windows volume at /run/wootc/host + Linux user ────────────────────
 useradd -m -u 1000 alice
@@ -130,6 +134,47 @@ check "[ -f '$LOU/template/Report.dotx' ]" "Office: template copied to LibreOffi
 check "[ -f /home/alice/.local/share/fonts/Calibri.ttf ]" "Office: Calibri font copied so documents render right"
 check "grep -q 'MS Word 2007 XML' $LOU/registrymodifications.xcu" "Office: LibreOffice set to save as .docx by default"
 check "[ -f /home/alice/.config/wootc/bridge-office.json ]" "Office: bridge state recorded"
+
+# ── 5c. App detection & pre-filled profile union (SPEC §4.3) ────────────────
+mkdir -p "/run/wootc/host/Users/alice/AppData/Roaming/Code/User/snippets"
+echo '{"editor.fontSize": 14}' > "/run/wootc/host/Users/alice/AppData/Roaming/Code/User/settings.json"
+echo '[{"key": "ctrl+t", "command": "term"}]' > "/run/wootc/host/Users/alice/AppData/Roaming/Code/User/keybindings.json"
+echo '{"hdr": {"prefix": "h"}}' > "/run/wootc/host/Users/alice/AppData/Roaming/Code/User/snippets/python.json"
+mkdir -p "/run/wootc/host/Users/alice/.vscode/extensions/ms-python.python-2024.1.0"
+mkdir -p "/run/wootc/host/Users/alice/AppData/Roaming/discord"
+mkdir -p "/run/wootc/host/Users/alice/AppData/Roaming/Spotify"
+mkdir -p "/run/wootc/host/Users/alice/AppData/Roaming/vlc"
+mkdir -p "/run/wootc/host/Users/alice/AppData/Roaming/GIMP/2.10"
+mkdir -p "/run/wootc/host/Users/alice/AppData/Roaming/obs-studio/basic/scenes"
+mkdir -p "/run/wootc/host/wootc/install"
+cat > "/run/wootc/host/wootc/install/programs.json" <<'REGJSON'
+{
+  "apps": [
+    {"displayName": "Google Chrome", "publisher": "Google LLC"},
+    {"displayName": "Mozilla Firefox", "publisher": "Mozilla"},
+    {"displayName": "Visual Studio Code", "publisher": "Microsoft Corporation"},
+    {"displayName": "Discord", "publisher": "Discord Inc."},
+    {"displayName": "Spotify", "publisher": "Spotify Ltd"},
+    {"displayName": "VLC media player", "publisher": "VideoLAN"},
+    {"displayName": "LibreOffice", "publisher": "The Document Foundation"},
+    {"displayName": "7-Zip", "publisher": "Igor Pavlov"},
+    {"displayName": "OBS Studio", "publisher": "OBS Project"}
+  ],
+  "defaultBrowser": "ChromeHTML",
+  "defaultMail": "ThunderbirdURL",
+  "startupPrograms": ["Discord", "Spotify"]
+}
+REGJSON
+
+bash /scripts/wootc-detect-apps alice >/dev/null 2>&1 || true
+check "[ -f /home/alice/.config/wootc/bridge-apps.json ]" "App detection: bridge-apps.json recorded"
+check "grep -q '\"app\":\"vscode\"' /home/alice/.config/wootc/bridge-apps.json" "App detection: VS Code detected"
+check "grep -q '\"app\":\"discord\"' /home/alice/.config/wootc/bridge-apps.json" "App detection: Discord detected"
+check "grep -q '\"app\":\"spotify\"' /home/alice/.config/wootc/bridge-apps.json" "App detection: Spotify detected"
+check "grep -q '\"app\":\"libreoffice\"' /home/alice/.config/wootc/bridge-apps.json" "App detection: LibreOffice detected from registry manifest"
+check "grep -q '\"app\":\"7zip\"' /home/alice/.config/wootc/bridge-apps.json" "App detection: 7-Zip detected from registry manifest"
+check "[ -f /home/alice/.config/Code/User/settings.json ]" "App detection: VS Code settings.json copied"
+check "[ -f /home/alice/.config/wootc/vscode-extensions.txt ]" "App detection: VS Code extension list saved"
 
 # ── 6. ESP sync (BLS and classic layouts, fake ESP) ────────────────────────
 mkdir -p /tmp/esp/EFI/wootc /tmp/esp/EFI/fedora /tmp/boot/loader/entries /tmp/boot/ostree/x

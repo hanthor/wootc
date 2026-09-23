@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+HOST = os.environ.get("WOOTC_HOST", "/run/wootc/host")
+WIN_USER = os.environ.get("WOOTC_WIN_USER", "")
+WIN_USER_DIR = os.environ.get("WOOTC_WIN_USER_DIR", os.path.join(HOST, "Users", WIN_USER) if WIN_USER else "")
+
+def count_files(path):
+    total = 0
+    for _root, _dirs, files in os.walk(path):
+        total += len(files)
+        if total > 100000:
+            break
+    return total
+
+def dir_bytes(path, cap=50000):
+    total = seen = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+            seen += 1
+            if seen > cap:
+                return total
+    return total
+
+def item(path, item_id, label, detail=""):
+    return {
+        "id": item_id, "label": label, "detail": detail,
+        "fileCount": count_files(path) if os.path.isdir(path) else 0,
+        "sizeBytes": dir_bytes(path) if os.path.isdir(path) else 0
+    }
+
+items = []
+if WIN_USER_DIR and os.path.isdir(WIN_USER_DIR):
+    ms = os.path.join(WIN_USER_DIR, "AppData", "Roaming", "Microsoft")
+    if os.path.exists(os.path.join(ms, "UProof", "CUSTOM.DIC")):
+        items.append(item(os.path.join(ms, "UProof"), "dictionary", "Custom dictionary", "LibreOffice dictionary"))
+    tpl = os.path.join(ms, "Templates")
+    if os.path.isdir(tpl) and any(f.lower().endswith((".dotx", ".dotm", ".dot")) for f in os.listdir(tpl)):
+        items.append(item(tpl, "templates", "Word templates", "LibreOffice templates"))
+    fonts = os.path.join(ms, "Fonts")
+    if not os.path.isdir(fonts):
+        fonts = os.path.join(WIN_USER_DIR, "AppData", "Local", "Microsoft", "Windows", "Fonts")
+    if os.path.isdir(fonts):
+        items.append(item(fonts, "fonts", "Office fonts", "Fonts copied for document fidelity"))
+
+detected = len(items) > 0
+result = {
+    "detected": detected,
+    "items": items,
+    "summary": "LibreOffice dictionary, templates, fonts, and format defaults" if detected else ""
+}
+
+print(json.dumps(result))
+sys.exit(0)

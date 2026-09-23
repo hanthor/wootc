@@ -89,8 +89,11 @@ Windows 11  →  wootc.exe (arms the system)  →  reboot
   Edge), Steam libraries, MS Office → LibreOffice settings, WSL dotfiles and
   packages. Secrets never move silently: passwords, keys, and tokens stay
   put, and you sign in again where it matters.
-- **BitLocker-safe.** C: is never decrypted — Linux gets its own unencrypted
-  space while your Windows drive stays protected.
+- **BitLocker-safe by design.** C: is never decrypted — Linux gets its own
+  unencrypted space while your Windows drive stays protected. *Gated off in
+  the alpha until the FDE path is matrix-green
+  ([#34](https://github.com/tuna-os/wootc/issues/34)): today the app stops
+  and says so rather than proceed on an encrypted drive.*
 - **A real image catalog** — GNOME, KDE Plasma, Niri, and XFCE desktops on
   Enterprise Linux, Fedora, Arch, and Debian bases, or any supported custom
   OCI image.
@@ -126,6 +129,8 @@ is in **alpha** on the road to a checkable 1.0: see the
 | [SPEC](docs/SPEC.md) | the full specification |
 | [Architecture boundary](docs/architecture-boundary.md) | the generic-migration / bootc seam |
 | [NTFS on Linux](docs/ntfs-on-linux.md) | the known hazards, and why the design survives them |
+| [Borrowed from Libertix](docs/borrowed-from-libertix.md) | six boot-chain and recovery designs, specified against wootc's code, with task lists |
+| [WinUI 3 shell](docs/winui-shell.md) | the native Windows shell that replaces Wails: architecture, engine protocol, cut-over |
 | [Branding & distribution](docs/branding-and-distribution.md) | one engine, five installers |
 | [Manual testing](docs/manual-testing.md) | pre-flight for real-hardware runs |
 
