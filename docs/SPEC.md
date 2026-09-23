@@ -970,9 +970,11 @@ The Windows installer (`wootc.exe`) has four screens:
 ```
 
 **Button actions:**
-- **[Try in VM]**: Bypasses BCD modification. Launches a background Alpine
-  builder VM to pull the OCI image into a local virtual disk and starts
-  QEMU immediately (§6.1). No reboot.
+- **[Try in VM]**: (Optional / Post-1.0 offline bundle; gated by `GetFreshVMCapability`).
+  Bypasses BCD modification. Launches a background Alpine builder VM to pull
+  the OCI image into a local virtual disk and starts QEMU immediately (§6.1).
+  No reboot. In standard 1.0 builds, this affordance is hidden in favor of
+  post-install Phase 1 VM Boot (ADR 0001, #231).
 - **[Install]**: Validates fields, proceeds to pre-flight checks.
 
 #### Screen 1.5: Pre-Flight Mitigation (Conditional)
@@ -1437,6 +1439,13 @@ performance. Two distinct modes:
 
 ### 6.1 Fresh VM from OCI Image (Two-Stage QEMU Handoff)
 
+> **Status (1.0 Scope)**: Deferred to post-1.0 per [ADR 0001](adr/0001-phase1-first-architecture.md)
+> and [#231](https://github.com/tuna-os/wootc/issues/231). The 1.0 distribution relies on
+> §6.2 (Phase 1 Boot-in-VM) against the installed `root.disk`, avoiding bundling ~100MB+
+> of builder/QEMU binaries in standard installer releases while providing a zero-risk VM
+> trial of the real system. The underlying capability check and builder scripts are preserved
+> for evaluation and potential post-1.0 offline bundles.
+
 "Try before you install" — the user clicks **[Try in VM]** on the
 Launchpad, and wootc builds a bootable disk image and launches it in
 a QEMU window. No reboot. No BCD modification. If the user likes it,
@@ -1775,6 +1784,41 @@ wootc/
 ---
 
 ## 9. Open Questions
+
+#### Which Microsoft UEFI CA the firmware trusts (#322)
+
+Secure Boot launches only a loader signed by a certificate authority present
+in the firmware's `db` variable. Microsoft's third-party authority exists in
+two generations:
+
+| Generation | Certificate | Notes |
+|---|---|---|
+| `Microsoft Corporation UEFI CA 2011` | expired 2026-06-27 | firmware ignores expiry, so machines holding it still boot 2011-signed loaders |
+| `Microsoft UEFI CA 2023` | current | signs everything Microsoft issues now; new machines increasingly ship it alone |
+
+A shim signed only by an authority this firmware does not hold fails at
+`bad shim signature` **after** the reboot, and the firmware falls back to
+Windows with nothing said. wootc therefore closes the loop at both ends:
+
+- **Build time.** `packaging/shim-authorities.py` reads the Authenticode
+  signatures out of the staged `shimx64.efi` (walking *every* WIN_CERTIFICATE,
+  since a dual-signed binary carries two) and writes `shim-authorities.json`.
+  The release refuses to publish a shim that is not 2023-signed, and stamps
+  the generations into each exe with `-X main.shimAuthorities=…`.
+- **Preflight.** `getSystemInfo` reads `db` via `Get-SecureBootUEFI -Name db`,
+  parses the `EFI_SIGNATURE_LIST` chain, and records which generations the
+  firmware holds. `gateScenario` refuses **before** anything is written when
+  both sides are known and do not intersect.
+- **When `db` cannot be read**, the install proceeds with an on-screen
+  warning rather than a refusal. `bad shim signature` costs the user a reboot
+  back into Windows, not their data; refusing every PC whose SecureBoot
+  PowerShell module is unavailable would block machines that work today.
+  (This is a deliberate softening of the original design in
+  `docs/borrowed-from-libertix.md` §1, which called for refusing on unknown.)
+
+`mmx64.efi` (MokManager) is signed by the distribution's own key and verified
+by shim rather than by the firmware, so it is deliberately not graded against
+the Microsoft authorities.
 
 1. **Secure Boot with GRUB2**: WubiUEFI uses shim for Secure Boot.
    wootc inherits this for the GRUB2 path. The shim must be signed by

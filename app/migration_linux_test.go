@@ -96,3 +96,35 @@ func TestDirSizeMissingPath(t *testing.T) {
 		t.Errorf("dirSize(missing) = %d, want -1 (du fails, UI shows \"calculating…\")", got)
 	}
 }
+
+func TestReadSessionExportsFrom(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "exports.json")
+	payload := `[{"app":"chrome","state":"staged","reason":"protected envelope staged; Linux app import still required"},{"app":"spotify","state":"imported","reason":"imported"}]`
+	if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exports := readSessionExportsFrom(path)
+	if len(exports) != 2 {
+		t.Fatalf("expected 2 exports, got %d", len(exports))
+	}
+	if exports["chrome"].State != "staged" {
+		t.Errorf("chrome state = %q, want staged", exports["chrome"].State)
+	}
+	if exports["spotify"].State != "imported" {
+		t.Errorf("spotify state = %q, want imported", exports["spotify"].State)
+	}
+}
+
+func TestReadSessionExportsFromFailClosed(t *testing.T) {
+	if got := readSessionExportsFrom(filepath.Join(t.TempDir(), "absent.json")); len(got) != 0 {
+		t.Errorf("absent exports file = %#v, want empty map", got)
+	}
+	malformed := filepath.Join(t.TempDir(), "malformed.json")
+	if err := os.WriteFile(malformed, []byte("bad-json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSessionExportsFrom(malformed); len(got) != 0 {
+		t.Errorf("malformed exports file = %#v, want empty map", got)
+	}
+}

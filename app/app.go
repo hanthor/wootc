@@ -14,84 +14,6 @@ import (
 
 // ── Data types ────────────────────────────────────────────────────────────────
 
-// Image is one bootable variant from the catalog.
-type Image struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Emoji       string `json:"emoji"`
-	Base        string `json:"base"`
-	Desktop     string `json:"desktop"`
-	DesktopName string `json:"desktopName"`
-	ImageRef    string `json:"imageRef"`
-	Description string `json:"description"`
-	Bootloader  string `json:"bootloader"` // grub2 | systemd-boot
-	ComposeFS   bool   `json:"composeFs"`
-	Family      string `json:"family"` // el10 | fedora | arch | debian | custom
-	// Status gates what a release channel offers (docs/RELEASING.md):
-	//   "green"        — proven end-to-end by the E2E matrix; offered in every channel
-	//   "experimental" — builds/works but not yet E2E-green; hidden in alpha
-	// Empty is treated as "experimental" (fail safe — never surface an
-	// unproven image to an alpha user by omission).
-	Status string `json:"status"`
-	// MokEnroll is the MokManager password for images whose custom kernel
-	// needs the distribution's MOK key enrolled under Secure Boot (#248).
-	// Non-empty means: the deployer queues the enrollment, and the GUI warns
-	// the user about the one-time blue MokManager screen with this password.
-	MokEnroll string `json:"mokEnroll,omitempty"`
-}
-
-// InstallConfig is the parameters collected on Screen 1.
-type InstallConfig struct {
-	ImageRef   string `json:"imageRef"`
-	DiskSizeGB int    `json:"diskSizeGB"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	Hostname   string `json:"hostname"`
-	// Bootloader is the deployer boot chain: "auto" (default; the deployer
-	// probes the image and picks the backend), "grub2" or "systemd-boot"
-	// (explicit Advanced overrides).
-	Bootloader string `json:"bootloader"` // "auto" | "grub2" | "systemd-boot"
-	ComposeFS  bool   `json:"composeFs"`
-	// StorageDrive is the drive letter (no colon) where root.disk + vault
-	// live. Empty means C:. On a BitLocker-protected C:, the GUI sets this
-	// to an unencrypted data volume so the deployer can mount it read-write
-	// every boot without a decryption prompt (SPEC §3.5). C: stays encrypted.
-	StorageDrive string `json:"storageDrive"`
-	// Encryption for the Linux root inside root.disk (SPEC §2.6):
-	// "none" | "tpm2-luks" (auto-unlock via TPM, recommended) |
-	// "luks-passphrase" (prompt every boot).
-	Encryption     string `json:"encryption"`
-	LuksPassphrase string `json:"luksPassphrase"`
-	// WindowsLook opts into Windows-Style Mode (SPEC §4.4): bring the user's
-	// wallpaper, accent, keyboard layout, taskbar pins and desktop shortcuts
-	// over on first login. Default false — we honor the image maker's desktop
-	// defaults unless the user asks to make it feel like Windows.
-	WindowsLook bool `json:"windowsLook"`
-	// SessionConsent is opt-in per app because it authorizes moving auth
-	// material. An absent or false entry never stages a session envelope.
-	SessionConsent map[string]bool `json:"sessionConsent,omitempty"`
-	// FaultInject injects a simulated failure or cancellation at a specific
-	// install boundary (root-disk|image-pull|efi-staging|bcd-arming|pre-reboot).
-	FaultInject string `json:"faultInject,omitempty"`
-}
-
-// ProgressEvent is emitted during install for the frontend progress bar.
-type ProgressEvent struct {
-	Step    string  `json:"step"`
-	Message string  `json:"message"`
-	Percent float64 `json:"percent"`
-	Done    bool    `json:"done"`
-	Error   string  `json:"error,omitempty"`
-}
-
-// InstallStatus is the current state of a running or completed install.
-type InstallStatus struct {
-	Running  bool   `json:"running"`
-	Done     bool   `json:"done"`
-	Error    string `json:"error,omitempty"`
-	Existing bool   `json:"existing"` // root.vhdx already found on startup
-}
-
 // SystemInfo describes the host Windows environment.
 type SystemInfo struct {
 	OSVersion   string  `json:"osVersion"`
@@ -155,6 +77,16 @@ type SystemInfo struct {
 	// user already has. Empty when unreadable or when nothing usable
 	// survives; the GUI then leaves the field for the user to fill.
 	SuggestedUsername string `json:"suggestedUsername"`
+	// TrustedUefiAuthorities lists the Microsoft UEFI CA generations this
+	// machine's firmware holds in its db variable ("2011", "2023"), so the
+	// preflight can tell before the reboot whether the signed shim this
+	// build stages will be launched at all (#322). Empty means the db could
+	// not be read, which warns rather than refusing.
+	TrustedUefiAuthorities []string `json:"trustedUefiAuthorities"`
+	// SecureBootChainWarning is set when Secure Boot is on but the db could
+	// not be read: honest disclosure that one check could not be made,
+	// shown before the user commits rather than after the restart.
+	SecureBootChainWarning string `json:"secureBootChainWarning"`
 }
 
 // sanitizeUsername converts a Windows account name into a legal Linux
@@ -226,6 +158,22 @@ func sanitizeHostname(name string) string {
 	return out
 }
 
+// deriveHumanUsername derives the machine's human user for Linux account creation (#197, #225).
+// When running elevated under over-the-shoulder UAC, user.Current() gives the
+// elevating admin. We resolve the user in order of preference:
+//  1. Environment variables passed across the elevation boundary (e.g. WOOTC_ORIGINAL_USER)
+//  2. The interactive desktop user (e.g. Win32_ComputerSystem.UserName / explorer.exe owner)
+//  3. The current process user (fallback)
+func deriveHumanUsername(envUser, interactiveUser, currentUser string) string {
+	if s := sanitizeUsername(envUser); s != "" {
+		return s
+	}
+	if s := sanitizeUsername(interactiveUser); s != "" {
+		return s
+	}
+	return suggestUsername(currentUser)
+}
+
 // suggestUsername and suggestHostname wrap the sanitisers with the fallbacks
 // the bare-minimum launchpad contract requires: identity must ALWAYS derive,
 // because a derived identity is what keeps those fields under Advanced and
@@ -251,6 +199,15 @@ func suggestHostname(raw string) string {
 	return "tunaos"
 }
 
+// DedicatedVolumeLabel is the required filesystem label for a wootc-created partition (#197, #225).
+const DedicatedVolumeLabel = "wootc-data"
+
+// isDedicatedVolume reports whether a volume with the given non-system items count
+// and filesystem label belongs to wootc and is safe to remove.
+func isDedicatedVolume(itemsCount int, label string) bool {
+	return itemsCount == 0 && strings.EqualFold(strings.TrimSpace(label), DedicatedVolumeLabel)
+}
+
 // DataPartition is a candidate unencrypted volume for root.disk.
 type DataPartition struct {
 	Letter    string  `json:"letter"`
@@ -264,7 +221,8 @@ type DataPartition struct {
 // App is the Wails application backend. All exported methods are callable
 // from the frontend via the generated wailsjs bindings.
 type App struct {
-	ctx context.Context
+	ctx     context.Context
+	emitter EventEmitter
 	// mu guards status and cancel. GetStatus() is polled from the frontend
 	// on a timer while the install goroutine mutates status concurrently —
 	// without the lock that is a data race the Go race detector flags.
@@ -275,6 +233,13 @@ type App struct {
 
 func NewApp() *App {
 	return &App{}
+}
+
+// SetEmitter configures the event emitter (e.g. Wails runtime or stdio JSON-RPC).
+func (a *App) SetEmitter(e EventEmitter) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.emitter = e
 }
 
 // setStatus atomically replaces the install status.
@@ -293,6 +258,11 @@ func (a *App) mutateStatus(fn func(s *InstallStatus)) {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.mu.Lock()
+	if a.emitter == nil {
+		a.emitter = &wailsEmitter{ctx: ctx}
+	}
+	a.mu.Unlock()
 	// Check for existing install on startup — routes to Control Panel screen.
 	existing := a.existingInstallFound()
 	a.mutateStatus(func(s *InstallStatus) { s.Existing = existing })
@@ -349,7 +319,7 @@ func (a *App) GetSupportPolicy() SupportPolicy {
 		// Full matrix green (the beta bar): everything is on the table; the
 		// axes that are still red stay explicitly false until their issue closes.
 		pol = SupportPolicy{Channel: "beta", ExperimentalImages: true,
-			BitLockerSupported: false, CustomImageAllowed: true,
+			BitLockerSupported: true, CustomImageAllowed: true,
 			Reason: "Beta — most images and scenarios supported."}
 	case "stable":
 		pol = SupportPolicy{Channel: "stable", ExperimentalImages: true,
@@ -383,12 +353,20 @@ func (a *App) gateScenario(cfg InstallConfig) error {
 	pol := a.GetSupportPolicy()
 	// BitLocker/FDE path is not green yet (#34).
 	if !pol.BitLockerSupported {
-		si := getSystemInfo()
-		if si.BitLockerOn {
+		if getSystemInfo().BitLockerOn {
 			return fmt.Errorf("BitLocker drive encryption isn't supported in the %s yet — "+
 				"we're finishing testing so your files stay safe. It's coming soon; "+
 				"for now, wootc works on PCs where drive encryption is off", pol.Channel)
 		}
+	}
+	// Secure Boot: can this firmware launch the shim we stage? (#322)
+	// Checked here, before a single byte is written, because the failure it
+	// prevents ("bad shim signature") happens after the reboot, where the
+	// user has no way to find out why Windows came back.
+	si := getSystemInfo()
+	if v := checkSecureBootChain(si.SecureBootOn, si.SecureBootKnown,
+		si.TrustedUefiAuthorities, stagedShimAuthorities()); v.Blocked {
+		return fmt.Errorf("%s", v.Message)
 	}
 	// Only offer images the channel permits. Enterprise images.json override
 	// (custom refs) is trusted; a custom ref typed by the user is gated.
@@ -665,6 +643,7 @@ type UninstallInfo struct {
 	DiskSizeGB     float64 `json:"diskSizeGB"`
 	OnDedicatedVol bool    `json:"onDedicatedVol"` // wootc-created data partition
 	ReclaimGB      float64 `json:"reclaimGB"`      // space freed if the volume is removed
+	VolumeLabel    string  `json:"volumeLabel,omitempty"` // verified volume label (e.g. "wootc-data")
 	// Orphaned: no root.disk anywhere, but leftover boot arming (bcd-guid /
 	// state.json) exists — the "user deleted the folder by hand" case, which
 	// previously had NO GUI path to clean up the boot entry.
@@ -958,9 +937,35 @@ func (a *App) GetLastRun() LifecycleState {
 	return s
 }
 
-// emit sends a progress event to the frontend.
+// VMEvent is a Try-in-VM progress event (frontend listens on "vm:progress").
+type VMEvent struct {
+	Stage   string  `json:"stage"` // pulling | installing | booting | ready | error
+	Percent float64 `json:"percent"`
+	Message string  `json:"message"`
+}
+
+// emit sends a progress event to the frontend or shell.
 func (a *App) emit(e ProgressEvent) {
-	runtime.EventsEmit(a.ctx, "install:progress", e)
+	a.mu.Lock()
+	em := a.emitter
+	a.mu.Unlock()
+	if em != nil {
+		em.Emit("install:progress", e)
+	} else if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "install:progress", e)
+	}
+}
+
+// emitVM sends a VM progress event to the frontend or shell.
+func (a *App) emitVM(e VMEvent) {
+	a.mu.Lock()
+	em := a.emitter
+	a.mu.Unlock()
+	if em != nil {
+		em.Emit("vm:progress", e)
+	} else if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "vm:progress", e)
+	}
 }
 
 // runPreviewInstall scripts a fast, harmless progress run for UI testing.

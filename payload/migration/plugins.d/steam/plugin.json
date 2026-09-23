@@ -1,0 +1,28 @@
+{
+  "$schema": "https://tuna-os.github.io/wootc/schemas/v1/plugin.schema.json",
+  "schemaVersion": 1,
+  "id": "steam",
+  "name": "Steam Game Libraries",
+  "version": "1.0.0",
+  "description": "Discovers installed Windows Steam libraries and makes them visible to Linux Steam in place.",
+  "category": "games",
+  "author": "TunaOS Contributors",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/tuna-os/wootc",
+  "target": {
+    "appType": "flatpak",
+    "suggestedPackages": [
+      "com.valvesoftware.Steam"
+    ],
+    "requiresHostMount": true
+  },
+  "execution": {
+    "detectTimeoutSec": 10,
+    "importTimeoutSec": 60,
+    "requiresAdmin": false
+  },
+  "ui": {
+    "defaultOn": true,
+    "detailsTemplate": "{count} libraries detected ({sizeBytes})"
+  }
+}

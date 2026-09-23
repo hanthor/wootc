@@ -59,7 +59,7 @@ MATRIX_WF="$ROOT/.github/workflows/e2e-matrix.yml"
 @test "deploy.sh reads wootc.fault and records failed state" {
     grep -q 'read_cmdline wootc.fault' "$DEPLOY_SH"
     grep -q 'deploy-failure' "$DEPLOY_SH"
-    grep -q '"state":"failed"' "$DEPLOY_SH"
+    grep -q 'write_ntfs_state "failed"' "$DEPLOY_SH"
 }
 
 @test "assert-recovery.ps1 validates interrupted, retried, and uninstalled stages" {

@@ -547,7 +547,7 @@ func configureBCD(bootloader string) error {
 	// GUI/headless-armed machine deploys fine but Phase 2 can never be
 	// scheduled. Best-effort: BCD itself is already armed at this point.
 	if err := os.WriteFile(`C:\wootc\install\bcd-guid.txt`, []byte(guid), 0o644); err != nil {
-		fmt.Printf("warning: could not persist bcd-guid.txt: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: could not persist bcd-guid.txt: %v\n", err)
 	}
 
 	// Enforce the bootsequence-only promise: /copy can register the clone in
@@ -611,6 +611,14 @@ func deleteWootcBCDEntries() {
 		runCmd("bcdedit", "/set", "{fwbootmgr}", "displayorder", m[1], "/remove") //nolint:errcheck
 		runCmd("bcdedit", "/delete", m[1])                                        //nolint:errcheck
 	}
+	guidPath := filepath.Join(wootcDir(), "install", "bcd-guid.txt")
+	if b, err := os.ReadFile(guidPath); err == nil {
+		if g := strings.TrimSpace(string(b)); strings.HasPrefix(g, "{") {
+			runCmd("bcdedit", "/set", "{fwbootmgr}", "displayorder", g, "/remove") //nolint:errcheck
+			runCmd("bcdedit", "/delete", g)                                        //nolint:errcheck
+		}
+	}
+	runCmd("bcdedit", "/deletevalue", "{fwbootmgr}", "bootsequence") //nolint:errcheck
 }
 
 

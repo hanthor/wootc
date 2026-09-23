@@ -226,6 +226,7 @@ const APP_ICONS = {
 // The honest outcome badge, driven by the backend's session verdict.
 const SESSION_BADGE = {
   portable: { label: '✓ Signed in', cls: 'ok' },
+  staged:   { label: 'Staged — sign in once', cls: '' },
   signin:   { label: 'Sign in once', cls: '' },
   relink:   { label: 'Re-link needed (2 steps)', cls: '' },
   none:     { label: 'Re-link needed', cls: '' },
@@ -253,7 +254,7 @@ function renderAppRow(a) {
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     checkbox.checked = !!a.consent;
-    checkbox.title = 'Allow session token copy when the Windows-online exporter supports this app';
+    checkbox.title = 'Allow session key staging when the Windows-online exporter supports this app';
     checkbox.onchange = async () => {
       checkbox.disabled = true;
       try { await SetSessionConsent(a.app, checkbox.checked); a.consent = checkbox.checked; }

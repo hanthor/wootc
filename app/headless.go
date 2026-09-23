@@ -19,7 +19,7 @@ func isHeadlessInvocation(args []string) bool {
 		return false
 	}
 	switch args[1] {
-	case "install", "status", "uninstall":
+	case "install", "status", "uninstall", "serve":
 		return true
 	}
 	return false
@@ -29,19 +29,35 @@ func isHeadlessInvocation(args []string) bool {
 // code. It never launches the webview.
 func runHeadless(args []string) int {
 	switch args[1] {
+	case "serve":
+		return runServe()
 	case "install":
 		return headlessInstall(args[2:])
 	case "status":
 		return headlessStatus()
 	case "uninstall":
-		if err := uninstall(context.Background()); err != nil {
-			fmt.Fprintf(os.Stderr, "uninstall: %v\n", err)
-			return 1
-		}
-		fmt.Println("uninstalled")
-		return 0
+		return headlessUninstall(args[2:])
 	}
 	return 2
+}
+
+func headlessUninstall(args []string) int {
+	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
+	deleteRootDisk := fs.Bool("delete-root-disk", false, "delete root.disk (loses Linux data)")
+	removePartition := fs.Bool("remove-partition", false, "remove the wootc data partition and extend C:")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	opts := UninstallOptions{
+		DeleteRootDisk:  *deleteRootDisk,
+		RemovePartition: *removePartition,
+	}
+	if err := uninstallWith(context.Background(), opts); err != nil {
+		fmt.Fprintf(os.Stderr, "uninstall: %v\n", err)
+		return 1
+	}
+	fmt.Println("uninstalled")
+	return 0
 }
 
 func headlessInstall(args []string) int {
