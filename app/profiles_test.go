@@ -83,3 +83,86 @@ func TestListWindowsProfilesNoUsersDir(t *testing.T) {
 		t.Errorf("got %v, want nil when there is no Users directory", got)
 	}
 }
+
+// Non-Latin profiles (CJK, Cyrillic) and collisions after truncation must
+// receive winuserN fallback accounts instead of being silently dropped (#197, #224).
+func TestListWindowsProfilesNonLatinAndCollisionFallbacks(t *testing.T) {
+	users := filepath.Join(t.TempDir(), "Users")
+	createProfile := func(name string) {
+		d := filepath.Join(users, name)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "NTUSER.DAT"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	createProfile("田中")                               // CJK: sanitizes to "" -> winuser1
+	createProfile("Иван")                             // Cyrillic: sanitizes to "" -> winuser2
+	createProfile("very-long-profile-name-that-truncates-1111") // truncates to 32 chars
+	createProfile("very-long-profile-name-that-truncates-2222") // collides on same 32 chars -> winuser3
+
+	got := listProfilesIn(users, "primary", "PrimaryUser")
+
+	want := []profileMapping{
+		{WindowsDir: "very-long-profile-name-that-truncates-1111", LinuxUser: "very-long-profile-name-that-trun"},
+		{WindowsDir: "very-long-profile-name-that-truncates-2222", LinuxUser: "winuser1"},
+		{WindowsDir: "Иван", LinuxUser: "winuser2"},
+		{WindowsDir: "田中", LinuxUser: "winuser3"},
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %d profiles (%v), want %d (%v)", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("[%d] got %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+// Localized built-in system accounts (Administrator, Guest, DefaultAccount in
+// French, German, Spanish, Russian, Chinese, Japanese, etc.) must not become
+// login-screen accounts (#197, #224).
+func TestListWindowsProfilesLocalizedBuiltinsExcluded(t *testing.T) {
+	users := filepath.Join(t.TempDir(), "Users")
+	createProfile := func(name string) {
+		d := filepath.Join(users, name)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "NTUSER.DAT"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Built-in accounts across locales
+	createProfile("Administrateur")           // French Admin
+	createProfile("Invité")                   // French Guest
+	createProfile("Gast")                     // German Guest
+	createProfile("Administrador")            // Spanish Admin
+	createProfile("Invitado")                 // Spanish Guest
+	createProfile("Администратор")            // Russian Admin
+	createProfile("Гость")                    // Russian Guest
+	createProfile("管理员")                    // Chinese Admin
+	createProfile("管理者")                    // Japanese Admin
+	createProfile("ゲスト")                    // Japanese Guest
+	createProfile("Guest")                    // English Guest
+	createProfile("All Users")                // English Builtin
+
+	// A real user
+	createProfile("realuser")
+
+	got := listProfilesIn(users, "admin", "admin")
+	want := []profileMapping{
+		{WindowsDir: "realuser", LinuxUser: "realuser"},
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v (all localized built-ins must be excluded)", got, want)
+	}
+	if got[0] != want[0] {
+		t.Fatalf("got %v, want %v", got[0], want[0])
+	}
+}

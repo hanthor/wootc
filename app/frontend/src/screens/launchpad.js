@@ -58,6 +58,14 @@ export function renderLaunchpad() {
     // Recovery-key warning (#63): tell the user to record their key before
     // proceeding, regardless of whether we unlock C: or carve a separate
     // volume. This is honest disclosure — independent of #61.
+    // Secure Boot is on but we could not read which certificates the
+    // firmware trusts (#322). Say so before the user commits: the check we
+    // could not make is the one that decides whether the restart reaches
+    // Linux at all.
+    if (state.sysinfo?.secureBootChainWarning) {
+      screen.appendChild(warningBanner(
+        '<b>⚠ One check we could not make:</b> ' + state.sysinfo.secureBootChainWarning));
+    }
     if (state.sysinfo?.bitLockerRecoveryKeyWarning) {
       screen.appendChild(warningBanner(
         '<b>⚠ Before you continue:</b> Make sure you have your BitLocker recovery key. ' +
@@ -260,7 +268,7 @@ export function renderLaunchpad() {
   if (movableSessions.length) {
     sessionBox = el('div');
     sessionBox.style.cssText = 'margin-top:8px;padding:8px;border:1.5px solid var(--border);border-radius:6px';
-    sessionBox.innerHTML = `<div style="font-size:12px;font-weight:600">Signed-in app sessions</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px">Optional: move these sessions while Windows is online. Off means you will sign in once on Linux.</div>`;
+    sessionBox.innerHTML = `<div style="font-size:12px;font-weight:600">App session staging (opt-in)</div><div style="font-size:11.5px;color:var(--text-muted);margin-top:2px">Optional: stage session keys while Windows is online. Staged — you'll sign in once on Linux until target import is verified.</div>`;
     movableSessions.forEach(candidate => {
       const row = el('label');
       row.style.cssText = 'display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:12px;margin-top:7px';
@@ -339,7 +347,8 @@ export function renderLaunchpad() {
   const installBtn = btn(`${installVerb()} →`, 'btn btn-primary', () => startInstall());
   installBtn.id = 'install-btn';
   footer.appendChild(btn('Cancel', 'btn btn-ghost', () => Quit()));
-  // Try-in-VM (§6.1): only when a fresh-build VM is possible on this host.
+  // Try-in-VM (§6.1): gated on fresh VM capability (deferred to post-1.0 per ADR 0001 / #231;
+  // available when builder artifacts are present in an offline bundle).
   if (state.freshVmCapability?.available && state.selected) {
     footer.appendChild(btn('Try in VM', 'btn btn-ghost', () => tryInVM()));
   }

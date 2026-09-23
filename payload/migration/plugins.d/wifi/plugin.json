@@ -1,0 +1,25 @@
+{
+  "$schema": "https://tuna-os.github.io/wootc/schemas/v1/plugin.schema.json",
+  "schemaVersion": 1,
+  "id": "wifi",
+  "name": "Wi-Fi Networks",
+  "version": "1.0.0",
+  "description": "Imports saved Wi-Fi profiles from Windows into NetworkManager.",
+  "category": "wifi",
+  "author": "TunaOS Contributors",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/tuna-os/wootc",
+  "target": {
+    "appType": "native",
+    "suggestedPackages": [],
+    "requiresHostMount": true
+  },
+  "execution": {
+    "detectTimeoutSec": 10,
+    "importTimeoutSec": 60,
+    "requiresAdmin": true
+  },
+  "ui": {
+    "defaultOn": true
+  }
+}

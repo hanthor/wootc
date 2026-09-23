@@ -223,7 +223,7 @@ cleanup() {
         cat /proc/mounts > /mnt/ntfs/wootc/logs/deployer-last-mounts.log 2>&1 || true
         if [[ "$_rc" -ne 0 || "${DEPLOY_OK:-0}" -ne 1 ]]; then
             _fail_phase=$(cat /run/wootc-phase 2>/dev/null || echo "unknown")
-            write_ntfs_state "failed" "$_fail_phase" "Deployer failed (exit $_rc)"
+            write_ntfs_state "failed" "$_fail_phase" "Deployer failed in phase $_fail_phase (exit $_rc)"
         fi
         # reboot -f follows an unmount failure here; without an explicit sync
         # the log data never reaches the NTFS volume (observed as a
@@ -2765,6 +2765,16 @@ QGAEOF
     mig_opt 644 wootc-user.desktop "$DEPLOY_ROOT/usr/share/applications/wootc-user.desktop"
     # Gates the bridges on the migration chooser's opt-out selection.
     mig_opt 755 wootc-selection "$DEPLOY_ROOT/var/usrlocal/bin/wootc-selection"
+    # Program migrator plugins and schemas (docs/plugin-architecture.md).
+    if [[ -d /usr/lib/wootc/migration/plugins.d ]]; then
+        mkdir -p "$DEPLOY_ROOT/usr/lib/wootc/plugins.d" "$DEPLOY_ROOT/var/usrlocal/lib/wootc/plugins.d"
+        cp -a /usr/lib/wootc/migration/plugins.d/* "$DEPLOY_ROOT/usr/lib/wootc/plugins.d/" 2>/dev/null || true
+        cp -a /usr/lib/wootc/migration/plugins.d/* "$DEPLOY_ROOT/var/usrlocal/lib/wootc/plugins.d/" 2>/dev/null || true
+    fi
+    if [[ -d /usr/lib/wootc/migration/schemas ]]; then
+        mkdir -p "$DEPLOY_ROOT/usr/lib/wootc/schemas"
+        cp -a /usr/lib/wootc/migration/schemas/* "$DEPLOY_ROOT/usr/lib/wootc/schemas/" 2>/dev/null || true
+    fi
     # Phase 3 (§4.2 stage 5-6): "move to Linux only" planner. Analysis path is
     # live; the destructive repartition path is guarded off until rung-3 proof.
     # fisherman is not in the migration directory (it is built from Go in the
@@ -2821,9 +2831,35 @@ QGAEOF
         "$DEPLOY_ROOT/var/usrlocal/bin/wootc-esp-sync"
     install -m644 /usr/lib/wootc/migration/wootc-esp-sync.service \
         "$DEPLOY_ROOT/etc/systemd/system/wootc-esp-sync.service"
+    # Signed-chain refresh (#333): grades a candidate shim against the
+    # firmware's trust store and the installed SBAT generation before it is
+    # allowed onto the ESP. Without this helper wootc-esp-sync leaves the
+    # signed chain alone, which is the pre-#333 behaviour.
+    mig_opt 755 wootc-shim-trust "$DEPLOY_ROOT/var/usrlocal/bin/wootc-shim-trust"
+    if [[ -f /usr/lib/wootc/migration/wootc-esp-sync.path ]]; then
+        install -m644 /usr/lib/wootc/migration/wootc-esp-sync.path \
+            "$DEPLOY_ROOT/etc/systemd/system/wootc-esp-sync.path"
+        mkdir -p "$DEPLOY_ROOT/etc/systemd/system/paths.target.wants"
+        ln -sf ../wootc-esp-sync.path \
+            "$DEPLOY_ROOT/etc/systemd/system/paths.target.wants/wootc-esp-sync.path"
+    fi
     mkdir -p "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants"
     ln -sf ../wootc-esp-sync.service \
         "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/wootc-esp-sync.service"
+
+    # Phase-2 first-boot evidence and health marker (§2, §3): updates state.json to healthy.
+    install -m755 /usr/lib/wootc/migration/wootc-firstboot-evidence \
+        "$DEPLOY_ROOT/var/usrlocal/bin/wootc-firstboot-evidence"
+    install -m644 /usr/lib/wootc/migration/wootc-firstboot-evidence.service \
+        "$DEPLOY_ROOT/etc/systemd/system/wootc-firstboot-evidence.service"
+    ln -sf ../wootc-firstboot-evidence.service \
+        "$DEPLOY_ROOT/etc/systemd/system/multi-user.target.wants/wootc-firstboot-evidence.service"
+    if [[ -f "$DEPLOY_ROOT/etc/systemd/system/wootc-firstboot-evidence.service" ]]; then
+        log "  [PASS] wootc-firstboot-evidence.service installed"
+    else
+        err "  [WARN] wootc-firstboot-evidence.service install failed"
+    fi
+
     install -m755 /usr/lib/wootc/migration/wootc-detect-apps \
         "$DEPLOY_ROOT/var/usrlocal/bin/wootc-detect-apps"
     install -m755 /usr/lib/wootc/migration/wootc-office-bridge \

@@ -82,12 +82,23 @@ ISO ships Debian's shim 16.1, which is dual-signed.
    2023-only cell must show the refusal text and never reach the reboot.
 
 ### Tasks
-- [ ] build-time signer extraction → `shim-authorities.json`, fail on 2011-only
-- [ ] bump the shim source to a dual-signed `shim-x64`, pin the NVR, assert in E2E
-- [ ] `SystemInfo.TrustedUefiAuthorities` + `SecureBootEnabled`
-- [ ] gate + user text + ledger line
-- [ ] harness `db` axis, three cells
-- [ ] `docs/user-guide.md` requirements, `SPEC.md` Secure Boot paragraph, `docs/status.md` row
+- [x] build-time signer extraction → `shim-authorities.json`, fail on 2011-only
+      (`packaging/shim-authorities.py`, `--require 2023` in `release.yml`)
+- [x] bump the shim source to a dual-signed `shim-x64`, pin the NVR
+      (`shim-x64-16.1-7`, pinned in both `release.yml` and `run-e2e.sh`)
+- [x] `SystemInfo.TrustedUefiAuthorities` + the `db` parser
+      (`app/secureboot.go`, `app/secureboot_windows.go`)
+- [x] gate + user text (`gateScenario`, launchpad warning banner)
+- [ ] harness `db` axis, three cells (2011-only, 2023-only, both) — the OVMF
+      vars work is the remaining piece
+- [x] `docs/user-guide.md` requirements, `SPEC.md` Secure Boot section
+
+**One deviation from the design above.** This section originally said an
+unreadable `db` under Secure Boot should *refuse*. The implementation warns
+instead. Refusing would block every machine whose SecureBoot PowerShell module
+is unavailable — including ones that work today — to prevent a failure that
+costs a reboot back into Windows and no data. The refusal is reserved for the
+case we can actually prove: both sides known, no intersection.
 
 ## 2. Recovery guard: when Windows comes back, wootc explains itself
 
@@ -277,11 +288,19 @@ Extend `wootc-esp-sync`:
    is picked up before the next reboot rather than one late.
 
 ### Tasks
-- [ ] deployer mirrors the ESP manifest to `/etc/wootc/esp-manifest`
-- [ ] `wootc-esp-sync`: signed-chain source discovery + SBAT/CA gate + archive-then-atomic replace, shim last
-- [ ] `.path` trigger unit; ordering pins in bats
-- [ ] harness: after Phase 2, plant a newer shim in the bootupd path, reboot, assert the ESP trio changed and the archive exists and the system still boots
-- [ ] `docs/architecture-boundary.md` line about bootupd sourcing becomes true
+- [x] ownership without a new manifest: refresh only a vendor directory whose
+      `grub.cfg` carries the `# wootc` marker — the same rule the installer's
+      D1 guard already applies, re-checked on every boot because a second OS
+      can be installed after us
+- [x] `wootc-esp-sync`: signed-chain source discovery + SBAT/CA gate +
+      archive-then-atomic replace, shim last (`wootc-shim-trust` grades the
+      candidate against the firmware's own `db` and the installed SBAT
+      generation)
+- [x] `.path` trigger unit on bootupd's `EFI.json`; contract pins in bats and
+      behavioural coverage in `tests/unit/test_esp_chain_refresh.py`
+- [ ] harness: after Phase 2, plant a newer shim in the bootupd path, reboot,
+      assert the ESP trio changed, the archive exists, and the system still boots
+- [x] `docs/architecture-boundary.md` line about bootupd sourcing becomes true
 
 ## 5. One step catalogue, restated everywhere, diffed in CI
 
@@ -320,10 +339,17 @@ and every catalogue deployer id has a splash line; a Go test asserts the same
 for the pipeline; CI fails when a generated file is stale.
 
 ### Tasks
-- [ ] `payload/steps.tsv` + generator (`just steps`) + stale-check in CI
-- [ ] `app.go` pipeline and `progress.js` consume the generated labels
-- [ ] `deploy.sh` splash table generated; harness marker list generated
-- [ ] bats + Go parity tests
+- [x] `payload/steps.tsv` — the catalogue, with an owner and the on-screen
+      words for every id
+- [x] bats + Go parity tests. These found the drift the section predicted:
+      **five** pipeline steps were missing from the progress screen's list,
+      and one entry on the screen was never emitted, so it stayed grey for the
+      whole install — which reads as a step that did not happen. Fixed here.
+- [ ] generation (`just steps` writing the splash table and the frontend list)
+      — **deferred on purpose.** The value of this section is that drift
+      cannot survive CI, and the parity tests deliver that. Generating a
+      `case` table into `deploy.sh` is a mechanical rewrite of the file that
+      decides whether a user's machine boots, for no additional safety.
 
 ## 6. Signed catalogue and exe freshness
 
@@ -366,7 +392,8 @@ mode and it shows a permanent warning.
    today it is part of the signed exe.
 
 ### Tasks
-- [ ] embed the release tag; pin `deployerBaseURL`; harness override unchanged
+- [x] embed the release tag; pin `deployerBaseURL`; harness override unchanged
+      (`app/deployer_url.go`, `-X main.releaseTag=` in `release.yml`)
 - [ ] minisign the manifest in `release.yml`; verify in `fetchChecksums`; test key for the harness and the offline bundle
 - [ ] launchpad freshness notice
 - [ ] `docs/RELEASING.md`: key custody and rotation

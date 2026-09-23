@@ -120,8 +120,24 @@ via `go:embed`; `-ldflags "-X main.brandID=bazzite"` picks one (default
 `GetBranding` + `installVerb()`; remaining hardcoded "TunaOS"/"wootc" strings
 in screens move to `state.brand`.
 
-**Release matrix.** The publish job loops brands, builds each exe with its
-ldflag, names it `exeName`.exe, and adds all to the release + SHA256SUMS.
+**Upstream blessings.** A branded build wears somebody else's mark, so each
+brand carries a recorded decision about whether that is allowed —
+`app/branding/<brand>/blessing.json`, summarised in the table in
+`app/branding/README.md` and asked for via
+[upstream-blessings.md](upstream-blessings.md) (#227). Four separate
+questions per project (mark, name, tagline, distributing a branded exe),
+plus who owns the winget namespace the identifier would live in. The status
+falls out of the answers: any `no` → `declined`, all four `yes` → `blessed`,
+anything else → `pending`. A mark this project does not own cannot be marked
+`blessed` without a link to the yes.
+
+**Release matrix.** The publish job asks `packaging/brands.sh` which brands
+may ship, builds each surviving exe with its ldflag, names it `exeName`.exe,
+and adds all to the release + SHA256SUMS. The decision is load-bearing
+there: a **declined** project's exe drops out of the matrix, a brand with no
+record at all is a hard error rather than a default yes, and a **pending**
+one still builds (shipping predates the ask) but is named as unblessed in
+the release log. `WOOTC_REQUIRE_BLESSING=1` drops pending brands too.
 
 ## 3. Offline-first deploys
 
