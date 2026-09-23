@@ -205,7 +205,7 @@ jobs:
             [ -z "$BRAND_FLAG" ] && echo "no brand claims '$name' — building the generic installer"
           fi
           ( cd app && GOOS=windows GOARCH=amd64 \
-              go build -tags desktop,production -ldflags "-w -s $BRAND_FLAG" \
+              go build -tags desktop,production -ldflags "-H windowsgui -w -s $BRAND_FLAG" \
               -o ../tests/e2e/wootc-files/wootc.exe . )
           ls -lh tests/e2e/wootc-files/wootc.exe
 
