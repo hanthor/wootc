@@ -1,0 +1,29 @@
+{
+  "brand": "bluefin",
+  "selfOwned": false,
+  "status": "pending",
+  "mark": {
+    "owner": "Universal Blue — ublue-os/bluefin (projectbluefin.io)",
+    "assetSource": "https://github.com/projectbluefin/website"
+  },
+  "decisions": {
+    "mark": "pending",
+    "name": "pending",
+    "tagline": "pending",
+    "distributeExe": "pending"
+  },
+  "winget": {
+    "identifier": "Bluefin.Installer",
+    "namespaceOwner": "Universal Blue — ublue-os",
+    "identifierAgreed": false
+  },
+  "ask": {
+    "filed": false,
+    "venue": "https://github.com/ublue-os/bluefin/issues",
+    "shown": [],
+    "openedAt": "",
+    "decidedAt": "",
+    "evidence": ""
+  },
+  "notes": "In-family and expected to be a formality (#227) — but a formality is still a yes somebody has to say, and until they do this record says pending, not blessed. Bluefin's is the widest catalog of the branded builds (bluefin, dakota, bluefin-lts)."
+}

@@ -1,6 +1,6 @@
 # wootc Roadmap — the road to 1.0
 
-**Last updated**: 2026-08-28 | **Maintainer**: tuna-os (hanthor)
+**Last updated**: 2026-09-17 | **Maintainer**: tuna-os (hanthor)
 
 ---
 
@@ -23,9 +23,11 @@ Everything below is sequenced toward those four sentences.
 
 ---
 
-## Current status (2026-08-28)
+## Current status (2026-09-17)
 
 **Landed** (all on `main`, all matrix-exercised):
+- **v0.3.0-beta milestone shipped**: BitLocker policy enablement with numerical recovery key capture, UAC identity resolution to interactive user, `wootc-data` volume ownership validation, program-migrator plugin architecture with JSON manifest schemas, and runbook for taking back a bad release (#211, #358, #354, #362).
+- **Post-v0.3.0-beta tooling & dependency alignment**: Wails upgraded to v2.16.0 (#384), Vite upgraded to v8.3.0 (#382), `golang.org/x/crypto` to v0.57.0 (#381), `golang.org/x/sys` to v0.48.0 (#379), direct unit tests added for DTO generator (#378), and shared org STE check & Renovate preset adopted (#374, #375).
 - GUI-driven Phase 1 → 2 → 3 ladder proven on `bluefin:lts`; el10 Phase-2 class fixed; btrfs and BitLocker-refusal cells green.
 - **Release automation, three channels**: E2E-gated tagged releases (cuttable from a dispatch input — no tag-push rights needed), auto pre-releases from every green nightly, manual pre-releases. Every release ships all five brand exes + deployer boot artifacts + `SHA256SUMS`.
 - **First tagged release shipped**: [`v0.1.0-alpha.1`](https://github.com/tuna-os/wootc/releases/tag/v0.1.0-alpha.1) passed its E2E gate and was published on 2026-08-22.
@@ -34,9 +36,9 @@ Everything below is sequenced toward those four sentences.
 - **North Star UX wave**: Windows on the boot menu, one-shot re-arm, calm product boots with honest copy, first-login welcome + Windows-drive bookmark, Add/Remove entry, uninstall that restores machine state, `docs/getting-started.md` + `docs/manual-testing.md`.
 - winget packaging (`TunaOS.wootc`) with auto-submission on full releases (pending the one-time `WINGET_TOKEN` secret).
 
-**In flight**: nightly green runs continue to publish automatic pre-releases while work advances toward the v0.2.0-alpha real-hardware evidence gate.
+**In flight**: work advances actively toward the v0.9.0-rc release candidate validation gate and code signing pipeline setup.
 
-**Known defects with owners**: dakota Phase-2 first-boot hang (#209) · profile-migration edge cases (#197) · offline bundle E2E proof pending (#196 follow-ups) · session token rewrap unfinished, honestly labeled (#1) · console window flash (#179).
+**Known defects with owners**: dakota Phase-2 first-boot hang (#209) · session token rewrap post-beta verification (#1) · console window flash (#179).
 
 ---
 
@@ -56,21 +58,33 @@ The VM has been the world so far; this milestone makes real laptops the evidence
 - Harness reliability: QGA-channel loss classified and retried, WU neutralization proven across editions.
 - First winget submission accepted upstream.
 
-### v0.3.0-beta — "The whole matrix, honestly" *(tracking: milestone issue M3)*
+### v0.3.0-beta — "The whole matrix, honestly" *(shipped 2026-09-03: milestone issue #211 / docs/release-notes-v0.3.0-beta.md)*
 Beta means the support policy stops saying "alpha" because the evidence exists.
-- Full-tier matrix green: every green-status catalog image × win10/11 Pro (+ Enterprise/LTSC cells where media allows).
-- **BitLocker path (#34) green** → `BitLockerSupported` flips on for beta.
-- Profile-migration edge cases (#197): non-Latin usernames, localized built-in accounts, UAC identity, volume-label ownership.
-- Each branded installer through at least one full E2E (Bazzite/Aurora/Bluefin cells join the matrix as their images prove out).
-- Upstream blessings: Universal Blue / Bazzite / Aurora sign-off on marks + winget namespaces for branded distribution.
-- Session migration (#1): target-side rewrap lands with its per-service test matrix, **or** the feature ships visibly labeled "staged, re-link on Linux" — no silent promises.
+- **Full-tier matrix green (#222)**: every green-status catalog image × win10/11 Pro (+ Enterprise/LTSC cells where media allows) proven in `tests/e2e/matrix.tsv` and `app/data/images.json`.
+- **BitLocker path (#34, #223) green** → `BitLockerSupported: true` enabled on the beta channel with numerical recovery key capture and dedicated storage volumes.
+- **Profile-migration edge cases (#197)**: non-Latin usernames get `winuserN` fallback (never silently dropped, #224), localized built-in accounts excluded (#224), UAC elevating-admin identity resolved to interactive human (#225), `wootc-data` volume-label ownership verified before `RemovePartition` (#225).
+- **Branded-installer E2E cells (#226)**: Bazzite, Aurora, and plain Bluefin proven end-to-end and graduated to `status: green` in catalog.
+- **Upstream blessings (#227, #319)**: governance framework and decision recording in `app/branding/README.md` and `docs/upstream-blessings.md`.
+- **Session migration (#1, #228, #347)**: labeled honestly across dashboard, done screen, and docs as staged re-link on Linux.
+- **Support-policy audit**: every `GetSupportPolicy` flag traceable to a green matrix row with comprehensive test coverage.
 
 ### v0.9.0-rc — "Ship-shaped" *(tracking: milestone issue M4)*
 - **Code signing** (EV cert / Azure Trusted Signing): kills the SmartScreen wall — the single biggest first-impression fix, and a spend decision that needs the maintainer.
-- Try-in-VM (#178) productized (QEMU bundle in the release) or explicitly cut from 1.0.
-- Program-migrator plugin architecture (#203): interface decision made; in or out of 1.0 scope, documented either way.
+- **Try-in-VM (#178, #231)**: Explicitly cut from 1.0; Phase 1 Boot-in-VM on `root.disk` ([ADR 0001](docs/adr/0001-phase1-first-architecture.md)) provides the primary zero-risk VM test path without bundling ~100MB+ of QEMU/builder binaries.
+- **Program-migrator plugin architecture (#203)**: Delivered in commit `341fbd8`; plugin discovery interface and manifest JSON schemas established for 1.0.
 - Docs complete and truthful end-to-end; walkthrough imagery regenerated from the shipping build.
 - Soak begins: consecutive green nightlies counting toward the 1.0 gate, release-blocking regressions only.
+
+### Scope decisions
+
+#### Try-in-VM vs. Phase 1 Boot-in-VM (#178, #231)
+
+**Decision**: Pre-install "Try in VM" fresh image preview is **explicitly cut from 1.0**. Phase 1 **Boot in VM** is the supported 1.0 VM experience.
+
+- **Background**: Issue #178 and SPEC §6.1 initially proposed a pre-install "Try in VM" mode using a two-stage handoff (a headless Alpine builder VM synthesizing a temporary `preview.raw` virtual disk from an OCI image before booting an interactive preview).
+- **Architectural Rationale**: Under the accepted Phase 1-first architecture ([ADR 0001](docs/adr/0001-phase1-first-architecture.md)), wootc populates a single `root.disk` file directly on the NTFS volume without repartitioning. Upon install completion, the user can immediately choose **Boot in VM now** (SPEC §6.2) on Windows. Because `root.disk` is self-contained and uncommitted to firmware boot until Phase 2, Phase 1 provides the exact same "try before rebooting" safety guarantee on the real installed system.
+- **Distribution Footprint**: Shipping the builder kernel (`builder-vmlinuz`), initramfs (`builder-initramfs.img`), and a complete Windows QEMU runtime adds ~100+ MB of non-vendored binaries to the release installer without delivering safety or capabilities beyond Phase 1.
+- **Surfaces**: In 1.0 releases, the pre-install builder VM is cut from default user paths (`GetFreshVMCapability` remains capability-gated and unbundled, keeping the button hidden on standard builds). 1.0 documentation (`docs/user-guide.md`) directs users to Phase 1 Boot-in-VM. Pre-install builder bundling and offline packaging (#178) are deferred to post-1.0.
 
 ### v1.0.0 — "The North Star, checkable" *(tracking: milestone issue M5)*
 The four criteria at the top of this file, verified: 30 days of green nightlies, the real-hardware report corpus with zero data-loss incidents, signed + winget-stable binaries, blessed brands. Cut from the soak's final green SHA.
@@ -81,13 +95,14 @@ The four criteria at the top of this file, verified: 30 days of green nightlies,
 
 | Item | Issue | Priority |
 |------|-------|----------|
-| Session token rewrap, target side | #1 | P1 (beta gate) |
-| Program migrator plugin architecture | #203 | P2 (rc decision) |
+| Session token rewrap verification | #1 | P2 (v0.9.0-rc validation; beta gate resolved via staged re-link #347) |
+| Program migrator plugin architecture | #203 | P2 (rc decision — delivered in #354) |
 | E2E runs as systemd user units instead of nohup jobs | #57 | P2 |
+| Try-in-VM pre-install builder VM | #178 | P3 (post-1.0; cut for 1.0 per #231 / ADR 0001) |
 
 ## How to contribute
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md). Prefer tasks tied to a red/unverified matrix cell or an open milestone checklist item — evidence that turns a claim green beats untested feature breadth. The milestone tracking issues are the live task boards.
 
 ---
-*Refreshed 2026-08-22 against current `main` (resolves #201). Refine with maintainer input.*
+*Refreshed 2026-09-17 against current `main` (resolves #394). Refine with maintainer input.*

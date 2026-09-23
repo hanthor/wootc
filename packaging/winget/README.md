@@ -20,8 +20,33 @@ Requirements, both one-time:
   Microsoft's moderation review of a new package can take a few days.
   Updates after that are routine.
 
+## Branded installers
+
 Branded installers (Bazzite-Installer, Aurora-Installer, …) are deliberately
 NOT auto-submitted: their winget identities belong to their projects
-(`Bazzite.Installer` would sit in Bazzite's namespace), so each needs that
-project's sign-off first. The same templates work — swap the identifier,
-name, and asset.
+(`Bazzite.Installer` sits in Bazzite's namespace, not ours), so each needs
+that project's sign-off first (#227).
+
+The sign-off is recorded per brand in `app/branding/<brand>/blessing.json` —
+`winget.identifier`, `winget.namespaceOwner`, and `winget.identifierAgreed`.
+Nothing branded is submitted anywhere until that last flag is true, and
+`tests/unit/brand-blessings.bats` asserts no branded identifier appears in
+`winget-publish.yml` at all.
+
+`brand/*.yaml.in` are the templates for those packages, and
+`render-brand.sh` fills them from the brand's own `brand.json` and
+`blessing.json`:
+
+```sh
+packaging/winget/render-brand.sh bazzite            # placeholders, shape only
+packaging/winget/render-brand.sh bazzite 0.2.0 <url> <sha256>
+```
+
+They render to stdout and are never submitted — the point is to have the
+real thing to *offer* a project when asking, rather than describing a
+package they cannot see. A rendered set carries the namespace owner and the
+blessing status in its header, and its description says
+`PERMISSION NOT YET GRANTED` until `identifierAgreed` is true, so a draft
+pasted into somebody's issue tracker cannot imply a yes nobody gave.
+
+The ask itself is in [docs/upstream-blessings.md](../../docs/upstream-blessings.md).

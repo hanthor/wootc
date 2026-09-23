@@ -1,0 +1,16 @@
+{
+  "imageRef": "ghcr.io/tuna-os/yellowfin:gnome",
+  "diskSizeGB": 40,
+  "username": "winuser",
+  "password": "secretpassword",
+  "hostname": "my-laptop",
+  "bootloader": "auto",
+  "composeFs": true,
+  "storageDrive": "C",
+  "encryption": "tpm2-luks",
+  "luksPassphrase": "",
+  "windowsLook": true,
+  "sessionConsent": {
+    "chrome": true
+  }
+}

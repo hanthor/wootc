@@ -53,31 +53,50 @@ func listDataPartitions() []DataPartition {
 
 // dedicatedVolumeInfo reports whether drive d holds only wootc data (so it
 // is safe to remove and fold back into C:) and how much space that frees.
+// It verifies ownership and ensures system/EFI volumes or arbitrary drives
+// are never identified as wootc-created data partitions.
 func dedicatedVolumeInfo(d string) (bool, float64) {
-	// A wootc-created volume is labeled "wootc-data" and contains nothing
-	// but the wootc dir (ignoring system folders) (#197, #225).
-	out, err := runPowerShellOutput(fmt.Sprintf(
-		`$items = @(Get-ChildItem '%s:\' -Force -ErrorAction SilentlyContinue | Where-Object { `+
-			`$_.Name -notin @('$RECYCLE.BIN','System Volume Information','wootc') }); `+
-			`$v = Get-Volume -DriveLetter %s -ErrorAction SilentlyContinue; `+
-			`'{0}|{1}|{2}' -f $items.Count, [math]::Round($v.Size/1GB,1), $(if ($v) { $v.FileSystemLabel } else { '' })`, d, d))
+	if strings.EqualFold(d, "C") {
+		return false, 0
+	}
+	// A wootc-created volume is labeled "wootc-data", formatted as NTFS on the
+	// same physical disk as C:, is NOT an EFI System Partition or SYSTEM volume,
+	// and contains nothing but the wootc dir (ignoring system folders).
+	script := fmt.Sprintf(`
+$v = Get-Volume -DriveLetter %s -ErrorAction SilentlyContinue
+if (-not $v -or $v.FileSystemLabel -ne 'wootc-data' -or $v.FileSystemType -ne 'NTFS') {
+    Write-Output 'NO'
+    exit 0
+}
+$p = Get-Partition -DriveLetter %s -ErrorAction SilentlyContinue
+if (-not $p -or $p.GptType -eq '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' -or $p.Type -eq 'System') {
+    Write-Output 'NO'
+    exit 0
+}
+$cP = Get-Partition -DriveLetter C -ErrorAction SilentlyContinue
+if ($cP -and $p.DiskNumber -ne $cP.DiskNumber) {
+    Write-Output 'NO'
+    exit 0
+}
+$items = @(Get-ChildItem '%s:\' -Force -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -notin @('$RECYCLE.BIN', 'System Volume Information', 'wootc')
+})
+if ($items.Count -gt 0) {
+    Write-Output 'NO'
+    exit 0
+}
+'{0}|{1}' -f 'YES', [math]::Round($v.Size/1GB, 1)
+`, d, d, d)
+	out, err := runPowerShellOutput(script)
 	if err != nil {
 		return false, 0
 	}
 	f := strings.Split(strings.TrimSpace(out), "|")
-	if len(f) < 2 {
+	if len(f) != 2 || f[0] != "YES" {
 		return false, 0
-	}
-	label := ""
-	if len(f) >= 3 {
-		label = f[2]
 	}
 	sizeGB, _ := strconv.ParseFloat(f[1], 64)
-	itemsCount, err := strconv.Atoi(strings.TrimSpace(f[0]))
-	if err != nil {
-		return false, 0
-	}
-	return isDedicatedVolume(itemsCount, label), sizeGB
+	return true, sizeGB
 }
 
 // CreateDataPartition shrinks C: and creates a new unencrypted NTFS
@@ -121,14 +140,26 @@ Write-Output $np.DriveLetter`, sizeGB)
 // into the freed space (SPEC §5.2). Only called when the volume is
 // confirmed wootc-created and holds no other data.
 func removePartitionAndExtendC(drive string) error {
+	if strings.EqualFold(drive, "C") {
+		return fmt.Errorf("refusing to remove partition on drive C:")
+	}
 	script := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
-$v = Get-Volume -DriveLetter %s -ErrorAction SilentlyContinue
-if (-not $v -or $v.FileSystemLabel -ne '%s') { throw "Partition %s: does not have the '%s' label" }
-$p = Get-Partition -DriveLetter %s
+$v = Get-Volume -DriveLetter %s -ErrorAction Stop
+if ($v.FileSystemLabel -ne 'wootc-data') {
+    throw "Refusing to remove volume %s: label is '$($v.FileSystemLabel)', expected 'wootc-data'"
+}
+$p = Get-Partition -DriveLetter %s -ErrorAction Stop
+if ($p.GptType -eq '{c12a7328-f81f-11d2-ba4b-00a0c93ec93b}' -or $p.Type -eq 'System') {
+    throw 'Refusing to remove EFI system partition'
+}
+$cP = Get-Partition -DriveLetter C -ErrorAction Stop
+if ($p.DiskNumber -ne $cP.DiskNumber) {
+    throw 'Refusing to remove partition on a different disk than C:'
+}
 Remove-Partition -DriveLetter %s -Confirm:$false
 $supported = Get-PartitionSupportedSize -DriveLetter C
-Resize-Partition -DriveLetter C -Size $supported.SizeMax`, drive, DedicatedVolumeLabel, drive, DedicatedVolumeLabel, drive, drive)
+Resize-Partition -DriveLetter C -Size $supported.SizeMax`, drive, drive, drive, drive)
 	out, err := runPowerShellOutput(script)
 	if err != nil {
 		return fmt.Errorf("%w (output: %s)", err, strings.TrimSpace(out))

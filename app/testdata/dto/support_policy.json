@@ -1,0 +1,7 @@
+{
+  "channel": "alpha",
+  "experimentalImages": false,
+  "bitlockerSupported": false,
+  "customImageAllowed": false,
+  "reason": "Alpha — only fully-tested images and unencrypted disks are offered. More unlock as testing goes green."
+}

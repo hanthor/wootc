@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+import json
+import os
+import sys
+
+HOST = os.environ.get("WOOTC_HOST", "/run/wootc/host")
+WIN_USER = os.environ.get("WOOTC_WIN_USER", "")
+WIN_USER_DIR = os.environ.get("WOOTC_WIN_USER_DIR", os.path.join(HOST, "Users", WIN_USER) if WIN_USER else "")
+
+def count_files(path):
+    total = 0
+    for _root, _dirs, files in os.walk(path):
+        total += len(files)
+        if total > 100000:
+            break
+    return total
+
+def dir_bytes(path, cap=50000):
+    total = seen = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+            seen += 1
+            if seen > cap:
+                return total
+    return total
+
+items = []
+if WIN_USER_DIR and os.path.isdir(WIN_USER_DIR):
+    for folder in ("Documents", "Pictures", "Downloads", "Music", "Videos", "Desktop"):
+        p = os.path.join(WIN_USER_DIR, folder)
+        if os.path.isdir(p):
+            n = count_files(p)
+            items.append({
+                "id": folder,
+                "label": folder,
+                "detail": f"{n} file(s)",
+                "fileCount": n,
+                "sizeBytes": dir_bytes(p)
+            })
+
+detected = len(items) > 0
+result = {
+    "detected": detected,
+    "items": items,
+    "summary": f"{len(items)} folder(s)" if detected else ""
+}
+
+print(json.dumps(result))
+sys.exit(0)
