@@ -22,6 +22,12 @@ Assert-True ($stateRaw -match '"state":\s*"armed"') "state.json reports armed"
 # ── root disk ────────────────────────────────────────────────────────────────
 Assert-True (Test-Path C:\wootc\disks\root.vhdx) "root.vhdx exists"
 
+# ── dedicated volume label (when separate Linux data partition exists) ───────
+$dataVol = Get-Volume | Where-Object { $_.DriveType -eq 'Fixed' -and $_.DriveLetter -and $_.DriveLetter -ne 'C' -and (Test-Path "$($_.DriveLetter):\wootc") } | Select-Object -First 1
+if ($dataVol) {
+    Assert-True ($dataVol.FileSystemLabel -eq "wootc-data") "dedicated data partition has label 'wootc-data' (found '$($dataVol.FileSystemLabel)')"
+}
+
 # ── vault ────────────────────────────────────────────────────────────────────
 $vault = Get-Content C:\wootc\install\vault.json -Raw -ErrorAction SilentlyContinue
 Assert-True ($null -ne $vault) "vault.json exists"
@@ -94,6 +100,13 @@ $vaultUser = $null
 if ($vault -match '"username":\s*"([^"]+)"') { $vaultUser = $Matches[1] }
 if ($vaultUser -and -not (Test-Path "C:\Users\$vaultUser")) {
     Write-Host "[WARN] vault user '$vaultUser' has no matching Windows profile — User Data Bridge will not bind for this account (profiles: $($profiles.Name -join ', '))"
+}
+
+# ── programs.json ────────────────────────────────────────────────────────────
+if (Test-Path C:\wootc\install\programs.json) {
+    $progRaw = Get-Content C:\wootc\install\programs.json -Raw -ErrorAction SilentlyContinue
+    Assert-True ($progRaw -match '"apps"') "programs.json contains apps array"
+    Assert-True ($progRaw -match '"defaultBrowser"') "programs.json contains defaultBrowser"
 }
 
 # ── headless status ──────────────────────────────────────────────────────────

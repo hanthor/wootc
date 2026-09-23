@@ -114,7 +114,7 @@ E2E=tests/e2e/run-e2e.sh
     # The image entry carries the password; the done screen explains the blue
     # screen before the user ever sees it.
     grep -q '"mokEnroll": "universalblue"' app/data/images.json
-    grep -q 'MokEnroll string' app/app.go
+    grep -q 'MokEnroll string' app/install_contract.go
     grep -q 'mokEnroll' app/frontend/src/screens/done.js
     grep -q 'Enroll MOK' app/frontend/src/screens/done.js
 }

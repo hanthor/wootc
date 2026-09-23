@@ -66,7 +66,7 @@ func collectSessions() ([]SessionCandidate, error) {
 		note := "Sign in once — your data is in your account."
 		if portable {
 			rec = "copy"
-			note = "We can carry your signed-in session across (with your OK)."
+			note = "Stage session keys (with your OK) — you'll sign in once on Linux."
 		}
 		// Messengers that fingerprint devices: prefer re-link even if a
 		// token copy is technically possible.

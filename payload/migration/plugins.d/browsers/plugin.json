@@ -1,0 +1,28 @@
+{
+  "$schema": "https://tuna-os.github.io/wootc/schemas/v1/plugin.schema.json",
+  "schemaVersion": 1,
+  "id": "browsers",
+  "name": "Web Browsers",
+  "version": "1.0.0",
+  "description": "Imports Firefox profile and bookmarks/history from Chrome and Edge.",
+  "category": "browsers",
+  "author": "TunaOS Contributors",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/tuna-os/wootc",
+  "target": {
+    "appType": "native",
+    "suggestedPackages": [
+      "org.mozilla.firefox",
+      "com.google.Chrome"
+    ],
+    "requiresHostMount": true
+  },
+  "execution": {
+    "detectTimeoutSec": 10,
+    "importTimeoutSec": 60,
+    "requiresAdmin": false
+  },
+  "ui": {
+    "defaultOn": true
+  }
+}

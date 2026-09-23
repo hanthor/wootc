@@ -39,6 +39,12 @@ func TestBetaOffersBitLocker(t *testing.T) {
 	if !p.BitLockerSupported {
 		t.Errorf("beta policy must support BitLocker: %+v", p)
 	}
+	if !p.ExperimentalImages {
+		t.Errorf("beta policy must offer experimental images: %+v", p)
+	}
+	if !p.CustomImageAllowed {
+		t.Errorf("beta policy must allow custom images: %+v", p)
+	}
 }
 
 func TestAlphaPolicyGatesScenarios(t *testing.T) {
@@ -46,5 +52,22 @@ func TestAlphaPolicyGatesScenarios(t *testing.T) {
 	p := NewApp().GetSupportPolicy()
 	if p.ExperimentalImages || p.BitLockerSupported || p.CustomImageAllowed {
 		t.Errorf("alpha policy must gate every unproven axis: %+v", p)
+	}
+}
+
+func TestStablePolicyOpensAllGates(t *testing.T) {
+	t.Setenv("WOOTC_CHANNEL", "stable")
+	p := NewApp().GetSupportPolicy()
+	if !p.ExperimentalImages || !p.BitLockerSupported || !p.CustomImageAllowed {
+		t.Errorf("stable policy must allow all scenarios: %+v", p)
+	}
+}
+
+func TestDriveModeEnablesExperimentalImages(t *testing.T) {
+	t.Setenv("WOOTC_CHANNEL", "alpha")
+	t.Setenv("WOOTC_E2E_DRIVE", "1")
+	p := NewApp().GetSupportPolicy()
+	if !p.ExperimentalImages {
+		t.Errorf("E2E drive mode must enable experimental images even on alpha: %+v", p)
 	}
 }

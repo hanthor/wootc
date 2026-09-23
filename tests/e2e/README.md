@@ -80,8 +80,7 @@ podman run --rm --entrypoint /bin/cat localhost/wootc-deployer \
 cp payload/deployer/out/deployer-vmlinuz tests/e2e/wootc-files/
 cp payload/deployer/out/deployer-initramfs.img tests/e2e/wootc-files/
 cp /path/to/wubildr.efi tests/e2e/wootc-files/
-cp platform/grub/*.cfg tests/e2e/wootc-files/grub/
-cp platform/grub/*.cfg tests/e2e/wootc-files/grub/
+cp app/grub/*.cfg tests/e2e/wootc-files/grub/
 
 # Run the e2e test (~30-45 minutes)
 cd tests/e2e && ./run-e2e.sh
