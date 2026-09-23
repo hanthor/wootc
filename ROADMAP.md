@@ -1,6 +1,6 @@
 # wootc Roadmap — the road to 1.0
 
-**Last updated**: 2026-09-03 | **Maintainer**: tuna-os (hanthor)
+**Last updated**: 2026-09-17 | **Maintainer**: tuna-os (hanthor)
 
 ---
 
@@ -23,10 +23,11 @@ Everything below is sequenced toward those four sentences.
 
 ---
 
-## Current status (2026-09-03)
+## Current status (2026-09-17)
 
 **Landed** (all on `main`, all matrix-exercised):
 - **v0.3.0-beta milestone shipped**: BitLocker policy enablement with numerical recovery key capture, UAC identity resolution to interactive user, `wootc-data` volume ownership validation, program-migrator plugin architecture with JSON manifest schemas, and runbook for taking back a bad release (#211, #358, #354, #362).
+- **Post-v0.3.0-beta tooling & dependency alignment**: Wails upgraded to v2.16.0 (#384), Vite upgraded to v8.3.0 (#382), `golang.org/x/crypto` to v0.57.0 (#381), `golang.org/x/sys` to v0.48.0 (#379), direct unit tests added for DTO generator (#378), and shared org STE check & Renovate preset adopted (#374, #375).
 - GUI-driven Phase 1 → 2 → 3 ladder proven on `bluefin:lts`; el10 Phase-2 class fixed; btrfs and BitLocker-refusal cells green.
 - **Release automation, three channels**: E2E-gated tagged releases (cuttable from a dispatch input — no tag-push rights needed), auto pre-releases from every green nightly, manual pre-releases. Every release ships all five brand exes + deployer boot artifacts + `SHA256SUMS`.
 - **First tagged release shipped**: [`v0.1.0-alpha.1`](https://github.com/tuna-os/wootc/releases/tag/v0.1.0-alpha.1) passed its E2E gate and was published on 2026-08-22.
@@ -35,9 +36,9 @@ Everything below is sequenced toward those four sentences.
 - **North Star UX wave**: Windows on the boot menu, one-shot re-arm, calm product boots with honest copy, first-login welcome + Windows-drive bookmark, Add/Remove entry, uninstall that restores machine state, `docs/getting-started.md` + `docs/manual-testing.md`.
 - winget packaging (`TunaOS.wootc`) with auto-submission on full releases (pending the one-time `WINGET_TOKEN` secret).
 
-**In flight**: nightly green runs continue to publish automatic pre-releases while work advances toward the v0.2.0-alpha real-hardware evidence gate and v0.9.0-rc release candidate validation.
+**In flight**: work advances actively toward the v0.9.0-rc release candidate validation gate and code signing pipeline setup.
 
-**Known defects with owners**: dakota Phase-2 first-boot hang (#209) · session token rewrap unfinished, honestly labeled (#1) · console window flash (#179).
+**Known defects with owners**: dakota Phase-2 first-boot hang (#209) · session token rewrap post-beta verification (#1) · console window flash (#179).
 
 ---
 
@@ -94,7 +95,7 @@ The four criteria at the top of this file, verified: 30 days of green nightlies,
 
 | Item | Issue | Priority |
 |------|-------|----------|
-| Session token rewrap, target side | #1 | P1 (beta gate — resolved via staged re-link #347) |
+| Session token rewrap verification | #1 | P2 (v0.9.0-rc validation; beta gate resolved via staged re-link #347) |
 | Program migrator plugin architecture | #203 | P2 (rc decision — delivered in #354) |
 | E2E runs as systemd user units instead of nohup jobs | #57 | P2 |
 | Try-in-VM pre-install builder VM | #178 | P3 (post-1.0; cut for 1.0 per #231 / ADR 0001) |
@@ -104,4 +105,4 @@ The four criteria at the top of this file, verified: 30 days of green nightlies,
 See [CONTRIBUTING.md](./CONTRIBUTING.md). Prefer tasks tied to a red/unverified matrix cell or an open milestone checklist item — evidence that turns a claim green beats untested feature breadth. The milestone tracking issues are the live task boards.
 
 ---
-*Refreshed September 2026 against current `main`. Refine with maintainer input.*
+*Refreshed 2026-09-17 against current `main` (resolves #394). Refine with maintainer input.*
