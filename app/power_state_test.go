@@ -27,6 +27,8 @@ func TestParsePriorPower(t *testing.T) {
 		{"partial record", "hibernate=1\n", "1", ""},
 		{"unknown keys ignored", "colour=blue\nhibernate=1\n", "1", ""},
 		{"no separator", "hibernate\n", "", ""},
+		{"comment lines ignored", "# comment\nhibernate=1\n", "1", ""},
+		{"multi-digit values kept whole", "hibernate=10\nhiberboot=100\n", "10", "100"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			hib, hbb := parsePriorPower(tc.content)

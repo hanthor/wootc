@@ -22,11 +22,11 @@ FIELD=tests/field/verify-uninstall.ps1
 
 @test "the power record is read BEFORE the folder holding it is removed" {
     # restorePriorPowerState() reads C:\wootc\install\prior-power.txt, and step
-    # 3 of the same function removes C:\wootc\install. Reverse them and the
-    # restore silently becomes a no-op on every uninstall.
+    # 3 of the same function removes the install dir (per storage drive).
+    # Reverse them and the restore silently becomes a no-op on every uninstall.
     local restore_line remove_line
     restore_line=$(grep -n 'restorePriorPowerState()' "$E2E_APP" | grep -v 'func ' | head -1 | cut -d: -f1)
-    remove_line=$(grep -n 'os.RemoveAll(filepath.Join(wootcDir(), "install"))' "$E2E_APP" | head -1 | cut -d: -f1)
+    remove_line=$(grep -n 'os.RemoveAll(filepath.Join(wDir, sub))' "$E2E_APP" | head -1 | cut -d: -f1)
     [ -n "$restore_line" ]
     [ -n "$remove_line" ]
     [ "$restore_line" -lt "$remove_line" ]

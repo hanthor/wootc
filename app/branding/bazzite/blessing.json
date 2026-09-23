@@ -1,0 +1,29 @@
+{
+  "brand": "bazzite",
+  "selfOwned": false,
+  "status": "pending",
+  "mark": {
+    "owner": "Universal Blue — ublue-os/bazzite",
+    "assetSource": "https://github.com/ublue-os/bazzite.gg"
+  },
+  "decisions": {
+    "mark": "pending",
+    "name": "pending",
+    "tagline": "pending",
+    "distributeExe": "pending"
+  },
+  "winget": {
+    "identifier": "Bazzite.Installer",
+    "namespaceOwner": "Universal Blue — ublue-os",
+    "identifierAgreed": false
+  },
+  "ask": {
+    "filed": false,
+    "venue": "https://github.com/ublue-os/bazzite/issues",
+    "shown": [],
+    "openedAt": "",
+    "decidedAt": "",
+    "evidence": ""
+  },
+  "notes": "A real ask, not a formality (#227). The mark, the name \"Bazzite Installer\", the tagline and a Bazzite-branded exe are all Universal Blue's to grant, and Bazzite.Installer sits in their winget namespace, not ours. docs/upstream-blessings.md carries the request to file and the manifests to offer."
+}

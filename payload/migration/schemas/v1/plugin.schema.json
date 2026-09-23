@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tuna-os.github.io/wootc/schemas/v1/plugin.schema.json",
+  "title": "WootcProgramMigratorPlugin",
+  "description": "Schema definition for Wootc Program Migrator Plugins (docs/plugin-architecture.md).",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "id",
+    "name",
+    "version",
+    "description",
+    "category"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "URI reference to this schema"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "enum": [1],
+      "description": "Manifest format version (currently 1)"
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$",
+      "description": "Unique lower-kebab-case identifier for the plugin"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name of the plugin"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+.*$",
+      "description": "Semantic version of the plugin"
+    },
+    "description": {
+      "type": "string",
+      "description": "Short explanation of what the plugin discovers and migrates"
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Category group in the migration dashboard (e.g. files, browsers, office, games, wifi, wsl, look, identity, custom)"
+    },
+    "author": {
+      "type": "string",
+      "description": "Author or organization maintaining the plugin"
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX license identifier (e.g. Apache-2.0, MIT)"
+    },
+    "homepage": {
+      "type": "string",
+      "format": "uri",
+      "description": "Project or documentation URL"
+    },
+    "target": {
+      "type": "object",
+      "properties": {
+        "appType": {
+          "type": "string",
+          "enum": ["native", "flatpak", "runtime-bridge", "system"]
+        },
+        "suggestedPackages": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "requiresHostMount": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "execution": {
+      "type": "object",
+      "properties": {
+        "detectTimeoutSec": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60,
+          "default": 10
+        },
+        "importTimeoutSec": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300,
+          "default": 60
+        },
+        "requiresAdmin": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "ui": {
+      "type": "object",
+      "properties": {
+        "defaultOn": {
+          "type": "boolean",
+          "default": true
+        },
+        "icon": {
+          "type": "string"
+        },
+        "detailsTemplate": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "compatibility": {
+      "type": "object",
+      "properties": {
+        "minWootcVersion": {
+          "type": "string"
+        },
+        "maxSchemaVersion": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

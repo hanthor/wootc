@@ -84,8 +84,7 @@ else
     podman run --rm --entrypoint /bin/cat localhost/wootc-deployer /out/vmlinuz > payload/deployer/out/vmlinuz
     cp payload/deployer/out/vmlinuz tests/e2e/wootc-files/
     cp payload/deployer/out/initramfs.img tests/e2e/wootc-files/
-    cp platform/grub/*.cfg tests/e2e/wootc-files/grub/ 2>/dev/null || true
-    cp platform/grub/*.cfg tests/e2e/wootc-files/grub/ 2>/dev/null || true
+    cp app/grub/*.cfg tests/e2e/wootc-files/grub/ 2>/dev/null || true
 fi
 
 info "Setup complete!"

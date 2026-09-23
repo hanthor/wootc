@@ -249,3 +249,4 @@ func priorPowerValues() (hibernate, hiberboot string) {
 	}
 	return readPriorPowerMirror()
 }
+

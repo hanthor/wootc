@@ -41,6 +41,10 @@ export function renderDoneScreen() {
       <strong>Enroll MOK</strong> → <strong>Continue</strong> → <strong>Yes</strong>, and type the password
       <strong>${state.selected.mokEnroll}</strong>. Totally normal, and it never appears again.</span>
     </div>` : ''}
+    ${Object.values(state.config.sessionConsent || {}).some(Boolean) ? `
+    <div style="display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--text-muted);margin-top:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;padding:9px 12px;text-align:left;max-width:460px">
+      <span>🔐</span><span><strong>Session keys staged:</strong> your opted-in session keys are safely staged. On Linux, you'll sign in once to connect your apps.</span>
+    </div>` : ''}
   `;
   screen.appendChild(hero);
   wrap.appendChild(screen);

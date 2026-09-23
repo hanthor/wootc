@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -39,10 +40,48 @@ import (
 // after first boot but very often leaves the directory (with an NTUSER.DAT)
 // behind on OEM machines — exactly the empty stranger on the login screen
 // this list exists to prevent.
+//
+// In addition to English built-ins, localized names of Administrator, Guest,
+// and DefaultAccount for major Windows locales (French, German, Spanish,
+// Italian, Portuguese, Russian, Polish, Dutch, Swedish, Turkish, Chinese,
+// Japanese, Korean, Ukrainian, Czech, Hungarian, etc.) are included (#197).
 var systemProfiles = map[string]bool{
 	"public": true, "default": true, "default user": true,
 	"all users": true, "defaultaccount": true, "wdagutilityaccount": true,
-	"administrator": true, "defaultuser0": true,
+	"administrator": true, "defaultuser0": true, "guest": true,
+
+	// French
+	"administrateur": true, "invité": true, "invite": true, "compte par défaut": true, "compte par defaut": true,
+	// German
+	"gast": true, "standardkonto": true,
+	// Spanish
+	"administrador": true, "invitado": true, "cuenta predeterminada": true,
+	// Italian
+	"amministratore": true, "ospite": true, "account predefinito": true,
+	// Portuguese
+	"convidado": true, "conta padrão": true, "conta padrao": true,
+	// Russian
+	"администратор": true, "гость": true, "стандартная учетная запись": true,
+	// Ukrainian
+	"адміністратор": true, "гість": true, "стандартний обліковий запис": true,
+	// Polish
+	"gość": true, "gosc": true, "konto domyślne": true, "konto domyslne": true,
+	// Dutch
+	"beheerder": true, "gastaccount": true, "standaardaccount": true,
+	// Swedish
+	"gäst": true, "gastkonto": true, "standardkontoet": true,
+	// Turkish
+	"yönetici": true, "yonetici": true, "konuk": true, "varsayılan hesap": true, "varsayilan hesap": true,
+	// Chinese (Simplified & Traditional)
+	"管理员": true, "管理員": true, "来宾": true, "來賓": true, "默认帐户": true, "預設帳戶": true, "預設帳號": true,
+	// Japanese
+	"管理者": true, "ゲスト": true, "既定のアカウント": true,
+	// Korean
+	"관리자": true, "손님": true, "기본 계정": true,
+	// Czech
+	"správce": true, "spravce": true, "výchozí účet": true, "vychozi ucet": true,
+	// Hungarian
+	"rendszergazda": true, "vendég": true, "vendeg": true, "alapértelmezett fiók": true, "alapertelmezett fiok": true,
 }
 
 // profileMapping ties a Windows profile directory (the basename under
@@ -65,17 +104,35 @@ type profileMapping struct {
 // bridge matches on the DIRECTORY name under Users\, so anything the registry
 // reported that did not correspond to a directory would produce an account
 // with no data to bind — an empty stranger on the login screen.
+//
+// Profiles whose names sanitize to empty (e.g. non-Latin scripts like "田中"
+// or "Иван") or collide with existing accounts after truncation receive
+// generated fallback accounts ("winuser1", "winuser2", ...) so that no user's
+// data is silently dropped (#197, #224).
 func listProfilesIn(usersDir, primary, primaryDir string) []profileMapping {
 	entries, err := os.ReadDir(usersDir)
 	if err != nil {
 		return nil
 	}
 
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+
 	seen := map[string]bool{}
 	if primary != "" {
 		seen[primary] = true
 	}
 	var out []profileMapping
+
+	fallbackIdx := 1
+	nextFallbackUser := func() string {
+		for {
+			cand := fmt.Sprintf("winuser%d", fallbackIdx)
+			fallbackIdx++
+			if !seen[cand] {
+				return cand
+			}
+		}
+	}
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -95,8 +152,11 @@ func listProfilesIn(usersDir, primary, primaryDir string) []profileMapping {
 			continue
 		}
 		linux := sanitizeUsername(name)
-		if linux == "" || seen[linux] {
+		if linux == primary {
 			continue
+		}
+		if linux == "" || seen[linux] {
+			linux = nextFallbackUser()
 		}
 		seen[linux] = true
 		out = append(out, profileMapping{WindowsDir: name, LinuxUser: linux})

@@ -1,0 +1,174 @@
+name: Real hardware test report
+description: Report a wootc install and recovery run on physical Windows hardware.
+title: "[hardware] "
+labels:
+  - field-report
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing wootc on a real machine. Please do not attach passwords,
+        recovery keys, private keys, or other secrets. See [manual testing](../../docs/manual-testing.md)
+        for the preparation and log-collection steps.
+
+  - type: input
+    id: build
+    attributes:
+      label: Build or tag tested
+      placeholder: "Example: v0.2.0-alpha.1 or commit SHA"
+    validations:
+      required: true
+
+  - type: input
+    id: brand
+    attributes:
+      label: Brand executable
+      description: Name the exe used, such as wootc.exe, Bluefin-Installer.exe, or Aurora-Installer.exe.
+      placeholder: "Example: Bluefin-Installer.exe"
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      description: Vendor, model, CPU architecture, and firmware/BIOS version.
+      placeholder: "Example: Framework 13 AMD, x86_64, UEFI 3.19"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version and edition
+      placeholder: "Example: Windows 11 Pro 24H2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: bitlocker
+    attributes:
+      label: BitLocker
+      options:
+        - Off
+        - On
+        - Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: secure-boot
+    attributes:
+      label: Secure Boot
+      options:
+        - Enabled
+        - Disabled
+        - Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tpm
+    attributes:
+      label: TPM 2.0
+      options:
+        - Present and enabled
+        - Present but disabled
+        - Not present
+        - Unknown
+    validations:
+      required: true
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network during deploy
+      description: Select Wi-Fi-only when no wired adapter was available.
+      options:
+        - Wired
+        - Wi-Fi only
+        - Offline/preloaded
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: wootc-version
+    attributes:
+      label: wootc version or commit
+      placeholder: "Example: v0.2.0-alpha.1"
+    validations:
+      required: true
+
+  - type: input
+    id: image
+    attributes:
+      label: Image reference
+      placeholder: "Example: ghcr.io/projectbluefin/dakota:stable"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Furthest journey phase
+      options:
+        - Windows preflight or installer
+        - Deployer boot
+        - First Linux boot
+        - Windows return
+        - Uninstall and restore
+        - Full journey
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: journey
+    attributes:
+      label: Journey checkpoints completed
+      options:
+        - label: Installer completed and requested a reboot
+        - label: Linux deployed and reached a login or desktop
+        - label: Windows files were present in Linux
+        - label: Reboot returned to Windows
+        - label: Uninstall completed and restored the machine
+
+  - type: dropdown
+    id: result
+    attributes:
+      label: Overall result
+      options:
+        - Green — full journey passed
+        - Fixed or retried — eventually passed
+        - Red — reproducible failure
+        - Inconclusive — needs maintainer review
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: logs
+    attributes:
+      label: Evidence collected
+      description: Check each item attached or pasted below. Remove secrets and recovery keys.
+      options:
+        - label: Installer log and state (`C:\\wootc\\logs\\` and `C:\\wootc\\install\\state.json`)
+        - label: Deployer log (`C:\\wootc\\logs\\deployer.log`)
+        - label: Deployer journal snapshot (`C:\\wootc\\logs\\deployer-last-journal.log`)
+        - label: Photo or screenshot of what the screen said
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence and symptoms
+      description: Include timestamps, exact messages, links to attachments, and whether the problem reproduced.
+      placeholder: "Describe what happened and list attached files. Never include passwords, recovery keys, or private keys."
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety confirmation
+      options:
+        - label: I have a backup and removed passwords, recovery keys, and private keys from attached evidence.
+          required: true
