@@ -1,6 +1,6 @@
 # wootc Roadmap — the road to 1.0
 
-**Last updated**: 2026-09-17 | **Maintainer**: tuna-os (hanthor)
+**Last updated**: 2026-09-24 | **Maintainer**: tuna-os (hanthor)
 
 ---
 
@@ -36,7 +36,7 @@ Everything below is sequenced toward those four sentences.
 - **North Star UX wave**: Windows on the boot menu, one-shot re-arm, calm product boots with honest copy, first-login welcome + Windows-drive bookmark, Add/Remove entry, uninstall that restores machine state, `docs/getting-started.md` + `docs/manual-testing.md`.
 - winget packaging (`TunaOS.wootc`) with auto-submission on full releases (pending the one-time `WINGET_TOKEN` secret).
 
-**In flight**: work advances actively toward the v0.9.0-rc release candidate validation gate and code signing pipeline setup.
+**In flight**: work advances actively toward the v0.9.0-rc release candidate validation gate and code signing pipeline setup. In parallel, the Windows shell is being replaced: **WinUI 3 shell migration** (Epic #340) — Phase A (Go engine behind `wootc.exe serve` JSON-RPC) has merged; Phases B–E (shell scaffold #343, screens/E2E #344, release cutover #345, Wails/web-frontend deletion #346) are open and not yet started.
 
 **Known defects with owners**: dakota Phase-2 first-boot hang (#209) · session token rewrap post-beta verification (#1) · console window flash (#179).
 
@@ -70,6 +70,7 @@ Beta means the support policy stops saying "alpha" because the evidence exists.
 
 ### v0.9.0-rc — "Ship-shaped" *(tracking: milestone issue M4)*
 - **Code signing** (EV cert / Azure Trusted Signing): kills the SmartScreen wall — the single biggest first-impression fix, and a spend decision that needs the maintainer.
+- **WinUI 3 shell replaces Wails (Epic #340, decided 2026-09-02)**: the entire installer UI — the surface every one of the four 1.0 criteria is written about — is being rebuilt. Phase A merged (Go engine now speaks JSON-RPC over stdio via `wootc.exe serve`); Phases B–E (#343–#346) carry the shell, screens, release cutover, and Wails removal. Evidence gathered on the outgoing Wails UI (matrix cells, field reports) needs an explicit carryover or re-verification rule before it counts toward the WinUI build — see #357.
 - **Try-in-VM (#178, #231)**: Explicitly cut from 1.0; Phase 1 Boot-in-VM on `root.disk` ([ADR 0001](docs/adr/0001-phase1-first-architecture.md)) provides the primary zero-risk VM test path without bundling ~100MB+ of QEMU/builder binaries.
 - **Program-migrator plugin architecture (#203)**: Delivered in commit `341fbd8`; plugin discovery interface and manifest JSON schemas established for 1.0.
 - Docs complete and truthful end-to-end; walkthrough imagery regenerated from the shipping build.
@@ -105,4 +106,4 @@ The four criteria at the top of this file, verified: 30 days of green nightlies,
 See [CONTRIBUTING.md](./CONTRIBUTING.md). Prefer tasks tied to a red/unverified matrix cell or an open milestone checklist item — evidence that turns a claim green beats untested feature breadth. The milestone tracking issues are the live task boards.
 
 ---
-*Refreshed 2026-09-17 against current `main` (resolves #394). Refine with maintainer input.*
+*Refreshed 2026-09-17 against current `main` (resolves #394); WinUI 3 shell migration added 2026-09-24 (see #357). Refine with maintainer input.*
