@@ -69,7 +69,9 @@ run_fast() {
         # PowerShell unit tests. The tests/field/*.ps1 verifiers grade release
         # and uninstall evidence on machines no runner has, so their pure
         # comparators are dot-sourced and driven from synthetic snapshots here.
-        # A grader nothing exercises is a rubber stamp.
+        # A grader nothing exercises is a rubber stamp — and the first run of
+        # these found one: an empty-array return collapsing to $null made a
+        # perfectly clean machine report a phantom firmware entry.
         echo "── powershell unit tests (tests/unit/test-*.ps1) ──"
         for t in tests/unit/test-*.ps1; do
             [ -e "$t" ] || continue

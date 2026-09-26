@@ -247,7 +247,7 @@ jobs:
           echo "staging a shim signed by the Microsoft UEFI CA(s): $SHIM_AUTHORITIES"
           while IFS=$'\t' read -r brand exe; do
             (cd app && GOOS=windows GOARCH=amd64 go build -tags desktop,production \
-              -ldflags "-w -s -X main.brandID=$brand -X main.shimAuthorities=$SHIM_AUTHORITIES -X main.releaseTag=$RELEASE_TAG" \
+              -ldflags "-H windowsgui -w -s -X main.brandID=$brand -X main.shimAuthorities=$SHIM_AUTHORITIES -X main.releaseTag=$RELEASE_TAG" \
               -o "../release-assets/$exe.exe" .)
             echo "built $exe.exe (brand: $brand)"
           done <<< "$brands"

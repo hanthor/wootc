@@ -193,12 +193,13 @@ func recordPriorPowerState() {
 	_ = os.WriteFile(priorPowerPath(), []byte(content), 0o644)
 	// Mirror into the Add/Remove key, which survives what the file cannot.
 	// The file lives under C:\wootc\install — so a user who deletes C:\wootc
-	// by hand and THEN uninstalls (the orphaned-leftovers path) destroys the
-	// only record of what to restore, and restorePriorPowerState() silently
-	// returns having changed nothing: hibernation stays off forever on a
-	// machine we promised to leave unchanged. The registry key is removed by
-	// unregisterUninstallEntry(), which runs immediately AFTER the restore,
-	// so the mirror outlives exactly the window it is needed for.
+	// by hand and THEN uninstalls (the orphaned-leftovers path, and a case
+	// #238 tests explicitly) destroys the only record of what to restore, and
+	// restorePriorPowerState() silently returns having changed nothing:
+	// hibernation stays off forever on a machine we promised to leave
+	// unchanged. The registry key is removed by unregisterUninstallEntry(),
+	// which runs immediately AFTER the restore, so the mirror outlives exactly
+	// the window it is needed for.
 	_ = runPowerShell(fmt.Sprintf(
 		`New-Item -Path %q -Force | Out-Null; `+
 			`Set-ItemProperty -Path %q -Name WootcPriorHibernate -Value %q; `+

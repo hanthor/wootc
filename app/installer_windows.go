@@ -208,6 +208,9 @@ func getUninstallInfo() UninstallInfo {
 			}
 			if d != "C" {
 				info.OnDedicatedVol, info.ReclaimGB = dedicatedVolumeInfo(d)
+				if info.OnDedicatedVol {
+					info.VolumeLabel = DedicatedVolumeLabel
+				}
 			}
 			return info
 		}
