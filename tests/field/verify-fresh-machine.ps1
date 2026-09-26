@@ -128,6 +128,7 @@ function Test-BrandIdentity {
     param(
         [hashtable]$VersionInfo,   # ProductName / FileDescription / CompanyName / ProductVersion
         [string]$ExpectedProduct,
+        [string]$ExpectedVersion,
         [switch]$Branded
     )
 
@@ -140,6 +141,14 @@ function Test-BrandIdentity {
     }
 
     $problems = @()
+    foreach ($field in @('ProductName', 'FileDescription', 'CompanyName', 'ProductVersion')) {
+        if (-not "$($VersionInfo[$field])".Trim()) {
+            $problems += "$field is missing"
+        }
+    }
+    if ($ExpectedVersion -and "$($VersionInfo['ProductVersion'])".Trim().TrimStart('v') -ne $ExpectedVersion.TrimStart('v')) {
+        $problems += "ProductVersion does not match release $ExpectedVersion"
+    }
     $product = "$($VersionInfo['ProductName'])".Trim()
     if ($ExpectedProduct -and $product -ne $ExpectedProduct) {
         $problems += "ProductName is '$product', expected '$ExpectedProduct'"
@@ -178,7 +187,10 @@ function Test-WingetPackage {
         return [pscustomobject]@{ Pass = $false; Detail = 'winget resolved the package but reported no Version' }
     }
     $want = "$ExpectedVersion".TrimStart('v')
-    if ($want -and $found.TrimStart('v') -ne $want) {
+    if (-not $want) {
+        return [pscustomobject]@{ Pass = $false; Detail = 'no release version was resolved for the comparison' }
+    }
+    if ($found.TrimStart('v') -ne $want) {
         return [pscustomobject]@{ Pass = $false; Detail = "winget serves $found, expected $want — the manifest is behind the release" }
     }
     return [pscustomobject]@{ Pass = $true; Detail = "winget serves TunaOS.wootc $found" }
@@ -222,10 +234,20 @@ function Get-ExeVersionInfo {
     }
 }
 
+function Resolve-ReleaseTag {
+    # Resolve once so winget, every download, and VERSIONINFO use one release,
+    # even if another release is published while the check is running.
+    param([string]$RequestedTag)
+    if ($RequestedTag) { return $RequestedTag }
+    $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest"
+    if (-not "$($release.tag_name)".Trim()) { throw 'latest release did not report a tag' }
+    return [string]$release.tag_name
+}
+
 function Get-ReleaseAsset {
     param([string]$Tag, [string]$Name, [string]$Destination)
-    $base = if ($Tag) { "https://github.com/$Repo/releases/download/$Tag" }
-            else { "https://github.com/$Repo/releases/latest/download" }
+    if (-not $Tag) { throw 'Resolve the release tag before downloading assets' }
+    $base = "https://github.com/$Repo/releases/download/$Tag"
     $dest = Join-Path $Destination $Name
     Invoke-WebRequest -Uri "$base/$Name" -OutFile $dest -UseBasicParsing
     return $dest
@@ -249,6 +271,7 @@ function Get-BrandExpectations {
 }
 
 function Invoke-Verification {
+    $Tag = Resolve-ReleaseTag -RequestedTag $Tag
     New-Item -ItemType Directory -Force -Path $Out | Out-Null
 
     if (-not $BrandDir) {
@@ -300,7 +323,7 @@ function Invoke-Verification {
         if ($brand) {
             $vi = Get-ExeVersionInfo -Path $path
             $isBranded = ($brand.Id -ne 'wootc')
-            $b = Test-BrandIdentity -VersionInfo $vi -ExpectedProduct $brand.ProductName -Branded:$isBranded
+            $b = Test-BrandIdentity -VersionInfo $vi -ExpectedProduct $brand.ProductName -ExpectedVersion $Tag -Branded:$isBranded
             $results += [pscustomobject]@{ Name = "$name shows its own identity"; Pass = $b.Pass; Detail = $b.Detail }
         }
     }
@@ -308,7 +331,7 @@ function Invoke-Verification {
     $meta = @{
         'Machine'  = "$((Get-CimInstance Win32_ComputerSystem).Manufacturer) $((Get-CimInstance Win32_ComputerSystem).Model)"
         'Windows'  = "$((Get-CimInstance Win32_OperatingSystem).Caption) ($((Get-CimInstance Win32_OperatingSystem).Version))"
-        'Release'  = if ($Tag) { $Tag } else { 'releases/latest' }
+        'Release'  = $Tag
         'Verified' = (Get-Date).ToUniversalTime().ToString('o')
     }
     $report = Format-Checklist -Results $results -Meta $meta

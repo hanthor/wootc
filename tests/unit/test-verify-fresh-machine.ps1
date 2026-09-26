@@ -86,6 +86,19 @@ $good = @{ ProductName = 'Bazzite Installer'; FileDescription = 'Bazzite Install
 $r = Test-BrandIdentity -VersionInfo $good -ExpectedProduct 'Bazzite Installer' -Branded
 Assert-True $r.Pass 'a branded exe wearing its own name passes'
 
+foreach ($field in @('ProductName', 'FileDescription', 'CompanyName', 'ProductVersion')) {
+    foreach ($missing in @($null, '   ')) {
+        $incomplete = $good.Clone()
+        $incomplete[$field] = $missing
+        $r = Test-BrandIdentity -VersionInfo $incomplete -ExpectedProduct 'Bazzite Installer' -Branded
+        Assert-True (-not $r.Pass) "a missing $field must fail"
+    }
+}
+$r = Test-BrandIdentity -VersionInfo $good -ExpectedProduct 'Bazzite Installer' -ExpectedVersion 'v1.0.0' -Branded
+Assert-True $r.Pass 'VERSIONINFO matching the release passes'
+$r = Test-BrandIdentity -VersionInfo $good -ExpectedProduct 'Bazzite Installer' -ExpectedVersion 'v2.0.0' -Branded
+Assert-True (-not $r.Pass) 'VERSIONINFO from a different release must fail'
+
 # The failure criterion 4 is written to catch.
 $leaks = @{ ProductName = 'wootc'; FileDescription = 'wootc'; CompanyName = 'TunaOS'; ProductVersion = '1.0.0' }
 $r = Test-BrandIdentity -VersionInfo $leaks -ExpectedProduct 'Bazzite Installer' -Branded
@@ -139,9 +152,36 @@ Assert-True (-not $r.Pass) 'an unresolvable package fails'
 $r = Test-WingetPackage -ShowOutput "Found wootc [TunaOS.wootc]`n" -ExpectedVersion 'v1.0.0' -ExitCode 0
 Assert-True (-not $r.Pass) 'resolving without a version fails'
 
-# With no expected version, any resolved version is acceptable.
+# An unresolved release cannot establish that winget serves that release.
 $r = Test-WingetPackage -ShowOutput $stale -ExpectedVersion '' -ExitCode 0
-Assert-True $r.Pass 'no expected version means "just resolve"'
+Assert-True (-not $r.Pass) 'no expected version must fail'
+
+# Resolve latest once, then use the concrete tag everywhere. These stubs
+# exercise the collector without a network call or Windows machine.
+$script:releaseLookups = 0
+function Invoke-RestMethod {
+    param([string]$Uri)
+    $script:releaseLookups++
+    Assert-True ($Uri -eq 'https://api.github.com/repos/tuna-os/wootc/releases/latest') 'latest comes from the release API'
+    return @{ tag_name = 'v2.0.0' }
+}
+$resolved = Resolve-ReleaseTag
+Assert-True ($resolved -eq 'v2.0.0') 'latest resolves to a concrete release'
+$r = Test-WingetPackage -ShowOutput $stale -ExpectedVersion $resolved -ExitCode 0
+Assert-True (-not $r.Pass) 'default latest mode rejects an old winget package'
+$explicit = Resolve-ReleaseTag -RequestedTag 'v1.0.0'
+Assert-True ($explicit -eq 'v1.0.0' -and $script:releaseLookups -eq 1) 'explicit tags need no API lookup'
+function Invoke-WebRequest {
+    param([string]$Uri, [string]$OutFile, [switch]$UseBasicParsing)
+    Assert-True ($Uri -eq 'https://github.com/tuna-os/wootc/releases/download/v2.0.0/wootc.exe') 'asset download uses the resolved tag'
+}
+Get-ReleaseAsset -Tag $resolved -Name 'wootc.exe' -Destination $here | Out-Null
+function Invoke-RestMethod { return @{} }
+$rejected = $false
+try { Resolve-ReleaseTag | Out-Null } catch { $rejected = $true }
+Assert-True $rejected 'a release API response without a tag fails closed'
+Remove-Item Function:Invoke-RestMethod
+Remove-Item Function:Invoke-WebRequest
 
 # ── the rendered checklist ───────────────────────────────────────────────────
 
