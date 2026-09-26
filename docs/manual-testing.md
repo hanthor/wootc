@@ -82,42 +82,48 @@ tick otherwise — so a fixed build can retry without re-downloading.
 
 ## Proving the uninstall put everything back
 
-"One uninstall puts everything back" is a v1.0 criterion ([#238]), and on
-real hardware it is where machines differ most: firmware boot entries are
-per-vendor, and a dual-boot machine has files on the ESP that are nobody's
-business but their owner's.
+"One uninstall puts everything back" is a v1.0 criterion ([#238]). On real
+hardware, this is where machines are most different. Each vendor has its own
+firmware boot entries. A dual-boot machine also has files on the ESP that
+belong only to their owner.
 
-The failures worth catching here are **silent** — an entry that survives,
-hibernation left off, someone else's ESP file gone — and the baseline you
-would need to notice them is **deleted by the uninstall itself**. So capture
-it first:
+The failures to find here are **silent**. Examples are an entry that stays,
+hibernation that stays off, or an ESP file of a different owner that is gone. To see them,
+you need a baseline, and **the uninstall itself deletes it**. So capture the
+baseline first:
 
 ```powershell
 # After the install completes, BEFORE uninstalling (run as Administrator):
 .\tests\field\verify-uninstall.ps1 capture -Out C:\uninstall-proof
 ```
 
-That snapshots the firmware boot entries, every ESP file with its SHA-256,
-the ESP ownership manifest, your live power settings, `C:\wootc`, the
-Add/Remove entry — and copies out `C:\wootc\install\prior-power.txt`, the
-installer's record of what hibernation and Fast Startup were *before* it
-touched them.
+This command records:
+- The firmware boot entries.
+- Each ESP file, with its SHA-256.
+- The ESP ownership manifest.
+- Your live power settings.
+- `C:\wootc` and the Add/Remove entry.
 
-Uninstall, reboot **twice**, then:
+It also copies out `C:\wootc\install\prior-power.txt`. In this file, the
+installer records the hibernation and Fast Startup values from *before* it
+changed them.
+
+Uninstall, reboot **two times**, then run:
 
 ```powershell
 .\tests\field\verify-uninstall.ps1 verify -Baseline C:\uninstall-proof -RootDisk keep
 ```
 
-It prints — and writes to `C:\uninstall-proof\checklist.md` — a checklist with
-every box ticked or not *and the evidence for it*, and **exits non-zero if
-any box failed**. Attach that file to your report; it is the artifact [#238]
-asks for. Nothing on the machine under test is modified: the script writes
-only its own two files into the folder you name, and the one thing it changes
-system-side is a temporary drive letter for the ESP, which it removes again
-before returning.
+The command shows a checklist and writes it to
+`C:\uninstall-proof\checklist.md`. For each box, the checklist shows the
+result *and the evidence for it*. The command **exits with a non-zero code if
+a box fails**. Attach that file to your report. [#238] asks for this file.
 
-What it checks:
+The script does not change the machine under test. It writes only its own two
+files into the folder that you name. The only other change is a temporary
+drive letter for the ESP. The script removes that letter before it stops.
+
+The checks:
 
 | Box | How it is decided |
 |---|---|
@@ -129,18 +135,18 @@ What it checks:
 | Add/Remove Programs entry gone | the `Uninstall\wootc` key is unregistered |
 | Windows booted clean twice | boot events since the capture, with no bugcheck or unexpected shutdown |
 
-**`C:\wootc` is not always meant to disappear.** With the default keep
-choice — what the Apps entry and bare `wootc.exe uninstall` both do — the
-folder stays, holding `disks\root.disk` and your logs, and only `install\`
-is removed. Pass `-RootDisk delete` only if you ticked *"Also delete my
-Linux data"*. Grading a correct keep run against "the folder is gone" is the
-easiest way to record a ✘ that isn't one.
+**`C:\wootc` is not always meant to disappear.** The default choice is to
+keep it. The Apps entry and a bare `wootc.exe uninstall` both use this choice.
+Then the folder stays with `disks\root.disk` and your logs, and the uninstall
+removes only `install\`. Use `-RootDisk delete` only if you ticked *"Also
+delete my Linux data"*. A correct keep run fails if you grade it against
+"the folder is gone". Do not record that ✘, because it is not a real failure.
 
-**The orphaned-leftovers variant.** One machine should also test the path
-where `C:\wootc` was deleted by hand *before* uninstalling. Capture first
-anyway — that is the only way the power box can be graded, because the
-record lives in the folder you are about to delete — then add `-Orphaned` to
-the verify run.
+**The variant with orphaned leftovers.** On one machine, also test the path
+where you delete `C:\wootc` by hand *before* the uninstall. Capture the
+baseline first on this machine too. The power record is in the folder that you
+delete, so the capture is the only way to grade the power box. Then add
+`-Orphaned` to the verify run.
 
 [#238]: https://github.com/tuna-os/wootc/issues/238
 
