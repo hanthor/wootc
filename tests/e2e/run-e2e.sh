@@ -557,6 +557,8 @@ qga_wait_windows() {
 # password and autologon configuration intact. Never change machine-wide policy.
 # shellcheck source=tests/e2e/lib/gui-session.sh
 source "$SCRIPT_DIR/lib/gui-session.sh"
+# shellcheck source=tests/e2e/lib/mok.sh
+source "$SCRIPT_DIR/lib/mok.sh"
 wootc_gui_configure "$SCRIPT_DIR" qga_powershell qga_windows_probe qga_restart_windows
 
 # Which drive holds the guest's \wootc tree. NOT always C:.
@@ -2599,7 +2601,7 @@ New-Item -ItemType Directory -Force -Path C:\wootc\install | Out-Null
 . "\\host.lan\Data\stage-status-cli.ps1"
 Copy-WootcStatusCLI -SourceDirectory "\\host.lan\Data" -Destination "C:\wootc\wootc.exe"
 foreach ($f in "deployer-vmlinuz","deployer-initramfs.img","shimx64.efi","grubx64.efi","mmx64.efi","wubildr.efi","mirror.txt","SHA256SUMS","SHA256SUMS.sig","shim-authorities.json") { if (Test-Path "\\host.lan\Data\$f") { Copy-Item "\\host.lan\Data\$f" "C:\wootc\install\$f" -Force } }
-Remove-Item C:\wootc\e2e-drive.json,C:\wootc\e2e-drive-state.json -Force -ErrorAction SilentlyContinue
+Remove-Item C:\wootc\e2e-drive.json,C:\wootc\e2e-drive-state.json,C:\wootc\e2e-ready.json -Force -ErrorAction SilentlyContinue
 @"
 set WOOTC_E2E_DRIVE=1
 set WOOTC_PRELOAD=0
@@ -2625,8 +2627,15 @@ Write-Output "task-scheduled"' 2>&1 | sed 's/^/    stage: /' || {
     }
     # The QGA powershell completing only proves the task was scheduled, not
     # that wootc.exe actually started.  Poll for the real readiness signal:
-    # e2e-drive-state.json (written by the drive loop every 2 s once the app
-    # renders the first screen).
+    # e2e-ready.json (written by the drive loop every 2 s once the app
+    # renders the first screen, with no directive required).
+    #
+    # Readiness deliberately does NOT wait for e2e-drive-state.json: a bound
+    # drive report requires the install directive, which is only written
+    # after launch is confirmed — waiting for it first is a deadlock (every
+    # GUI run since the drive loop landed burned 60 s here with a rendered
+    # app on screen). Progress authentication stays with the bound
+    # drive-state channel below.
     #
     # Staging took minutes, and schtasks /IT never runs without a session
     # `query user` can enumerate (GUI red 9/25-9/26: UserName said wootc,
@@ -2640,14 +2649,14 @@ Write-Output "task-scheduled"' 2>&1 | sed 's/^/    stage: /' || {
     else
         launch_deadline=$(deadline_in 60)
         while ! past_deadline "$launch_deadline"; do
-            if qga_read 'C:\wootc\e2e-drive-state.json' >/dev/null 2>&1; then
+            if qga_read 'C:\wootc\e2e-ready.json' >/dev/null 2>&1; then
                 break
             fi
             sleep 5
         done
     fi
-    if ! qga_read 'C:\wootc\e2e-drive-state.json' >/dev/null 2>&1; then
-        fail "wootc.exe did not start within 60 s — e2e-drive-state.json never appeared"
+    if ! qga_read 'C:\wootc\e2e-ready.json' >/dev/null 2>&1; then
+        fail "wootc.exe did not render within 60 s — e2e-ready.json never appeared"
         # "It didn't start" is not a diagnosis: the task may never have run, the
         # process may have started and died, or the app may be unable to render
         # at all. wootc is a wails app, so it CANNOT start without the WebView2
@@ -2779,10 +2788,23 @@ value = dict(schemaVersion=1, runId=sys.argv[1], directiveId=sys.argv[2],
 print(base64.b64encode(json.dumps(value, separators=(',', ':')).encode()).decode())
 PYDRIVE
     ) || { infra_fail "Could not construct this run's GUI directive"; return 1; }
+    # BOM-LESS write, verified byte-exact. Set-Content -Encoding UTF8 on the
+    # guest's PowerShell 5.1 emits a UTF-8 BOM, and NEITHER consumer tolerates
+    # one: Go's encoding/json rejects a leading BOM (so E2EDriveDirective
+    # reads ""), and JS JSON.parse throws on it. The old writer produced
+    # exactly that file in runs 36399679919/36413017019/36420437461 — the
+    # readback still passed because Get-Content decodes and strips the BOM
+    # before comparing, while the app read raw bytes and saw no directive:
+    # ready marker written, zero drive-state reports, 30m silent timeout.
+    # [IO.File]::WriteAllText with UTF8Encoding($false) emits no BOM on any
+    # PowerShell version, and the byte readback below fails the run if one
+    # ever reappears instead of rediscovering this 30 minutes later.
     if ! drive_ack=$(qga_powershell "\$ErrorActionPreference='Stop'
 \$wanted=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('$drive_payload'))
-Set-Content -LiteralPath C:\wootc\e2e-drive.json -Value \$wanted -Encoding UTF8
-\$actual=Get-Content -LiteralPath C:\wootc\e2e-drive.json -Raw
+[IO.File]::WriteAllText('C:\wootc\e2e-drive.json', \$wanted, [Text.UTF8Encoding]::new(\$false))
+\$bytes=[IO.File]::ReadAllBytes('C:\wootc\e2e-drive.json')
+if (\$bytes.Length -ge 3 -and \$bytes[0] -eq 0xEF -and \$bytes[1] -eq 0xBB -and \$bytes[2] -eq 0xBF) { throw 'Directive has UTF-8 BOM' }
+\$actual=[Text.Encoding]::UTF8.GetString(\$bytes)
 if (\$actual.TrimEnd([char]13,[char]10) -cne \$wanted) { throw 'Directive readback changed' }
 Write-Output 'gui-install-directive-written'" 2>/dev/null); then
         infra_fail "GUI install directive write is unknown; install observation refused"
@@ -2811,7 +2833,7 @@ Write-Output 'gui-install-directive-written'" 2>/dev/null); then
     # goes deaf we already know reopening is on the table, and the answer is a
     # verdict rather than another round of dialling.
     local reconnect_tried=false
-    local WOOTC_DRIVE_APP_DEAD_THRESHOLD="${WOOTC_DRIVE_APP_DEAD_THRESHOLD:-12}"
+    local WOOTC_DRIVE_APP_DEAD_THRESHOLD="${WOOTC_DRIVE_APP_DEAD_THRESHOLD:-3}"
     drive_deadline=$(deadline_in 1800)
     while ! past_deadline "$drive_deadline"; do
         # Retry a single transient QGA read failure: a hosted runner's container
@@ -2820,11 +2842,20 @@ Write-Output 'gui-install-directive-written'" 2>/dev/null); then
         # alive but reads came back empty, and the loop treated each as proof
         # the app had died, never recovering when reads resumed).
         drive_state=""
+        # Why the last validation failed, and how big the rejected file was.
+        # A present-but-rejected drive-state.json is a different failure from
+        # a missing one (run 36399679919: ~112 reads returned content, zero
+        # validated, and 2>/dev/null swallowed every reason). Kept, not
+        # discarded, and reported at the stall point and the final verdict.
+        drive_reject=""
+        drive_raw_len=0
         for _try in 1 2 3; do
             local drive_raw=""
             # Failed reads with plausible stdout and stale/malformed reports
             # remain unknown. Only the current directive's typed receipt counts.
             if drive_raw=$(qga_read 'C:\wootc\e2e-drive-state.json' 2>/dev/null); then
+                drive_raw_len=${#drive_raw}
+                drive_reject=$(printf '%s' "$drive_raw" | python3 "$SCRIPT_DIR/gui-drive-receipt.py" "$RUN_ID" "$drive_directive_id" "$IMAGE_REF" 2>&1 >/dev/null) || true
                 drive_state=$(printf '%s' "$drive_raw" | python3 "$SCRIPT_DIR/gui-drive-receipt.py" "$RUN_ID" "$drive_directive_id" "$IMAGE_REF" 2>/dev/null) || drive_state=""
             fi
             [ -n "$drive_state" ] && break
@@ -2842,14 +2873,53 @@ Write-Output 'gui-install-directive-written'" 2>/dev/null); then
             # that tests the CHANNEL and nothing else. A PowerShell round-trip
             # would conflate "agent is gone" with "exec failed for some guest-side
             # reason" — the same proxy mistake this diagnostic exists to avoid.
+            #
+            # This diagnostic must fire PERIODICALLY, not once. Run 36420437461
+            # tested the one-shot form (`-eq 3`): wootc.exe was alive at the
+            # ~1-minute mark, the block never fired again, and the loop sat
+            # silent for the remaining 29 minutes. First fire at 3 empties
+            # (~1 min), then every 30 empties (~10 min heartbeat), so the log
+            # is never silent for longer and a process that dies mid-wait is
+            # still caught with attribution instead of a bare 30m timeout.
+            local fire_diag=false
             if [ "$empty_reads" -eq 3 ]; then
+                fire_diag=true
+            elif [ "$empty_reads" -gt 3 ] && [ $(( (empty_reads - 3) % 30 )) -eq 0 ]; then
+                fire_diag=true
+            fi
+            if [ "$fire_diag" = true ]; then
                 if qga_probe; then
-                    warn "  drive state unreadable but QGA answers ping — the app stopped writing e2e-drive-state.json"
+                    if [ "$drive_raw_len" -gt 0 ]; then
+                        warn "  drive-state.json IS present (${drive_raw_len} bytes) but the receipt rejects it: ${drive_reject:-unknown reason} — the app writes, the binding fails"
+                    else
+                        warn "  drive state unreadable but QGA answers ping — the app stopped writing e2e-drive-state.json"
+                    fi
                     # If the app WAS writing state (last_good is non-empty) and
                     # then stopped, it has CRASHED. Do not burn the remaining
                     # 30 minutes waiting for a dead process. Check whether
                     # wootc.exe is still alive to confirm, then fail fast.
-                    if [ -n "$last_good" ]; then
+                    #
+                    # If it NEVER wrote (last_good empty), the process may have
+                    # died before the first write — e.g. a dead WebView2
+                    # renderer behind a black window (runs 36399679919,
+                    # 36413017019: ready marker written, zero reports after).
+                    # A dead process can never report, so fail fast; a live
+                    # one keeps the remaining budget.
+                    if [ -z "$last_good" ]; then
+                        local wootc_alive
+                        wootc_alive=$(qga_powershell 'if (Get-Process wootc -ErrorAction SilentlyContinue) { "alive" } else { "dead" }' 2>/dev/null | tr -d '\r\n' || echo "unknown")
+                        if [ "$wootc_alive" = "dead" ]; then
+                            infra_fail "wootc.exe died before writing any drive report — completion cannot be observed"
+                            info "  last screen reached: ${last_screen:-<none>}"
+                            capture_vm_diagnostics
+                            exit 1
+                        fi
+                        # A live process that never wrote is the black-window
+                        # hang, not a verdict yet — but it must be VISIBLE.
+                        # Without this heartbeat the wait is silent until the
+                        # 30m deadline (run 36420437461).
+                        warn "  still no drive report after ${empty_reads} unreadable reads (~$((empty_reads / 3)) min), wootc.exe process is '${wootc_alive}' — waiting on the remaining budget"
+                    else
                         dead_app_checks=$((dead_app_checks + 1))
                         local wootc_alive
                         wootc_alive=$(qga_powershell 'if (Get-Process wootc -ErrorAction SilentlyContinue) { "alive" } else { "dead" }' 2>/dev/null | tr -d '\r\n' || echo "unknown")
@@ -3012,6 +3082,9 @@ if (Test-Path $cfg) { Write-Output "grub.cfg first line:"; Write-Output ("  " + 
         info "  last screen reached: ${last_screen:-<none>} (install clicked: $driven)"
         info "  last readable state: ${last_good:-<never read one>}"
         info "  unreadable reads: $total_empty of ~180"
+        if [ "$drive_raw_len" -gt 0 ]; then
+            info "  rejected content: ${drive_raw_len} bytes, last reason: ${drive_reject:-unknown reason}"
+        fi
         info "  QGA ping answers; this does not establish GUI identity or progress"
         capture_vm_diagnostics
         exit 1
@@ -3789,6 +3862,13 @@ mok_sequence() {  # returns 0 only when the MokManager MENU was confirmed and dr
 # enrollment is pending (and widen the boot budget for the extra reboots).
 MOK_PENDING=false
 MOK_SIGHTINGS=0
+# Re-arm Phase 2 once per event that hands the firmware back to Windows: a
+# driven sequence (MokManager reboots to the default entry) or a reset after
+# a missed countdown. A single "already re-armed" flag would strand the
+# enrolled boot behind the recovery's re-arm.
+MOK_REARM_WANTED=false
+MOK_MISS_BYTE=""
+MOK_RESETS=0
 # A transient `podman cp` race here (reboot moment) must not abort the run
 # under set -e: the feed reports failure itself and warns after 12
 # consecutive misses, and the MOK grep below tolerates a stale copy.
@@ -3809,7 +3889,7 @@ fi
 # (run 32674246660 — sequence 1 driven, Windows booted 2s later, the re-arm
 # never fired, 9 idle minutes to timeout).
 mok_rearm_phase2() {
-    MOK_REARMED=true
+    MOK_REARM_WANTED=false
     info "Windows returned after the MokManager sequence (one-shot consumed) — re-arming Phase 2"
     # Soft wait: qga_wait's timeout branch writes the failure ledger, and
     # this re-arm must not be able to fail the run on its own — the boot
@@ -3846,6 +3926,27 @@ while ! past_deadline "$BOOT_DEADLINE"; do
     snapshot_serial || true
     CURRENT_BYTE=$(stat -c%s "$PTY" 2>/dev/null || echo 0)
     if [ "$CURRENT_BYTE" -lt "$LAST_BYTE" ]; then LAST_BYTE=0; wootc_phase_boundary; fi
+    # A MISSED countdown does not come back by itself: MokManager boots GRUB,
+    # GRUB refuses the untrusted kernel and then waits at its menu (run
+    # 38755153727 sat there for the whole budget). The enrollment request is
+    # still pending, so reset from the bootloader — positive evidence only,
+    # see mok_missed_boot_refused — let the firmware fall back to Windows,
+    # and re-arm the one-shot; the next pass through shim shows MokManager to
+    # a loop that is already watching. Once per run.
+    if [ "$MOK_PENDING" = true ] && [ -n "$MOK_MISS_BYTE" ] && [ "$MOK_RESETS" -lt 1 ] \
+        && mok_missed_boot_refused "$(tail -c +"$((MOK_MISS_BYTE + 1))" "$PTY" 2>/dev/null || true)"; then
+        MOK_RESETS=$((MOK_RESETS + 1))
+        MOK_MISS_BYTE=""
+        MOK_REARM_WANTED=true
+        info "MokManager countdown missed and GRUB refused the untrusted kernel — resetting from the bootloader to retry the enrollment"
+        $DOCKER exec "$CONTAINER_NAME" python3 -c 'import socket,time; s=socket.socket(socket.AF_UNIX); s.connect("/run/shm/monitor.sock"); time.sleep(.2); s.recv(4096); s.sendall(b"system_reset\n"); time.sleep(.4); s.recv(4096); s.close()' \
+            || warn "  monitor reset failed — the boot verdict decides"
+        BOOT_DEADLINE=$(deadline_in "$TIMEOUT")
+        snapshot_serial || true
+        LAST_BYTE=$(stat -c%s "$PTY" 2>/dev/null || echo 0)
+        sleep 5
+        continue
+    fi
     if [ "$CURRENT_BYTE" -gt "$LAST_BYTE" ]; then
         wootc_phase_read_serial_chunk "$PTY" "$LAST_BYTE" "$CURRENT_BYTE" || {
             fail "Could not read serial output and persist its observed phase vocabulary"; exit 1;
@@ -3859,6 +3960,8 @@ while ! past_deadline "$BOOT_DEADLINE"; do
         if [ "$MOK_PENDING" = true ] && printf '%s\n' "$NEW_OUTPUT" | grep -aq 'Press any key to perform MOK management'; then
             if mok_sequence; then
                 MOK_SIGHTINGS=$((MOK_SIGHTINGS + 1))
+                MOK_REARM_WANTED=true
+                MOK_MISS_BYTE=""
                 info "MokManager driven (sequence $MOK_SIGHTINGS): Enroll MOK, password universalblue"
                 if [ "$MOK_SIGHTINGS" -ge 2 ]; then
                     warn "  two MokManager sequences sent — the boot verdict decides"
@@ -3867,6 +3970,7 @@ while ! past_deadline "$BOOT_DEADLINE"; do
                 BOOT_DEADLINE=$(deadline_in "$TIMEOUT")
             else
                 info "MokManager sighted but its menu was not confirmed (countdown expired?) — catching the next cycle"
+                MOK_MISS_BYTE=$CURRENT_BYTE
             fi
             # Consume everything the sequence itself painted (menu redraws
             # repeat the marker) — or the next poll would re-trigger on our
@@ -3880,7 +3984,7 @@ while ! past_deadline "$BOOT_DEADLINE"; do
             snapshot_serial || true
             _mok_seq_tail=$(tail -c +"$((CURRENT_BYTE + 1))" "$PTY" 2>/dev/null || true)
             LAST_BYTE=$(stat -c%s "$PTY" 2>/dev/null || echo 0)
-            if [ "$MOK_SIGHTINGS" -gt 0 ] && [ "${MOK_REARMED:-false}" = false ] \
+            if [ "$MOK_REARM_WANTED" = true ] \
                 && printf '%s\n' "$_mok_seq_tail" | grep -aq 'starting Boot.* "Windows Boot Manager"'; then
                 mok_rearm_phase2
                 snapshot_serial || true
@@ -3890,7 +3994,7 @@ while ! past_deadline "$BOOT_DEADLINE"; do
         fi
         # The Windows-return line can also land in ordinary fresh output
         # (slower firmware, or a boot cycle later): same one-time re-arm.
-        if [ "$MOK_SIGHTINGS" -gt 0 ] && [ "${MOK_REARMED:-false}" = false ] \
+        if [ "$MOK_REARM_WANTED" = true ] \
             && printf '%s\n' "$NEW_OUTPUT" | grep -aq 'starting Boot.* "Windows Boot Manager"'; then
             mok_rearm_phase2
             snapshot_serial || true
