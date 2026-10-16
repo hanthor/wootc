@@ -65,11 +65,15 @@ class LaunchTaskDeleteTests(unittest.TestCase):
         self.assertIn('Write-Output "task-absent: wootc-gui-e2e"', payload)
 
     def test_the_directive_is_written_only_after_the_single_instance_verdict(self):
-        verdict = SOURCE.index('if ! gui_single_instance_proven "$single_out"; then')
+        verdict = SOURCE.index('if ! gui_single_instance_proven "$single_out" "$GUI_PROCESS.exe"; then')
         directive = SOURCE.index('step "Driving the REAL install through the live form')
         self.assertLess(verdict, directive)
         block = SOURCE[verdict:SOURCE.index("fi\n", verdict)]
         self.assertIn("return 1", block)
+        # The native shell's package-path proof also gates the directive.
+        native = SOURCE.index('! gui_native_shell_path_proven "$single_out"; then')
+        self.assertLess(native, directive)
+        self.assertIn("return 1", SOURCE[native:SOURCE.index("fi\n", native)])
 
     @unittest.skipUnless(PWSH, "pwsh not installed")
     def test_powershell_hands_cmd_exactly_one_command_string(self):
@@ -92,10 +96,11 @@ class LaunchTaskDeleteTests(unittest.TestCase):
 
 
 class SingleInstanceVerdictTests(unittest.TestCase):
-    def verdict(self, output):
-        env = dict(os.environ, OUT=output)
+    def verdict(self, output, exe=None):
+        env = dict(os.environ, OUT=output, EXE=exe or "")
+        call = 'gui_single_instance_proven "$OUT" "$EXE"' if exe else 'gui_single_instance_proven "$OUT"'
         return subprocess.run(
-            ["bash", "-c", f"source '{MODULE}'; gui_single_instance_proven \"$OUT\""],
+            ["bash", "-c", f"source '{MODULE}'; {call}"],
             env=env, capture_output=True, text=True).returncode
 
     GOOD = "task-absent: wootc-gui-e2e\r\nround 1: instances=1\r\nsingle-instance: 1 wootc.exe\r\n"
@@ -119,6 +124,45 @@ class SingleInstanceVerdictTests(unittest.TestCase):
     def test_two_instances_are_refused(self):
         out = "task-absent: wootc-gui-e2e\nround 2: instances=2\nSINGLE-INSTANCE-UNPROVEN: 2 wootc.exe running\n"
         self.assertNotEqual(self.verdict(out), 0)
+
+    NATIVE = ("task-absent: wootc-gui-e2e\r\nround 1: instances=1\r\nsingle-instance: 1 Wootc.Shell.exe\r\n"
+              "native-shell-path: C:\\Program Files\\wootc Native Preview\\bluefin\\bundle\\Wootc.Shell.exe\r\n")
+
+    def test_the_native_shell_passes_only_when_it_is_the_expected_frontend(self):
+        self.assertEqual(self.verdict(self.NATIVE, "Wootc.Shell.exe"), 0)
+        # A native run where the Wails app answered is not a native run.
+        self.assertNotEqual(self.verdict(self.GOOD, "Wootc.Shell.exe"), 0)
+        # ...and a Wails run is never satisfied by the native shell.
+        self.assertNotEqual(self.verdict(self.NATIVE), 0)
+
+    def test_the_other_frontend_running_is_refused(self):
+        out = self.NATIVE + "OTHER-FRONTEND: 1 wootc.exe running beside the frontend under test\n"
+        self.assertNotEqual(self.verdict(out, "Wootc.Shell.exe"), 0)
+
+    def test_the_launch_trigger_is_in_the_past(self):
+        # A ONCE trigger at now+1m fires a second launch after /Run (native
+        # run 38849303170). A past start time leaves /Run as the only launch.
+        self.assertIn("$start = (Get-Date).AddMinutes(-1).ToString('\\''HH:mm'\\'')", SOURCE)
+        self.assertNotIn("$start = (Get-Date).AddMinutes(1).ToString('\\''HH:mm'\\'')\n# /RU must name", SOURCE)
+
+    def test_schtasks_stderr_cannot_abort_the_launch(self):
+        # Under $ErrorActionPreference = "Stop", PowerShell 5.1 turns a native
+        # command's stderr line into a terminating error. /Create writes its
+        # past-start-time WARNING to stderr, which aborted staging in native
+        # run 38853736862. cmd.exe must merge the streams; the rc decides.
+        self.assertIn('$mk = cmd.exe /d /c "schtasks /Create /TN wootc-gui-e2e /SC ONCE /ST $start '
+                      '/TR C:\\wootc\\launch-gui.cmd /RU $who /IT /RL HIGHEST /F 2>&1"', SOURCE)
+        self.assertIn('if ($mkRc -ne 0) { throw ("schtasks /Create failed rc=" + $mkRc) }', SOURCE)
+        self.assertIn('$rn = cmd.exe /d /c "schtasks /Run /TN wootc-gui-e2e 2>&1"', SOURCE)
+        self.assertNotIn('$mk = schtasks /Create', SOURCE)
+        self.assertNotIn('$rn = schtasks /Run', SOURCE)
+
+    def test_the_probe_counts_the_frontend_under_test(self):
+        payload = single_instance_payload()
+        self.assertIn("Get-Process -Name $gui", payload)
+        self.assertIn("OTHER-FRONTEND", payload)
+        self.assertNotIn("Get-Process wootc ", payload)
+        self.assertIn('gui_single_instance_proven "$single_out" "$GUI_PROCESS.exe"', SOURCE)
 
     def test_the_count_alone_does_not_prove_the_trigger_is_gone(self):
         # Exactly the old run's evidence: one instance, no word on the task.
