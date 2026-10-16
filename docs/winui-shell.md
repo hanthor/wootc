@@ -10,7 +10,7 @@ This revision corrects the transport and identity assumptions in the earlier des
 |---|---|---|
 | A: engine protocol | Go stdio RPC and DTO generator exist; legacy disconnect and console controls pass | Native operation authorization and the full consumer journey remain open |
 | B: scaffold (#343) | Native projects, authenticated assessment RPC, startup UI tests, and five branded preview packages pass hosted component checks. Each installed package shows its palette and logo and refuses Windows builds before 17763. Windows policy refuses elevation for a standard user, and the shell keeps the branded assessment and the retry ([run 38776425860](https://github.com/tuna-os/wootc/actions/runs/38776425860)) | Interactive UAC consent, original-user collection for an alternative administrator (#606), proof on build 17763, the native typeface, and preview release assets (#608) |
-| C: experience (#344) | A read-only startup view, a configuration form, a route for an interrupted install, an install route that needs an engine grant and a confirmation, progress and done views fed by that install session, manage and recovery views whose uninstall and boot repair need their own engine grant in an install session, Linux window views whose VM actions each need an engine grant, UI Automation controls, a screen gallery, and an E2E drive mode (`WOOTC_E2E_DRIVE=1`) that operates these views exist. The GUI E2E can install the native shell in the guest and drive it (`WOOTC_E2E_GUI_FRONTEND=native`, see [Native shell E2E](#native-shell-e2e)) | Consumer screens, VM and migration flows, a passing native drive-mode run in a VM, accessibility, persistence, and the full journey |
+| C: experience (#344) | A read-only startup view, a configuration form, a route for an interrupted install, an install route that needs an engine grant and a confirmation, progress and done views fed by that install session, manage and recovery views whose uninstall and boot repair need their own engine grant in an install session, Linux window views whose VM actions each need an engine grant, UI Automation controls, a screen gallery, and an E2E drive mode (`WOOTC_E2E_DRIVE=1`) that operates these views exist. The GUI E2E can install the native shell in the guest and drive it (`WOOTC_E2E_GUI_FRONTEND=native`, see [Native shell E2E](#native-shell-e2e)). [Run 38857241312](https://github.com/tuna-os/wootc/actions/runs/38857241312) drove a full Windows, deployer, Linux and Windows cycle through it | Consumer screens, VM and migration flows, an unelevated shell with interactive UAC, accessibility, persistence, and the full journey |
 | D: release (#345) | Not started | Native default only after C; retain a legacy artifact for one release |
 | E: removal (#346) | Not started | Remove Wails/web frontend only after a clean native release and docs audit |
 
@@ -182,6 +182,11 @@ Publish the shell as a preview beside the current installer first.
 An Inno Setup wrapper can provide one download for an unpackaged self-contained bundle.
 Keep the Go engine beside the shell and retain the standalone headless asset.
 Package cleanup and Linux uninstall need separate, clearly named ownership.
+
+The install does not depend on the preview package after it arms.
+The recovery tasks run a copy of the engine in `install\wootc.exe` under the install directory.
+The Apps entry for the Linux install runs that copy too, so removal of the preview does not break that entry.
+The preview installer refuses an existing destination, so an upgrade also removes the preview first.
 Do not remove Linux data merely because a user removes the preview shell.
 
 Pin .NET, Windows App SDK, and build-tool versions before the package experiment.
@@ -233,6 +238,13 @@ The screenshots and `gallery.json` are in the `winui-native-gallery` artifact, n
    A native run also needs a `native-shell` assertion, so the ledger never records a native green as a Wails one.
 
 This run does not prove an unelevated shell, interactive UAC consent, the Inno installer, or a standard user.
+
+The plan check has a known time risk.
+The shell waits 110 seconds for `PrepareNativeInstall`.
+In that time the engine reads the system once and observes the storage twice, with a limit of 40 seconds for each observation.
+The second observation also selects the state root again, and the grant contract needs it, so the check keeps both.
+Run 38857241312 passed, but it did not record the margin.
+If a slow disk causes a timeout, measure each part before you change a limit.
 
 ## Evidence before cutover
 
