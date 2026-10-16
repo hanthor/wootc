@@ -145,7 +145,12 @@ public sealed class InstalledPreviewTests
                 sizeText.Text="20";sizeText.Focus();FlaUI.Core.Input.Keyboard.Type(FlaUI.Core.WindowsAPI.VirtualKeyShort.TAB);
             }
             var storageChoice=Find("StorageChoice").AsComboBox();
-            storageChoice.Expand();int volumes=storageChoice.Items.Length;storageChoice.Collapse();
+            storageChoice.Expand();int volumes=storageChoice.Items.Length;
+            // The engine's eligible volumes (GPT basic data, NTFS, fixed, unencrypted),
+            // with each drive's real free space, for the log of this run.
+            string observedVolumes=string.Join(", ",storageChoice.Items.Select(item=>{string letter=item.Text.TrimEnd(':');try{return $"{letter}: {new DriveInfo(letter).AvailableFreeSpace>>30} GB free";}catch(ArgumentException){return letter;}}));
+            storageChoice.Collapse();
+            Console.WriteLine($"Observed storage volumes: {observedVolumes}");
             Assert.True(volumes>0,"No observed storage volume");
             int imageCount=images.Items.Length;
             for(int image=0;image<imageCount&&!prepareInstall.IsEnabled;image++)
@@ -180,7 +185,7 @@ public sealed class InstalledPreviewTests
                 long actualFree=new DriveInfo(space.Groups[1].Value).AvailableFreeSpace>>30;
                 Assert.True(Math.Abs(actualFree-statedFree)<=2,$"The form's free space ({statedFree} GB) is not the drive's ({actualFree} GB)");
                 Assert.True(statedFree-kept<20,$"The form refused a drive that holds a 20 GB disk beside {kept} GB: {blocked}");
-                Console.WriteLine($"Install plan check unreachable on this runner: {blocked}");
+                Console.WriteLine($"Install plan check unreachable on this runner: {blocked} (observed volumes: {observedVolumes})");
             }
             if(planReachable)
             {
@@ -191,7 +196,7 @@ public sealed class InstalledPreviewTests
             string gateStatus="";
             using(var refusalDeadline=new CancellationTokenSource(TimeSpan.FromSeconds(150)))
             {
-                while((gateStatus=Find("InstallGateStatus").Name).Length==0||gateStatus=="Checking this plan with the engine")
+                while((gateStatus=Find("InstallGateStatus").Name).Length==0||gateStatus.StartsWith("Checking this plan with the engine",StringComparison.Ordinal))
                 {
                     if(refusalDeadline.IsCancellationRequested)throw new InvalidOperationException($"Install plan check did not finish; {Find("ConnectionStatus").Properties.HelpText.Value}");
                     await Task.Delay(100);
