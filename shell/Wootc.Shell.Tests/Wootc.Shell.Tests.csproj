@@ -12,6 +12,8 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Shared with app/e2e_drive_receipt_test.go and tests/unit/test_gui_drive_receipt.py. -->
+    <None Include="../../tests/unit/fixtures/e2e-drive/*.json" LinkBase="Fixtures/e2e-drive" CopyToOutputDirectory="PreserveNewest" />
     <!-- InstallDisclosureTests compares the native confirmation with these words. -->
     <None Include="../../app/frontend/src/screens/launchpad.js" Link="Fixtures/launchpad.js" CopyToOutputDirectory="PreserveNewest" />
     <None Include="../../app/frontend/src/screens/progress.js" Link="Fixtures/progress.js" CopyToOutputDirectory="PreserveNewest" />

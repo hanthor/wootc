@@ -54,6 +54,8 @@ public sealed class ConsumerConfiguration
     public ConfigurationImage? SelectedImage => selected;
     public ConfigurationStorage? SelectedStorage => storage;
     public IReadOnlyList<ConfigurationImage> Images => catalogue?.Images ?? Array.Empty<ConfigurationImage>();
+    // Null until the authenticated configuration has been read.
+    public IReadOnlyList<ConfigurationStorage>? ObservedStorage => catalogue?.Storage;
     // The configuration view cannot grant engine capabilities. A future
     // operation route must obtain and bind authorization separately.
     public bool CanInstall => false;
@@ -160,9 +162,17 @@ public sealed class ConsumerConfiguration
             ImageMismatch = true;
             return new(directive.RunId, directive.DirectiveId, false, true, false, InstallationBlockedReason);
         }
-        var requestedStorage = catalogue?.Storage.SingleOrDefault(volume => volume.Id == directive.StorageId);
-        if (requestedStorage is null) return new(directive.RunId, directive.DirectiveId, false, false, false,
-            "The requested storage identity has not been observed.");
+        // The directive must name its target volume; one observed volume is
+        // never taken as the answer (E2EDriveTarget).
+        ConfigurationStorage requestedStorage;
+        try
+        {
+            requestedStorage = E2EDriveTarget.Resolve(directive.StorageId, catalogue?.Storage ?? Array.Empty<ConfigurationStorage>());
+        }
+        catch (E2EDriveRefusal refusal)
+        {
+            return new(directive.RunId, directive.DirectiveId, false, false, false, refusal.Message);
+        }
         selected = requested;
         storage = requestedStorage;
         ImageMismatch = false;

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -69,5 +70,38 @@ func TestE2EDriveToleratesBOMDirective(t *testing.T) {
 	after, err := os.ReadFile(e2eDrivePath("e2e-drive-state.json"))
 	if err != nil || string(after) != boundReport {
 		t.Fatal("BOM directive blocked bound report publication")
+	}
+}
+
+// The native shell builds reports from tests/unit/fixtures/e2e-drive
+// (shell/Wootc.Shell.Tests/E2EDriveTests.cs). The engine must bind each
+// golden report to its golden directive, and to no other.
+func TestE2EDriveSharedNativeGoldens(t *testing.T) {
+	read := func(name string) []byte {
+		raw, err := os.ReadFile("../tests/unit/fixtures/e2e-drive/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	install, reboot := read("directive-install.json"), read("directive-reboot.json")
+	// The native shell refuses an install directive that names no target
+	// volume, so the shared install golden must name one ("C:").
+	var target struct {
+		StorageID *string `json:"storageId"`
+	}
+	if err := json.Unmarshal(install, &target); err != nil || target.StorageID == nil || *target.StorageID != "C:" {
+		t.Fatalf("directive-install.json must name storageId \"C:\" (err=%v)", err)
+	}
+	for _, name := range []string{"report-install-ready.json", "report-install-mismatch.json", "report-install-done.json", "report-install-unknown-target.json"} {
+		if !e2eBoundDriveReport(read(name), install) {
+			t.Errorf("%s is not bound to the install directive", name)
+		}
+		if e2eBoundDriveReport(read(name), reboot) {
+			t.Errorf("%s binds to the reboot directive", name)
+		}
+	}
+	if !e2eBoundDriveReport(read("report-reboot-done.json"), reboot) || e2eBoundDriveReport(read("report-reboot-done.json"), install) {
+		t.Error("the reboot report must bind only to the reboot directive")
 	}
 }

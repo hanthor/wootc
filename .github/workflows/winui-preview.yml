@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'shell/**'
+      - 'tests/unit/fixtures/e2e-drive/**'
       - 'app/native_install*'
       - 'app/frontend/src/screens/launchpad.js'
       - 'app/frontend/src/screens/progress.js'
