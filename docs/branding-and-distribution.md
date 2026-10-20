@@ -24,24 +24,31 @@ masking that.
   the release is cut from the exact SHA the nightly proved. No green nightly,
   no auto release.
 
-**Assets.** Every release ships, for each brand (see §2):
+**Assets.** Every release ships the native setup packages for each eligible
+brand (see §2), plus the shared boot set:
 
 | Asset | Source |
 |---|---|
-| `<Product>-Setup.exe` (e.g. `wootc.exe`, `TunaOS-Installer.exe`) | per-brand app build |
+| `<Product>-Installer-Setup.exe` (e.g. `wootc-Installer-Setup.exe`, `TunaOS-Installer-Setup.exe`) | WinUI setup workflow, per-brand native package |
+| `wootc-legacy.exe` | one-release Wails compatibility build |
 | `deployer-vmlinuz`, `deployer-initramfs.img` | deployer image build (`payload/deployer/Containerfile`) |
 | `shimx64.efi`, `grubx64.efi` | signed Fedora chain (same extraction the E2E uses) |
 | `wubildr.efi` | wubildr build |
-| `SHA256SUMS` | sha256sum over every asset above |
+| `SHA256SUMS` | sha256sum over the boot and legacy assets |
+| `native-SHA256SUMS` | sha256sum over the attached setup assets |
+
+The setup package embeds the native shell, its protected Go engine, and the
+release public verification key. The Wails executable is not a second branded
+installer and is retained only for this cut-over release.
 
 This closes the today-gap where `deployerBaseURL()` points at release assets
 that have never existed (documented on #196): after the first automated
 release, a plain online install works with zero pre-staging.
 
-**Branded downloads.** Each branded exe embeds its own
+**Branded downloads.** Each branded setup embeds its own
 `deployerBaseURL`-compatible layout expectation; boot artifacts are shared
-across brands (the deployer is brand-neutral), so one artifact set + one
-SHA256SUMS serves all brand exes on the same release.
+across brands (the deployer is brand-neutral), so one artifact set plus the
+native setup manifest serves all brand packages on the same release.
 
 ## 2. Branding
 
