@@ -6,12 +6,12 @@ manifests of the generic native setup installer, published as
 WinUI shell and its protected Go engine; it does not put a portable
 `wootc.exe` on PATH.
 
-`.github/workflows/winget-publish.yml` renders them on every **full** release
-(pre-releases are skipped): it fills `{{VERSION}}` / `{{TAG}}` from the release
-tag, waits for the native packaging workflow, uses the release's
-`wootc-Installer-Setup.exe` asset, and computes `{{SHA256}}` from the actual
-published bytes before submitting a PR to winget-pkgs with
-[wingetcreate](https://github.com/microsoft/winget-create).
+`.github/workflows/winget-publish.yml` renders them for every **full** release.
+It skips pre-releases. It fills `{{VERSION}}` and `{{TAG}}` from the release
+tag, then waits for the native package workflow. Next, it uses the release's
+`wootc-Installer-Setup.exe` asset and computes `{{SHA256}}` from the published
+bytes. Finally, [wingetcreate](https://github.com/microsoft/winget-create)
+submits a PR to winget-pkgs.
 
 Requirements, both one-time:
 

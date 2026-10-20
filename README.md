@@ -22,8 +22,8 @@
 ---
 
 wootc installs a real Linux desktop from a [bootc](https://github.com/containers/bootc)
-image into `root.disk`, a file beside your Windows files. The native WinUI shell is the primary Windows release surface; the verification status (docs/status.md) describes the evidence and limits.
-The [roadmap](ROADMAP.md) keeps VM-first use and complete restoration as release requirements.
+image into `root.disk`, a file beside your Windows files. The native WinUI shell is the primary Windows release surface.
+[Verification status](docs/status.md) describes the evidence and limits.
 
 The setup form asks for **a password**. The app suggests your username and
 computer name from your PC. It sizes the disk from available space and selects TPM encryption by default.
@@ -47,16 +47,16 @@ Never post account credentials or API keys in issues or pull requests.
 
 **[⬇ Download the latest release](https://github.com/tuna-os/wootc/releases/latest)**
 — run `wootc-Installer-Setup.exe` as Administrator. The Inno setup installs
-the native WinUI shell and protected engine, fetches boot artifacts, checks
-hashes, and verifies a signed manifest. The native shell does not require WebView2.
+the native WinUI shell and protected engine, fetches boot artifacts, checks hashes, and verifies a signed manifest.
+The native shell does not require WebView2.
 
-The Wails compatibility build is retained for one release as
-`wootc-legacy.exe`; use it only when a legacy Wails UI is required.
+This release keeps the Wails compatibility build as `wootc-legacy.exe`.
+Use it only when you need the legacy Wails UI.
 
 ```
 winget install TunaOS.wootc
 ```
-*(winget follows the generic native setup asset.)*
+*(winget follows the generic setup for the native app.)*
 
 Every release also ships **branded installers** —
 `Bazzite-Installer-Setup.exe`, `Bluefin-Installer-Setup.exe`,

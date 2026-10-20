@@ -19,17 +19,16 @@ setup packages of the identical engine —
 They pre-select their own images and download the whole OS while still on
 Windows, which is the right choice on a Wi-Fi-only laptop.
 
-The Wails compatibility build is retained for one release as
-`wootc-legacy.exe`; it is the only release download that needs WebView2.
+This release keeps the Wails compatibility build for one release.
+The `wootc-legacy.exe` file is the only release download that needs WebView2.
 
 Command-line folks can use winget once the package clears Microsoft's
 one-time review: `winget install TunaOS.wootc`.
 
 To check your download, compare the release's `native-SHA256SUMS` entry with
 PowerShell's `Get-FileHash .\wootc-Installer-Setup.exe` result.
-A matching checksum confirms the file matches that manifest. It does not
-identify the publisher. The app checks hashes and a signed manifest for its
-boot artifacts.
+A matching checksum confirms the file matches that manifest. It does not identify the publisher.
+The app checks hashes and a signed manifest for its boot artifacts.
 
 Your browser may say something like *"wootc-Installer-Setup.exe isn't commonly
 downloaded"* and hide the file behind a menu. SmartScreen checks file and

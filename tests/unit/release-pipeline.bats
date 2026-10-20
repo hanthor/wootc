@@ -29,7 +29,7 @@ WINUI=.github/workflows/winui-preview.yml
     grep -q '<Product>-Installer-Setup.exe' "$RELEASE"
     grep -q 'native-SHA256SUMS' "$RELEASE"
     grep -q -- '-Mode release' "$WINUI"
-    grep -q 'setup.iss' "$WINUI"
+    grep -q "'setup.iss'" shell/packaging/compile-preview.ps1
     grep -q 'artifact-public-key.hex' "$WINUI"
     grep -q 'Install and remove the production setup smoke package' "$WINUI"
     grep -q 'wootc-Installer-Setup.exe' "$WINGET"

@@ -254,7 +254,7 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq librsvg2-bin
           (cd app/frontend && npm ci && npm run build)
           mkdir -p release-assets
-          [ -n "$RELEASE_TAG" ] || { echo "::error::no release tag to pin the legacy artifact"; exit 1; }
+          [ -n "$RELEASE_TAG" ] || { echo "::error::no release tag to pin the boot artifacts to"; exit 1; }
           SHIM_AUTHORITIES=$(python3 -c "import json;print(','.join(json.load(open('release-assets/shim-authorities.json'))['shimx64.efi']))")
           [ -n "$SHIM_AUTHORITIES" ] || { echo "::error::the staged shim carries no Microsoft UEFI CA"; exit 1; }
           python3 packaging/build-windows.py --brand wootc \

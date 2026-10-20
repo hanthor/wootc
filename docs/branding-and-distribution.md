@@ -38,17 +38,17 @@ brand (see §2), plus the shared boot set:
 | `native-SHA256SUMS` | sha256sum over the attached setup assets |
 
 The setup package embeds the native shell, its protected Go engine, and the
-release public verification key. The Wails executable is not a second branded
-installer and is retained only for this cut-over release.
+public key for release verification. This cut-over release keeps the Wails
+executable only as a compatibility fallback, not a second branded installer.
 
-This closes the today-gap where `deployerBaseURL()` points at release assets
-that have never existed (documented on #196): after the first automated
-release, a plain online install works with zero pre-staging.
+`deployerBaseURL()` previously pointed at release assets that did not exist
+(documented on #196). The first automated release closes that gap. A plain
+online install then works without advance setup.
 
-**Branded downloads.** Each branded setup embeds its own
-`deployerBaseURL`-compatible layout expectation; boot artifacts are shared
-across brands (the deployer is brand-neutral), so one artifact set plus the
-native setup manifest serves all brand packages on the same release.
+**Branded downloads.** Each branded setup has its own layout expectation for
+`deployerBaseURL`. All brands share the boot artifacts because the deployer is
+brand-neutral. One artifact set serves all setup packages from the same release.
+A native manifest covers that set.
 
 ## 2. Branding
 

@@ -330,11 +330,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Branded native publish refused' }
           New-Item -ItemType Directory -Force app/frontend/dist | Out-Null
           Set-Content app/frontend/dist/index.html '<!doctype html><title>Native engine preview</title>'
-          $ldflags = "-H windowsgui -X main.nativeBuildID=${{ github.sha }} -X main.brandID=${{ matrix.brand }}"
+          $ldflags = "-X main.nativeBuildID=${{ github.sha }} -X main.brandID=${{ matrix.brand }}"
           if ($env:ARTIFACT_PUBLIC_KEY) { $ldflags += " -X main.artifactPublicKey=$env:ARTIFACT_PUBLIC_KEY" }
           if ($env:RELEASE_TAG) { $ldflags += " -X main.releaseTag=$env:RELEASE_TAG" }
           Push-Location app
-          try { go build -ldflags $ldflags -o ../out/branded-preview/wootc-engine.exe . } finally { Pop-Location }
+          try { go build -ldflags "-H windowsgui $ldflags" -o ../out/branded-preview/wootc-engine.exe . } finally { Pop-Location }
           if ($LASTEXITCODE -ne 0) { throw 'Branded engine build refused' }
       - name: Compile, install, observe and remove the preview package
         shell: pwsh

@@ -65,7 +65,7 @@ $r = Test-Sha256Manifest -Manifest $manifest -FileName 'wootc-legacy.exe' `
     -ActualHash 'AAAA1111AAAA1111AAAA1111AAAA1111AAAA1111AAAA1111AAAA1111AAAA1111'
 Assert-True $r.Pass 'a matching hash passes, case-insensitively (Get-FileHash returns upper)'
 
-$r = Test-Sha256Manifest -Manifest $manifest -FileName 'wootc.exe' -ActualHash 'deadbeef'
+$r = Test-Sha256Manifest -Manifest $manifest -FileName 'wootc-legacy.exe' -ActualHash 'deadbeef'
 Assert-True (-not $r.Pass) 'a mismatched hash fails'
 Assert-True ($r.Detail -match 'hash mismatch') 'the mismatch is named'
 

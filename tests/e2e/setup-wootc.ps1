@@ -68,11 +68,13 @@ if (-not $gotMutex) {
     exit 0
 }
 
-# Reserve trusted state before partitioning or reading any pre-staged files.
+# Reserve trusted state and stage the verified status CLI before partitioning
+# or reading any pre-staged files.
 Initialize-WootcStateDirectory -Path 'C:\wootc'
 . (Join-Path $PSScriptRoot 'stage-status-cli.ps1')
 $cliSource = $PayloadDir
 if (-not $cliSource) { $cliSource = '\\host.lan\Data' }
+Copy-WootcStatusCLI -SourceDirectory $cliSource -Destination 'C:\wootc\wootc.exe'
 if (-not $SetupExe) {
     $genericSetup = Join-Path $cliSource 'wootc-Installer-Setup.exe'
     if (Test-Path -LiteralPath $genericSetup -PathType Leaf) { $SetupExe = $genericSetup }
@@ -87,10 +89,7 @@ if ($SetupExe) {
     if (-not $programFiles) { $programFiles = $env:ProgramFiles }
     $engine = Join-Path $programFiles "wootc Native\$SetupBrand\bundle\wootc-engine.exe"
     if (-not (Test-Path -LiteralPath $engine -PathType Leaf)) { throw "Native setup installed no engine at $engine" }
-    Copy-Item -LiteralPath $engine -Destination 'C:\wootc\wootc.exe' -Force
-    Write-Host "[wootc] Native setup installed and its engine staged for recovery/status"
-} else {
-    Copy-WootcStatusCLI -SourceDirectory $cliSource -Destination 'C:\wootc\wootc.exe'
+    Write-Host "[wootc] Native setup installed; the verified status CLI remains staged for recovery"
 }
 
 # Extra deployer kargs for the bootloader/composefs axes of the test matrix.

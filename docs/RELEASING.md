@@ -101,23 +101,23 @@ git tag v0.1.0-alpha.1 && git push origin v0.1.0-alpha.1
 # → tests → native E2E gate (real Windows VM, bluefin:lts) → build + publish
 ```
 
-Every release ships the **full artifact set** from `release.yml` and the native
-packaging workflow. The primary GUI downloads are one Inno setup per eligible
+Every release ships the **full artifact set** from `release.yml` and the
+workflow for native packages. The primary GUI downloads are one Inno setup per eligible
 brand: `wootc-Installer-Setup.exe`, `TunaOS-Installer-Setup.exe`,
 `Bluefin-Installer-Setup.exe`, `Bazzite-Installer-Setup.exe`, and
 `Aurora-Installer-Setup.exe`. Each setup installs the WinUI shell beside its
 protected Go engine and carries the release's public verification key.
 
-The Wails build is deliberately published once as `wootc-legacy.exe` during
-this cut-over release. It is a compatibility fallback, not a branded primary
-installer, and it needs WebView2.
+This cut-over release publishes the Wails build once as `wootc-legacy.exe`.
+It is a compatibility fallback, not a branded primary installer. It needs
+WebView2.
 
 The shared boot artifacts are `deployer-vmlinuz`, `deployer-initramfs.img`,
 `shimx64.efi`, `grubx64.efi`, and `mmx64.efi`.
 The set also includes `wubildr.efi` when its build succeeds.
-`SHA256SUMS` lists the boot artifacts and `wootc-legacy.exe`;
-`native-SHA256SUMS` lists the attached native setup assets. `skip_e2e` exists
-for emergencies and documents itself in the release notes.
+`SHA256SUMS` lists the boot artifacts and `wootc-legacy.exe`.
+`native-SHA256SUMS` lists the setup assets that the workflow attaches.
+`skip_e2e` exists for emergencies and documents itself in the release notes.
 
 ## Full-matrix evidence at the RC SHA (v1.0 criterion 3)
 
@@ -268,9 +268,9 @@ no secret for this login. Immediately before the first signature,
 `packaging/sign-exes.sh` gets an access token for `https://codesigning.azure.net`.
 
 jsign signs the Wails compatibility asset `wootc-legacy.exe` in the release
-assets. The native setup workflow embeds the release public key in each
-protected engine and publishes the setup hashes as `native-SHA256SUMS`; MSIX
-signing remains gated on #229/#230. The timestamp server is
+assets. The workflow for native setups embeds the public release key in each
+protected engine. It publishes the setup hashes as `native-SHA256SUMS`.
+MSIX signatures remain gated on #229/#230. The timestamp server is
 `http://timestamp.acs.microsoft.com`.
 `osslsigncode` examines each signature. If the login or the token fails, the
 result is `failed`. A tagged release stops, and a pre-release continues
